@@ -12,7 +12,7 @@ use crate::process;
 pub struct Monitoring {
     /// Move and size starts and ends, which stand in for primary-button presses.
     pub press: bool,
-    /// The dragged window's movement, Escape, and modifier changes.
+    /// The dragged window's movement and modifier changes.
     pub drag: bool,
 }
 

@@ -67,11 +67,7 @@ impl<P: Platform + 'static> Shared<P> {
             queue.cancel = Some(cancel.clone());
             (queue.generation, queue.running.take())
         };
-        {
-            let mut core = self.core.borrow_mut();
-            core.op_in_flight = true;
-            core.platform.set_drag_monitoring(true);
-        }
+        self.core.borrow_mut().op_in_flight = true;
 
         let shared = Rc::clone(self);
         let task = tokio::task::spawn_local(async move {
@@ -94,8 +90,6 @@ impl<P: Platform + 'static> Shared<P> {
         core.op_in_flight = false;
         core.op_windows.clear();
         core.protected.clear();
-        let dragging = !matches!(core.drag, crate::core::DragSession::Idle);
-        core.platform.set_drag_monitoring(dragging);
         core.publish_state();
     }
 

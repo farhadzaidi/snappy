@@ -60,7 +60,7 @@ function HelpContent() {
       <hr className="help-divider" />
       <HelpRow title="Snappy key" keys={snappyKeyLabel(platform)} />
       <HelpRow title="Default zone shortcuts" keys={defaultZoneShortcuts(platform)} />
-      <HelpRow title="Cancel a snap or screen preview" keys="Escape" />
+      <HelpRow title="Hide the screen preview" keys="Escape" />
     </div>
   );
 }

@@ -4,9 +4,6 @@ use snappy_core::keys::{Combo, KeyCode, Modifier, Mods};
 
 use crate::ffi::carbon::{CMD_KEY, CONTROL_KEY, OPTION_KEY, SHIFT_KEY};
 
-/// The Escape key's virtual key code.
-pub const ESCAPE: u16 = 53;
-
 /// NSEvent modifier flag bits (`NSEventModifierFlags`).
 const EVENT_SHIFT: usize = 1 << 17;
 const EVENT_CONTROL: usize = 1 << 18;
@@ -200,7 +197,7 @@ mod tests {
         assert_eq!(virtual_key_code(&code("BracketRight")), Some(30));
         assert_eq!(virtual_key_code(&code("ArrowLeft")), Some(123));
         assert_eq!(virtual_key_code(&code("ArrowUp")), Some(126));
-        assert_eq!(virtual_key_code(&code("Escape")), Some(u32::from(ESCAPE)));
+        assert_eq!(virtual_key_code(&code("Escape")), Some(53));
     }
 
     #[test]

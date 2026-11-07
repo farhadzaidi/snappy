@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use snappy_core::drag::{CancelReason, DragIntent};
+use snappy_core::drag::DragIntent;
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::Mods;
 use snappy_core::layout::hit_test;
@@ -275,16 +275,6 @@ fn plan_drop<P: Platform>(
         work_area: display.work_area,
         drop: Some(std::mem::take(record)),
     }))
-}
-
-/// Escape cancels the drag until the next press and the operation in flight.
-pub(crate) fn escape<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
-    shared.cancel_current();
-    let mut core = shared.core.borrow_mut();
-    if let DragSession::Tracking { intent, .. } = &mut core.drag {
-        intent.cancel(CancelReason::Escape);
-    }
-    core.platform.hide();
 }
 
 /// Where a window at `frame` swaps from: the zone it fills, the zone under its center, or

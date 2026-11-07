@@ -74,9 +74,9 @@ Every window move goes through `Shared::submit` in `crates/engine/src/ops.rs`. O
 
 - **The newest operation wins.** Submitting cancels the operation in flight through its `CancelToken`, waits for it to stop, then runs the new one. Settling checks the token before every read and write, so a stale operation stops within one step.
 - **One at a time.** Operations never interleave, so two moves never fight over a window. A generation counter makes sure only the latest operation's completion clears the in-flight state.
-- **A press cancels.** A mouse press on any window cancels the operation in flight (`drag::pointer_down`), and Escape cancels both the drag and the operation.
+- **A press cancels.** A mouse press on any window cancels the operation in flight (`drag::pointer_down`).
 - **Protected windows.** While a swap or a grouped undo is moving two windows, a press on either one adds it to `Core::protected`. The operation's recovery path (putting a window back after a failure) then leaves that window to the user.
-- **Keyboard observation is scoped.** Drag monitoring, which includes key events, is on only during a drag or while an operation is in flight. At idle Snappy sees no keystrokes except its own registered shortcuts.
+- **Keyboard observation is scoped.** Drag monitoring, which includes modifier key events, is on only during a drag. At idle Snappy sees no keystrokes except its own registered shortcuts.
 
 ## How a drag becomes a snap
 

@@ -107,7 +107,6 @@ impl<P: Platform + 'static> Engine<P> {
                 drag::pointer_moved(shared, at, mods)
             }
             PlatformEvent::PointerUp { at, mods } => drag::pointer_up(shared, at, mods),
-            PlatformEvent::Escape => drag::escape(shared),
             PlatformEvent::HotKey(id) => actions::hotkey(shared, id),
             PlatformEvent::WindowCreated { .. } => workspaces::focus_changed(shared, false),
             PlatformEvent::FocusChanged { by_activation, .. } => {

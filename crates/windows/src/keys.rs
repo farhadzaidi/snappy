@@ -4,8 +4,7 @@
 //! virtual key from the current layout through `MapVirtualKeyExW`.
 
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    HKL, MAPVK_VSC_TO_VK_EX, MapVirtualKeyExW, VIRTUAL_KEY, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
-    VK_LWIN,
+    HKL, MAPVK_VSC_TO_VK_EX, MapVirtualKeyExW, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
 };
 
 use snappy_core::keys::{KeyCode, Modifier};
@@ -167,10 +166,6 @@ pub fn modifier_key(modifier: Modifier) -> VIRTUAL_KEY {
         Modifier::Alt => VK_LMENU,
         Modifier::Meta => VK_LWIN,
     }
-}
-
-pub fn is_escape(vk: u32) -> bool {
-    vk == u32::from(VK_ESCAPE.0)
 }
 
 #[cfg(test)]

@@ -104,7 +104,7 @@ pub trait WindowSystem {
 pub trait Input {
     /// Primary-button presses and releases.
     fn set_press_monitoring(&mut self, on: bool);
-    /// Drags, modifier changes, and Escape; on only during drags and window operations.
+    /// Drags and modifier changes; on only during drags.
     fn set_drag_monitoring(&mut self, on: bool);
 }
 
@@ -252,7 +252,6 @@ pub enum PlatformEvent {
         at: Point,
         mods: Mods,
     },
-    Escape,
     HotKey(u32),
     WindowCreated {
         pid: u32,

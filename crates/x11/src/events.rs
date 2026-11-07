@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
 use snappy_core::geometry::Point;
-use snappy_core::keys::{KeyCode, Mods};
+use snappy_core::keys::Mods;
 use snappy_platform::{PlatformEvent, WindowId};
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
@@ -15,7 +15,6 @@ use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, Window};
 use crate::clients::ClientTracker;
 use crate::error::X11Error;
 use crate::input::{HeldModifiers, PRIMARY_BUTTON};
-use crate::keys::codes;
 use crate::shared::Shared;
 use crate::x::{self, lock};
 
@@ -197,7 +196,7 @@ impl EventLoop {
         }
     }
 
-    /// Escape and modifier changes, observed only during drags and window operations.
+    /// Modifier changes, observed only during drags.
     fn raw_key(&mut self, keycode: u32, pressed: bool) {
         if !lock(&self.shared.monitoring).drag {
             return;
@@ -205,22 +204,18 @@ impl EventLoop {
         let Ok(keycode) = u8::try_from(keycode) else {
             return;
         };
-        let (escape, modifier) = {
+        let modifier = {
             let keyboard = lock(&self.shared.keyboard);
             if let Some(held) = &mut self.modifiers {
                 held.key(keycode, pressed, &keyboard.modifier_keys);
             }
-            let escape = keyboard.keymap.keycode_for(&KeyCode::new(codes::ESCAPE)) == Some(keycode);
-            let modifier = keyboard
+            keyboard
                 .keymap
                 .keysyms(keycode)
                 .iter()
-                .any(|keysym| MODIFIER_KEYSYMS.contains(keysym));
-            (escape, modifier)
+                .any(|keysym| MODIFIER_KEYSYMS.contains(keysym))
         };
-        if escape && pressed {
-            self.emit(PlatformEvent::Escape);
-        } else if modifier && let Some((at, mods)) = self.pointer() {
+        if modifier && let Some((at, mods)) = self.pointer() {
             self.emit(PlatformEvent::ModifiersChanged { at, mods });
         }
     }

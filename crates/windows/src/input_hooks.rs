@@ -1,6 +1,6 @@
 //! Low-level keyboard and mouse hooks, installed only while drag monitoring is on. They
-//! report Escape, modifier changes, and the primary button's release, and always pass
-//! every event on.
+//! report modifier changes and the primary button's release, and always pass every event
+//! on.
 //!
 //! The release is taken from the mouse hook rather than from the end of the move loop:
 //! hooks see input in the order it happened, while the move loop's end arrives after the
@@ -22,7 +22,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::events::{cursor, modifiers};
-use crate::keys::is_escape;
 use crate::main_state::{Main, with_main};
 
 /// The modifier a virtual key belongs to.
@@ -93,12 +92,6 @@ fn remove(hook: Option<HHOOK>) {
 impl Main {
     fn key(&mut self, vk: u32, down: bool) {
         if !self.shared.monitoring().drag {
-            return;
-        }
-        if is_escape(vk) {
-            if down {
-                self.emit(PlatformEvent::Escape);
-            }
             return;
         }
         let Some(modifier) = modifier_of(vk) else {

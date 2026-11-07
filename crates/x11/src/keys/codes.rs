@@ -115,8 +115,6 @@ const KEYS: &[(&str, u8, u32)] = &[
     ("F20", 198, 0xffd1),
 ];
 
-pub const ESCAPE: &str = "Escape";
-
 /// The physical key's evdev keycode.
 pub fn evdev_keycode(code: &str) -> Option<u8> {
     KEYS.iter()

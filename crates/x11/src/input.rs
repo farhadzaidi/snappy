@@ -18,7 +18,7 @@ pub const PRIMARY_BUTTON: u32 = 1;
 pub struct Monitoring {
     /// Primary-button presses and releases.
     pub press: bool,
-    /// Pointer motion, Escape, and modifier changes during a drag or window operation.
+    /// Pointer motion and modifier changes during a drag.
     pub drag: bool,
     /// How many times drag monitoring has turned on, so the event thread can tell a new
     /// stretch of it, with key events it hasn't seen in between, from the one it follows.

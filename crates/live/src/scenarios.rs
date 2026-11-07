@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{KeyChord, KeyCode, Mods};
+use snappy_core::keys::{KeyChord, Mods};
 use snappy_core::layout::{Spacing, preset, zone_frame};
 use snappy_core::navigate::Direction;
 use snappy_core::settings::{Settings, Workspace, WorkspaceStep};
@@ -62,7 +62,6 @@ pub const ALL: &[(&str, Scenario)] = &[
     ("the_swap_key_stacks_instead_of_swapping", inverted_drag),
     ("grid_sized_windows_snap_without_waiting", grid_snap),
     ("minimum_sizes_are_respected", minimum_size),
-    ("escape_cancels_the_snap", escape_cancels),
     (
         "a_floating_window_sends_the_occupant_to_the_zone_under_it",
         floating_swap,
@@ -599,37 +598,6 @@ fn minimum_size(context: &mut Context) -> Result<Outcome, String> {
     Ok(timed(elapsed))
 }
 
-fn escape_cancels(context: &mut Context) -> Result<Outcome, String> {
-    let left = context.zone(0)?;
-    context.open("escape", floating(&context.display, 120.0))?;
-    let frame = context.fixture.frame("escape")?;
-    let shift = context.drag_mods();
-    let input = &mut *context.input;
-    input.modifiers(shift, true)?;
-    input.pointer_down(Context::grip(frame), shift)?;
-    pause(30);
-    for step in 1..=8 {
-        let t = f64::from(step) / 8.0;
-        let grip = Context::grip(frame);
-        let target = left.center();
-        input.pointer_drag(
-            Point::new(grip.x + (target.x - grip.x) * t, grip.y + (target.y - grip.y) * t),
-            shift,
-        )?;
-        pause(16);
-    }
-    input.key(&KeyCode::new("Escape"), shift)?;
-    pause(50);
-    input.pointer_up(left.center(), shift)?;
-    input.modifiers(shift, false)?;
-    pause(800);
-    let after = context.fixture.frame("escape")?;
-    if near(after, left) {
-        return Err("the window snapped despite Escape".to_owned());
-    }
-    Ok(Outcome::default())
-}
-
 fn workspace_switch(context: &mut Context) -> Result<Outcome, String> {
     let start = floating(&context.display, 140.0);
     let before = context.open("ws", start)?;
@@ -815,10 +783,11 @@ fn overlay_floats(context: &mut Context) -> Result<Outcome, String> {
     let captioned = context.wait_caption(seen, reversed);
     screenshot(&context.out.join("overlay_caption.png"));
 
+    // Letting go of the modifiers first cancels the snap, so the drop leaves the window be.
     let input = &mut *context.input;
-    input.key(&KeyCode::new("Escape"), reversing)?;
-    input.pointer_up(grip, reversing)?;
     input.modifiers(reversing, false)?;
+    pause(50);
+    input.pointer_up(grip, Mods::NONE)?;
     pause(300);
     let after = daemon_windows_above(context, FLOATING_LAYER)?;
 
@@ -843,7 +812,7 @@ fn overlay_floats(context: &mut Context) -> Result<Outcome, String> {
         .iter()
         .any(|overlay| overlay.contains_rect(context.display.work_area))
     {
-        return Err("the overlay stayed on screen after Escape".to_owned());
+        return Err("the overlay stayed on screen after the drop".to_owned());
     }
     Ok(Outcome::default())
 }

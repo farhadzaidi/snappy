@@ -67,7 +67,7 @@ Unit tests run in Node with the WebAssembly core loaded from disk (`apps/setting
 
 Name a test for what it checks, as a short sentence in plain words:
 
-- Rust: `fn a_refused_move_reverses_the_switch()`, `fn escape_cancels_until_the_next_press()`.
+- Rust: `fn a_refused_move_reverses_the_switch()`, `fn resizing_outside_the_title_bar_cancels_for_good()`.
 - TypeScript: `it("errors stay until dismissed, and dismissing tells the daemon")`, `test("deleting a custom layout asks first")`.
 - Live scenarios: `("switching_workspaces_parks_and_returns_windows", workspace_switch)`.
 

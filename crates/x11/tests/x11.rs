@@ -33,7 +33,6 @@ const QUIET: Duration = Duration::from_millis(400);
 
 /// Evdev keycodes; the session script loads the evdev US keymap.
 mod key {
-    pub const ESCAPE: u8 = 9;
     pub const DIGIT_1: u8 = 10;
     pub const CONTROL_L: u8 = 37;
     pub const SHIFT_L: u8 = 50;
@@ -954,28 +953,21 @@ fn a_release_reports_the_drag_modifier_even_when_it_is_let_go_right_after() {
 }
 
 #[test]
-fn escape_is_reported_only_while_drag_monitoring_is_on() {
+fn keys_motion_and_presses_go_unreported_once_monitoring_is_off() {
     let mut desktop = desktop!();
     desktop.platform.set_press_monitoring(true);
     desktop.platform.set_drag_monitoring(true);
     desktop.drain();
-    desktop.tap(&[key::ESCAPE]);
-    assert_eq!(
-        desktop.expect(|event| *event == PlatformEvent::Escape),
-        Some(PlatformEvent::Escape)
-    );
 
     desktop.platform.set_drag_monitoring(false);
     desktop.drain();
-    desktop.tap(&[key::ESCAPE, key::SHIFT_L]);
+    desktop.tap(&[key::SHIFT_L]);
     desktop.move_pointer(Point::new(900.0, 500.0));
     let events = desktop.drain();
     assert!(
         !events.iter().any(|event| matches!(
             event,
-            PlatformEvent::Escape
-                | PlatformEvent::ModifiersChanged { .. }
-                | PlatformEvent::PointerDragged { .. }
+            PlatformEvent::ModifiersChanged { .. } | PlatformEvent::PointerDragged { .. }
         )),
         "{events:?}"
     );

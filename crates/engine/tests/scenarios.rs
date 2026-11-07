@@ -1512,9 +1512,9 @@ fn swaps_work_across_displays_with_each_displays_layout() {
 }
 
 #[test]
-fn escape_during_an_exchange_moves_both_windows_back() {
+fn a_click_elsewhere_during_an_exchange_moves_both_windows_back() {
     scenario(|| async {
-        let engine = live_engine("swap-escape", two_zoned_windows());
+        let engine = live_engine("swap-click-away", two_zoned_windows());
         frozen(&engine, 1, true);
         release(&engine, WindowId(1), Point::new(1000.0, 400.0), shift());
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -1524,7 +1524,7 @@ fn escape_during_an_exchange_moves_both_windows_back() {
             "the exchange is under way"
         );
 
-        event(&engine, PlatformEvent::Escape);
+        click_away(&engine);
         frozen(&engine, 1, false);
         settle(&engine).await;
         assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(1))), LEFT_ZONE);
@@ -1534,7 +1534,7 @@ fn escape_during_an_exchange_moves_both_windows_back() {
             "a cancelled swap is not a failure"
         );
 
-        let drops = std::fs::read(paths_kept("swap-escape").log_dir.join("drops.json")).unwrap();
+        let drops = std::fs::read(paths_kept("swap-click-away").log_dir.join("drops.json")).unwrap();
         let drops: Vec<serde_json::Value> = serde_json::from_slice(&drops).unwrap();
         assert_eq!(drops.last().unwrap()["outcome"], "swapInterrupted");
     });
@@ -1789,6 +1789,14 @@ fn press(engine: &Engine<FakePlatform>, at: Point, mods: Mods) {
     );
 }
 
+/// A click above the zones, where no window is, which cancels the operation in flight
+/// without claiming any window.
+fn click_away(engine: &Engine<FakePlatform>) {
+    let at = Point::new(720.0, 10.0);
+    press(engine, at, Mods::NONE);
+    event(engine, PlatformEvent::PointerUp { at, mods: Mods::NONE });
+}
+
 const FLOATING: Rect = Rect::new(300.0, 200.0, 600.0, 400.0);
 const FLOATING_GRIP: Point = Point::new(500.0, 215.0);
 
@@ -1977,25 +1985,6 @@ fn every_modifier_drag_records_one_drop_outcome() {
             },
         );
 
-        place(&engine, 1, FLOATING);
-        press(&engine, FLOATING_GRIP, shift());
-        place(&engine, 1, FLOATING.with_origin(Point::new(100.0, 385.0)));
-        event(
-            &engine,
-            PlatformEvent::PointerDragged {
-                at: left,
-                mods: shift(),
-            },
-        );
-        event(&engine, PlatformEvent::Escape);
-        event(
-            &engine,
-            PlatformEvent::PointerUp {
-                at: left,
-                mods: shift(),
-            },
-        );
-
         press(&engine, Point::new(1300.0, 800.0), shift());
         event(
             &engine,
@@ -2024,7 +2013,6 @@ fn every_modifier_drag_records_one_drop_outcome() {
                 "outsideDisplay",
                 "noWindowMovement",
                 "modifierReleased",
-                "escape",
                 "targetLookupFailed",
                 "layoutDisabled",
             ]
@@ -2564,7 +2552,7 @@ fn swap_drops_record_their_outcome() {
         frozen(&engine, 1, true);
         release(&engine, WindowId(1), right, shift());
         tokio::time::sleep(Duration::from_millis(1)).await;
-        event(&engine, PlatformEvent::Escape);
+        click_away(&engine);
         frozen(&engine, 1, false);
         settle(&engine).await;
 
@@ -3275,7 +3263,7 @@ fn bounds_changes_are_bracketed_and_reread_after_the_restore_delay() {
             PlatformEvent::HotKey(hotkey_id(&engine, &snappy("Digit2"))),
         );
         tokio::time::sleep(Duration::from_millis(1)).await;
-        event(&engine, PlatformEvent::Escape);
+        click_away(&engine);
         frozen(&engine, 1, false);
         settle(&engine).await;
         let calls = bounds_calls(&engine, 1);

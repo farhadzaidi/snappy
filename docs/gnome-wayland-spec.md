@@ -47,7 +47,7 @@ What it covers:
   - The window at a point: the topmost window on the active workspace whose frame contains it.
   - Both Wayland and XWayland windows are `Meta.Window`s; treat them the same.
 - **Events,** as signals: window created, destroyed, moved or resized, and focus changed; app launched and terminated; display changes; workspace changes.
-- **Drags:** `global.display` `grab-op-begin` and `grab-op-end` for window moves. While a move is in progress, report the pointer position and modifiers (`global.get_pointer()`), Escape, and modifier changes, all in event order. Report modifiers as they were when the button came up; X11 had a bug here (`platforms.md`).
+- **Drags:** `global.display` `grab-op-begin` and `grab-op-end` for window moves. While a move is in progress, report the pointer position and modifiers (`global.get_pointer()`) and modifier changes, all in event order. Report modifiers as they were when the button came up; X11 had a bug here (`platforms.md`).
 - **Shortcuts:** `global.display.grab_accelerator`, with `accelerator-activated` reported as a signal carrying Snappy's ID. The daemon only ever sends expanded chords, never the Snappy key itself.
   - A grab that returns no action means the chord is taken: that's the availability probe. Release the probe grab right away.
   - Release everything on disable.

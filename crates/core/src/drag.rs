@@ -18,7 +18,6 @@ const MOVE_AREA_MAX_HEIGHT: f64 = 44.0;
 pub enum CancelReason {
     ResizeGesture,
     InvalidFrame,
-    Escape,
 }
 
 impl CancelReason {
@@ -26,7 +25,6 @@ impl CancelReason {
         match self {
             CancelReason::ResizeGesture => "resizeGesture",
             CancelReason::InvalidFrame => "invalidFrame",
-            CancelReason::Escape => "escape",
         }
     }
 }
@@ -90,7 +88,7 @@ impl DragIntent {
     }
 
     /// Cancellation lasts until the next press starts a new intent.
-    pub fn cancel(&mut self, reason: CancelReason) {
+    fn cancel(&mut self, reason: CancelReason) {
         self.cancelled = Some(reason);
         self.moved = false;
     }
@@ -160,15 +158,6 @@ mod tests {
         intent.observe(Rect::new(90.0, 100.0, 810.0, 600.0));
         assert_eq!(intent.cancellation(), Some(CancelReason::ResizeGesture));
         intent.observe(Rect::new(300.0, 100.0, 800.0, 600.0));
-        assert!(!intent.permits_snap(true));
-    }
-
-    #[test]
-    fn escape_cancels_until_the_next_press() {
-        let mut intent = DragIntent::new(WINDOW, Some(TITLE_BAR));
-        intent.observe(Rect::new(300.0, 100.0, 800.0, 600.0));
-        intent.cancel(CancelReason::Escape);
-        intent.observe(Rect::new(400.0, 100.0, 800.0, 600.0));
         assert!(!intent.permits_snap(true));
     }
 

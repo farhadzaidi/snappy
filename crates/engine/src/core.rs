@@ -312,7 +312,7 @@ impl<P: Platform> Core<P> {
         if self.preview.is_none() {
             self.platform.hide();
         }
-        self.platform.set_drag_monitoring(self.op_in_flight);
+        self.platform.set_drag_monitoring(false);
     }
 
     // MARK: Menu bar

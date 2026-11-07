@@ -1,7 +1,5 @@
 //! Pointer and keyboard observation through NSEvent monitors.
 //! Global monitors see other apps' events, local ones Snappy's own. Main thread only.
-//!
-//! Key down is observed only while drag monitoring is on, and only Escape is reported.
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -17,7 +15,7 @@ use snappy_platform::PlatformEvent;
 use crate::coords::flip_point;
 use crate::displays::primary_height;
 use crate::events::emit;
-use crate::keycodes::{ESCAPE, mods_from_event_flags};
+use crate::keycodes::mods_from_event_flags;
 
 #[derive(Default)]
 struct Monitors {
@@ -35,9 +33,9 @@ pub fn set_press_monitoring(on: bool, mtm: MainThreadMarker) {
     MONITORS.with(|monitors| toggle(&mut monitors.borrow_mut().press, on, mask, mtm));
 }
 
-/// Drags, modifier changes, and Escape.
+/// Drags and modifier changes.
 pub fn set_drag_monitoring(on: bool, mtm: MainThreadMarker) {
-    let mask = NSEventMask::LeftMouseDragged | NSEventMask::FlagsChanged | NSEventMask::KeyDown;
+    let mask = NSEventMask::LeftMouseDragged | NSEventMask::FlagsChanged;
     MONITORS.with(|monitors| toggle(&mut monitors.borrow_mut().drag, on, mask, mtm));
 }
 
@@ -93,7 +91,6 @@ fn forward(event: &NSEvent, mtm: MainThreadMarker) {
         NSEventType::LeftMouseUp => Some(PlatformEvent::PointerUp { at, mods }),
         NSEventType::LeftMouseDragged => Some(PlatformEvent::PointerDragged { at, mods }),
         NSEventType::FlagsChanged => Some(PlatformEvent::ModifiersChanged { at, mods }),
-        NSEventType::KeyDown if event.keyCode() == ESCAPE => Some(PlatformEvent::Escape),
         _ => None,
     };
     if let Some(reported) = reported {

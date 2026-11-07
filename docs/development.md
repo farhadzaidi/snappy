@@ -118,7 +118,7 @@ Full sentences that say what happened and what to do next, in plain words: "Leav
 ### Naming
 
 - Names are plain words: `pointer_down`, `apply_settled`, `layout_for_display`. Avoid abbreviations except established ones (`id`, `pid`, `ax`, `hwnd`).
-- Tests are named for what they check, as a sentence: `escape_cancels_until_the_next_press`, `test("deleting a custom layout asks first")`. See [testing.md](testing.md#naming-tests).
+- Tests are named for what they check, as a sentence: `resizing_outside_the_title_bar_cancels_for_good`, `test("deleting a custom layout asks first")`. See [testing.md](testing.md#naming-tests).
 
 ### Organization
 

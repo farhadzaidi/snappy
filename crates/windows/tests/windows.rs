@@ -31,8 +31,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
     KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOD_ALT, MOD_CONTROL, MOD_WIN, MOUSE_EVENT_FLAGS,
     MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
-    MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_ESCAPE,
-    VK_LSHIFT, VK_LWIN,
+    MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_LSHIFT,
+    VK_LWIN,
 };
 use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -700,7 +700,7 @@ fn presses_are_unreported_while_monitoring_is_off() {
 }
 
 #[test]
-fn escape_and_modifier_changes_are_reported_only_while_dragging() {
+fn modifier_changes_are_reported_only_while_dragging() {
     require_desktop!();
     let mut session = Session::start();
     session.platform.set_drag_monitoring(true);
@@ -711,23 +711,17 @@ fn escape_and_modifier_changes_are_reported_only_while_dragging() {
         matches!(event, PlatformEvent::ModifiersChanged { mods, .. } if mods.contains(Modifier::Shift))
     });
     virtual_key(VK_LSHIFT, false);
-    virtual_key(VK_ESCAPE, true);
-    virtual_key(VK_ESCAPE, false);
-    session.expect("escape", |event| *event == PlatformEvent::Escape);
 
     session.platform.set_drag_monitoring(false);
     pause(200);
     session.drain();
     virtual_key(VK_LSHIFT, true);
     virtual_key(VK_LSHIFT, false);
-    virtual_key(VK_ESCAPE, true);
-    virtual_key(VK_ESCAPE, false);
     let events = session.collect(Duration::from_millis(400));
     assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            PlatformEvent::Escape | PlatformEvent::ModifiersChanged { .. }
-        )),
+        !events
+            .iter()
+            .any(|event| matches!(event, PlatformEvent::ModifiersChanged { .. })),
         "keys were observed outside a drag: {events:?}"
     );
 }
