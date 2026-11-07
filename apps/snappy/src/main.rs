@@ -75,11 +75,14 @@ mod platform {
 mod platform {
     use snappy_engine::Paths;
     use snappy_linux::Claim;
+    use snappy_linux::session::Session;
     use snappy_platform::PlatformEvent;
 
     use crate::runtime::{forward_events, run_engine};
 
-    /// The X event loop runs on this thread and the engine on its own. A second launch
+    /// GNOME on Wayland goes through GNOME Shell's extension; every other session through
+    /// the X server, which in other Wayland sessions reports that it can't control windows.
+    /// The adapter's loop runs on this thread and the engine on its own. A second launch
     /// signals the running daemon to open the settings window, then exits.
     pub fn run(paths: Paths, open_settings: bool) -> std::io::Result<()> {
         let Claim::Primary(mut instance) = snappy_linux::claim(&snappy_linux::lock_path(&paths.state_dir))?
@@ -88,6 +91,45 @@ mod platform {
         };
         let (events, platform_events) = std::sync::mpsc::channel();
         instance.publish(events.clone())?;
+        match snappy_linux::session::current() {
+            Session::GnomeWayland => run_gnome(paths, open_settings, events, platform_events),
+            Session::X11 | Session::OtherWayland => run_x11(paths, open_settings, events, platform_events),
+        }
+    }
+
+    fn run_gnome(
+        paths: Paths,
+        open_settings: bool,
+        events: std::sync::mpsc::Sender<PlatformEvent>,
+        platform_events: std::sync::mpsc::Receiver<PlatformEvent>,
+    ) -> std::io::Result<()> {
+        let app = snappy_gnome::App::new(events).map_err(std::io::Error::other)?;
+        let platform = app.platform();
+        let stopper = app.stopper();
+
+        let (inputs, incoming) = tokio::sync::mpsc::unbounded_channel();
+        forward_events(platform_events, inputs.clone());
+        let engine = std::thread::Builder::new()
+            .name("snappy-engine".into())
+            .spawn(move || {
+                let result = run_engine(platform, paths, inputs, incoming, open_settings);
+                stopper.stop();
+                result
+            })?;
+
+        let ran = app.run().map_err(std::io::Error::other);
+        let stopped = engine
+            .join()
+            .map_err(|_| std::io::Error::other("engine thread panicked"))?;
+        ran.and(stopped)
+    }
+
+    fn run_x11(
+        paths: Paths,
+        open_settings: bool,
+        events: std::sync::mpsc::Sender<PlatformEvent>,
+        platform_events: std::sync::mpsc::Receiver<PlatformEvent>,
+    ) -> std::io::Result<()> {
         let quit = events.clone();
         let app = snappy_x11::App::new(events).map_err(std::io::Error::other)?;
         let platform = app.platform();
