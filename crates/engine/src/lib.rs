@@ -131,6 +131,16 @@ impl<P: Platform + 'static> Engine<P> {
                 core.refresh_live(true);
                 workspaces::configure(&mut core);
             }
+            PlatformEvent::LiveControlChanged => {
+                let mut core = shared.core.borrow_mut();
+                core.live_control = core.platform.live_control();
+                // Work areas may only now be known, so displays are read before anything
+                // that places windows starts.
+                core.displays = core.platform.displays();
+                core.refresh_live(true);
+                workspaces::configure(&mut core);
+                core.publish_state();
+            }
             PlatformEvent::WillSleep => {
                 shared.cancel_current();
                 shared.core.borrow_mut().end_drag();

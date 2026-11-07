@@ -173,9 +173,8 @@ fn unavailable_journal() -> WindowError {
 
 /// Start or stop workspaces to match settings and permission.
 pub(crate) fn configure<P: Platform>(core: &mut Core<P>) {
-    let wanted = core.settings.workspaces.enabled
-        && core.permission_granted
-        && core.capabilities.live_control_available;
+    let wanted =
+        core.settings.workspaces.enabled && core.permission_granted && core.live_control.is_available();
     match (wanted, core.workspaces.session.is_some()) {
         (true, false) => start(core),
         (false, true) => {

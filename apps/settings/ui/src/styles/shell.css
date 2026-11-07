@@ -49,6 +49,23 @@
   background: var(--mint-wash);
 }
 
+.unavailable-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 28px 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.unavailable-notice-icon {
+  display: grid;
+  color: var(--warning);
+}
+
 .header-actions {
   display: flex;
   align-items: center;

@@ -9,8 +9,8 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LoginItem, Overlay, OverlayScene, Permissions,
-    Platform, RecoveryKey, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
+    Permissions, Platform, RecoveryKey, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 /// A window with scriptable app behavior.
@@ -61,6 +61,8 @@ pub struct FakePlatform {
     pub platform: PlatformName,
     pub parking: ParkingPolicy,
     pub needs_permission: bool,
+    /// What `live_control` answers.
+    pub live_control: LiveControl,
     pub displays: Vec<Display>,
     pub windows: BTreeMap<WindowId, FakeWindow>,
     /// Front to back.
@@ -100,6 +102,7 @@ impl Default for FakePlatform {
             platform: PlatformName::MacOs,
             parking: ParkingPolicy::CornerSliver,
             needs_permission: true,
+            live_control: LiveControl::Available,
             displays: vec![Self::main_display()],
             windows: BTreeMap::new(),
             stacking: Vec::new(),
@@ -443,8 +446,11 @@ impl Platform for FakePlatform {
             platform: self.platform,
             parking: self.parking,
             needs_permission: self.needs_permission,
-            live_control_available: true,
         }
+    }
+
+    fn live_control(&mut self) -> LiveControl {
+        self.live_control.clone()
     }
 
     fn now(&self) -> f64 {

@@ -13,7 +13,7 @@ use snappy_core::workspace::ParkingPolicy;
 use snappy_engine::{Engine, Input, Paths};
 use snappy_fake::{FakePlatform, FakeWindow, OverlayCall};
 use snappy_ipc::{AppState, Command, ToSettings};
-use snappy_platform::{Caption, OverlayScene, PlatformEvent, WindowId, WindowSystem};
+use snappy_platform::{Caption, LiveControl, OverlayScene, PlatformEvent, WindowId, WindowSystem};
 
 const LEFT_ZONE: Rect = Rect::new(12.0, 37.0, 702.0, 851.0);
 const RIGHT_ZONE: Rect = Rect::new(726.0, 37.0, 702.0, 851.0);
@@ -646,6 +646,65 @@ fn revoking_permission_pauses_and_regranting_resumes() {
         event(&engine, PlatformEvent::PermissionChanged);
         assert!(engine.is_live());
         assert_eq!(status_text(&engine), "Snapping is on.");
+    });
+}
+
+#[test]
+fn unavailable_live_control_shows_the_platforms_reason_and_registers_nothing() {
+    scenario(|| async {
+        let fake = FakePlatform {
+            live_control: LiveControl::Unavailable("Log out and back in to finish setting up.".into()),
+            ..FakePlatform::default()
+        };
+        let engine = live_engine("live-control-unavailable", fake);
+        assert!(!engine.is_live());
+        assert!(engine.with_platform(|p| p.registered.is_empty()));
+        assert!(!engine.with_platform(|p| p.press_monitoring));
+        assert_eq!(
+            app_state(&engine).snapping.unavailable_reason.as_deref(),
+            Some("Log out and back in to finish setting up.")
+        );
+    });
+}
+
+#[test]
+fn live_control_arriving_starts_snapping_and_leaving_pauses_it_with_the_reason() {
+    scenario(|| async {
+        let fake = FakePlatform {
+            live_control: LiveControl::Unavailable("The extension is off.".into()),
+            ..FakePlatform::default()
+        };
+        let engine = live_engine("live-control-changes", fake);
+        engine.with_platform(|p| p.live_control = LiveControl::Available);
+        event(&engine, PlatformEvent::LiveControlChanged);
+        assert!(engine.is_live());
+        assert!(!engine.with_platform(|p| p.registered.is_empty()));
+        assert_eq!(status_text(&engine), "Snapping is on.");
+        assert_eq!(app_state(&engine).snapping.unavailable_reason, None);
+
+        engine.with_platform(|p| p.live_control = LiveControl::Unavailable("The extension is off.".into()));
+        event(&engine, PlatformEvent::LiveControlChanged);
+        assert!(!engine.is_live());
+        assert!(engine.with_platform(|p| p.registered.is_empty()));
+        assert_eq!(status_text(&engine), "The extension is off.");
+    });
+}
+
+#[test]
+fn live_control_arriving_reads_the_displays_again() {
+    scenario(|| async {
+        let fake = FakePlatform {
+            live_control: LiveControl::Unavailable("The extension is off.".into()),
+            ..FakePlatform::default()
+        };
+        let engine = started("live-control-displays", fake);
+        let moved_work_area = Rect::new(0.0, 60.0, 1440.0, 840.0);
+        engine.with_platform(|p| {
+            p.live_control = LiveControl::Available;
+            p.displays[0].work_area = moved_work_area;
+        });
+        event(&engine, PlatformEvent::LiveControlChanged);
+        assert_eq!(app_state(&engine).displays[0].work_area, moved_work_area);
     });
 }
 

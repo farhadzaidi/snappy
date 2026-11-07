@@ -9,8 +9,8 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LoginItem, Overlay, OverlayScene, Permissions,
-    Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
+    Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::ax::{self, AxElement};
@@ -225,8 +225,11 @@ impl Platform for MacPlatform {
             platform: PlatformName::MacOs,
             parking: ParkingPolicy::CornerSliver,
             needs_permission: true,
-            live_control_available: true,
         }
+    }
+
+    fn live_control(&mut self) -> LiveControl {
+        LiveControl::Available
     }
 
     fn now(&self) -> f64 {

@@ -9,8 +9,12 @@ import { useAppState, useServices, useSession } from "../state/services";
 import { WorkspacesPage } from "../workspaces/WorkspacesPage";
 import { Header } from "./Header";
 import { Toast } from "./Toast";
+import { UnavailableNotice } from "./UnavailableNotice";
 
-/** The window: header, the current page, and the toast. Pages wait for the daemon's first State. */
+/**
+ * The window: header, why snapping can't run when it can't, the current page, and the toast. Pages
+ * wait for the daemon's first State.
+ */
 export function App() {
   const { client } = useServices();
   const connected = useObservable(client.state) !== null;
@@ -19,6 +23,7 @@ export function App() {
   return (
     <div className="app">
       <Header />
+      {connected && <UnavailableNotice />}
       <main className="page" data-page={page}>
         {connected && (
           <>

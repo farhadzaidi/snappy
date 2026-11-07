@@ -3,9 +3,7 @@ use thiserror::Error;
 /// Why the adapter couldn't start.
 #[derive(Debug, Error)]
 pub enum X11Error {
-    #[error(
-        "Snappy can't control windows in a Wayland session yet. Log in with an X11 session to use Snappy."
-    )]
+    #[error("{}", crate::messages::WAYLAND)]
     WaylandWithoutX,
     #[error("Snappy could not connect to the X server: {0}")]
     Connect(#[from] x11rb::errors::ConnectError),

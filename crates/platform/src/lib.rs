@@ -217,16 +217,39 @@ pub trait LoginItem {
 pub struct Capabilities {
     pub platform: PlatformName,
     pub parking: ParkingPolicy,
-    /// macOS asks for Accessibility; Windows and X11 need nothing.
+    /// macOS asks for Accessibility; Windows and Linux need nothing.
     pub needs_permission: bool,
-    /// False in a Wayland session, where X11 can't see or move other apps' windows.
-    pub live_control_available: bool,
+}
+
+/// Whether Snappy can control windows here at all, apart from any permission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LiveControl {
+    Available,
+    /// Why not, as a sentence for the user that says what to do, such as logging in with
+    /// another kind of session.
+    Unavailable(String),
+}
+
+impl LiveControl {
+    pub fn is_available(&self) -> bool {
+        matches!(self, LiveControl::Available)
+    }
+
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            LiveControl::Available => None,
+            LiveControl::Unavailable(reason) => Some(reason),
+        }
+    }
 }
 
 pub trait Platform:
     WindowSystem + Input + HotKeys + Overlay + Permissions + DesktopGuard + Tray + LoginItem
 {
     fn capabilities(&self) -> Capabilities;
+    /// Whether live control can run now. Adapters where this changes while Snappy runs
+    /// report `LiveControlChanged`.
+    fn live_control(&mut self) -> LiveControl;
     /// Monotonic seconds.
     fn now(&self) -> f64;
 }
@@ -273,6 +296,8 @@ pub enum PlatformEvent {
     DisplaysChanged,
     NativeDesktopChanged,
     PermissionChanged,
+    /// What `Platform::live_control` answers changed.
+    LiveControlChanged,
     WillSleep,
     /// A second launch, a reopen, or the menu's "Open Snappy…".
     OpenSettingsRequested,

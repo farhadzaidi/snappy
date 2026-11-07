@@ -10,8 +10,8 @@ use snappy_core::layout::{Layout, Spacing, zone_frame};
 use snappy_core::settings::Settings;
 use snappy_ipc::{AppState, SnappingState, Status, ToSettings, WorkspacesState};
 use snappy_platform::{
-    Capabilities, Caption, Display, OverlayScene, OverlayZone, Platform, TrayDisplay, TrayItem, TrayMenu,
-    WindowId,
+    Capabilities, Caption, Display, LiveControl, OverlayScene, OverlayZone, Platform, TrayDisplay, TrayItem,
+    TrayMenu, WindowId,
 };
 
 use crate::debug_log::{DebugLog, Level};
@@ -46,6 +46,8 @@ pub(crate) struct PendingNavigation {
 pub(crate) struct Core<P> {
     pub platform: P,
     pub capabilities: Capabilities,
+    /// What the platform last said about live control.
+    pub live_control: LiveControl,
     pub paths: Paths,
     pub store: SettingsStore,
     pub settings: Settings,
@@ -75,8 +77,9 @@ pub(crate) struct Core<P> {
 }
 
 impl<P: Platform> Core<P> {
-    pub fn new(platform: P, paths: Paths) -> Self {
+    pub fn new(mut platform: P, paths: Paths) -> Self {
         let capabilities = platform.capabilities();
+        let live_control = platform.live_control();
         let store = SettingsStore::new(paths.settings.clone(), capabilities.platform);
         let settings = Settings::defaults(capabilities.platform);
         let diagnostics = Diagnostics::new(paths.log_dir.clone());
@@ -84,6 +87,7 @@ impl<P: Platform> Core<P> {
         Self {
             platform,
             capabilities,
+            live_control,
             paths,
             store,
             settings,
@@ -160,9 +164,8 @@ impl<P: Platform> Core<P> {
     /// Recompute whether live control runs, and reconfigure what depends on it.
     pub fn refresh_live(&mut self, announce: bool) {
         self.permission_granted = !self.capabilities.needs_permission || self.platform.is_granted();
-        let should_run = self.settings.snapping.enabled
-            && self.permission_granted
-            && self.capabilities.live_control_available;
+        let should_run =
+            self.settings.snapping.enabled && self.permission_granted && self.live_control.is_available();
         let waiting = self.settings.snapping.enabled && !self.permission_granted;
         self.platform.watch(waiting);
 
@@ -176,12 +179,12 @@ impl<P: Platform> Core<P> {
                 self.end_drag();
             }
             if announce {
-                let message = if should_run {
-                    "Snapping is on."
-                } else {
-                    "Accessibility access is off. Snapping is paused."
+                let message = match (should_run, self.live_control.reason()) {
+                    (true, _) => "Snapping is on.".to_owned(),
+                    (false, Some(reason)) => reason.to_owned(),
+                    (false, None) => "Accessibility access is off. Snapping is paused.".to_owned(),
                 };
-                self.announce(message, false, true);
+                self.announce(&message, false, true);
             }
         }
         self.platform.set_press_monitoring(self.live);
@@ -192,7 +195,7 @@ impl<P: Platform> Core<P> {
 
     /// Register the shortcuts the current state needs.
     pub fn configure_hotkeys(&mut self) {
-        let allowed = self.permission_granted && !self.recording && self.capabilities.live_control_available;
+        let allowed = self.permission_granted && !self.recording && self.live_control.is_available();
         let wanted = if allowed {
             desired_hotkeys(&self.settings, &self.display_ids(), self.live)
         } else {
@@ -441,10 +444,7 @@ impl<P: Platform> Core<P> {
                 permission_granted: self.permission_granted,
                 needs_permission: self.capabilities.needs_permission,
                 preview_visible: self.preview.is_some(),
-                unavailable_reason: (!self.capabilities.live_control_available).then(|| {
-                    "Snappy can't control windows in a Wayland session yet. Log in with an X11 session to use Snappy."
-                        .to_owned()
-                }),
+                unavailable_reason: self.live_control.reason().map(str::to_owned),
             },
             workspaces: WorkspacesState {
                 running: self.workspaces.is_running(),

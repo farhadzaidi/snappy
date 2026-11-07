@@ -12,12 +12,12 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LoginItem, Overlay, OverlayScene, Permissions,
-    Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
+    Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 use x11rb::rust_connection::RustConnection;
 
-use crate::messages::{NO_PARKING_DESKTOP, unavailable};
+use crate::messages::{NO_PARKING_DESKTOP, WAYLAND, unavailable};
 use crate::overlay::UiCommand;
 use crate::shared::Shared;
 use crate::windows::Windows;
@@ -282,7 +282,15 @@ impl Platform for X11Platform {
             platform: PlatformName::Linux,
             parking: ParkingPolicy::Desktop,
             needs_permission: false,
-            live_control_available: self.live,
+        }
+    }
+
+    /// X11 clients in a Wayland session see only XWayland's windows.
+    fn live_control(&mut self) -> LiveControl {
+        if self.live {
+            LiveControl::Available
+        } else {
+            LiveControl::Unavailable(WAYLAND.to_owned())
         }
     }
 
