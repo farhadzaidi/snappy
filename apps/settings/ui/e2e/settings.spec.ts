@@ -132,10 +132,10 @@ test("the workspaces group shows the previous, next, and move-window shortcuts",
   const workspaces = group(page, "Workspaces");
   const recorder = (name: string) => workspaces.getByRole("button", { name, exact: true });
   await expect(workspaces.locator(".recorder-button")).toHaveCount(4);
-  await expect(recorder("Previous workspace")).toHaveText("Snappy + [");
-  await expect(recorder("Next workspace")).toHaveText("Snappy + ]");
-  await expect(recorder("Move window to previous workspace")).toHaveText("Snappy + ,");
-  await expect(recorder("Move window to next workspace")).toHaveText("Snappy + .");
+  await expect(recorder("Previous workspace")).toHaveText("Snappy + ;");
+  await expect(recorder("Next workspace")).toHaveText("Snappy + '");
+  await expect(recorder("Move window to previous workspace")).toHaveText("Snappy + .");
+  await expect(recorder("Move window to next workspace")).toHaveText("Snappy + /");
 });
 
 test("the workspace defaults use the Snappy key on Windows and Linux too", async ({ page }) => {
@@ -143,10 +143,10 @@ test("the workspace defaults use the Snappy key on Windows and Linux too", async
     await openApp(page, platform);
     await showPage(page, "Settings");
     await expect(group(page, "Workspaces").locator(".recorder-button")).toHaveText([
-      "Snappy + [",
-      "Snappy + ]",
-      "Snappy + ,",
+      "Snappy + ;",
+      "Snappy + '",
       "Snappy + .",
+      "Snappy + /",
     ]);
   }
 });

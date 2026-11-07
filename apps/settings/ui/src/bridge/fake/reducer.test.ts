@@ -157,10 +157,10 @@ describe("fake daemon", () => {
   it("every platform starts with the same Snappy-key workspace steps and no undo or redo", () => {
     for (const platform of ["macos", "windows", "linux"] as const) {
       const { workspaces, history } = initialState(platform).settings;
-      expect(workspaces.previous).toMatchObject(snappy("BracketLeft"));
-      expect(workspaces.next).toMatchObject(snappy("BracketRight"));
-      expect(workspaces.movePrevious).toMatchObject(snappy("Comma"));
-      expect(workspaces.moveNext).toMatchObject(snappy("Period"));
+      expect(workspaces.previous).toMatchObject(snappy("Semicolon"));
+      expect(workspaces.next).toMatchObject(snappy("Quote"));
+      expect(workspaces.movePrevious).toMatchObject(snappy("Period"));
+      expect(workspaces.moveNext).toMatchObject(snappy("Slash"));
       expect(workspaces.items.every((item) => item.switchShortcut === null)).toBe(true);
       expect(history).toEqual({ undo: null, redo: null });
     }

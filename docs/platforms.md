@@ -21,7 +21,7 @@ Each adapter keeps its user-facing refusals in `src/messages.rs`, worded the sam
 
 **Drag detection** (`src/monitors.rs`). Global and local NSEvent monitors for left mouse down and up. While drag monitoring is on, they add left-mouse-dragged and flags-changed. Modifiers come from each event's own flags, so the mouse-up carries those held when the button came up. NSEvent monitors need only Accessibility; a keyboard event tap would add an Input Monitoring prompt, so none is used.
 
-**Shortcuts** (`src/hotkeys.rs`, `src/keycodes.rs`). Carbon `RegisterEventHotKey`, with W3C key codes mapped to virtual key codes. The availability probe registers the chord under a separate signature and releases it at once. Carbon accepts chords that macOS itself consumes first, such as Mission Control's Control-arrows, so `src/system_shortcuts.rs` also reads the enabled entries of `com.apple.symbolichotkeys` and reports those chords as taken. Accessibility's increase and decrease contrast shortcuts, Control-Option-Command with period and comma, ship turned off; a user who turns them on loses the default move-window steps to them, and the probe says so.
+**Shortcuts** (`src/hotkeys.rs`, `src/keycodes.rs`). Carbon `RegisterEventHotKey`, with W3C key codes mapped to virtual key codes. The availability probe registers the chord under a separate signature and releases it at once. Carbon accepts chords that macOS itself consumes first, such as Mission Control's Control-arrows, so `src/system_shortcuts.rs` also reads the enabled entries of `com.apple.symbolichotkeys` and reports those chords as taken. Accessibility's increase and decrease contrast shortcuts, Control-Option-Command with period and comma, ship turned off; a user who turns them on loses the default previous move-window step (period) to them, and the probe says so.
 
 **Overlays** (`src/overlay/`). One borderless, non-activating, click-through `NSPanel` per display at the floating level, joining every Space and full-screen apps. Content is Core Animation layers: one shape and two text layers per zone, redrawn only where they changed. Panels are created ahead of the first drag and kept. Zones use the system accent color.
 
@@ -74,7 +74,7 @@ Each adapter keeps its user-facing refusals in `src/messages.rs`, worded the sam
 **Known quirks.**
 
 - Windows Snap still runs during drags, because the drag is the system's own move loop. Dropping inside a zone works, but dropping at a screen edge or corner lets Windows Snap act first, and dragging to the top edge can show the Snap Layouts flyout over Snappy's overlay. Users who want only Snappy can turn off "Snap windows" under Settings, System, Multitasking.
-- The taskbar owns Win with Ctrl, Alt, or Shift plus a digit, and Ctrl+Alt without Win types AltGr characters on many layouts. The Snappy key, Ctrl+Alt+Win, avoids both. Win+period (the emoji panel) and Win+comma (peek at the desktop) don't collide with the move-window steps, which add Ctrl and Alt.
+- The taskbar owns Win with Ctrl, Alt, or Shift plus a digit, and Ctrl+Alt without Win types AltGr characters on many layouts. The Snappy key, Ctrl+Alt+Win, avoids both. Win+period and Win+semicolon (the emoji panel) and Win+slash (IME reconversion) don't collide with the workspace steps, which add Ctrl and Alt.
 - While an elevated window is in front, Windows drops injected input; the live tests wait for such windows to close.
 - Two displays, scales other than 100%, and mixed DPI are untested, since the test VM has one display.
 

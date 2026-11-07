@@ -336,17 +336,18 @@ impl Workspace {
 }
 
 impl Workspaces {
-    /// Three workspaces, stepped through with the Snappy key and the bracket keys, or with
-    /// the comma and period keys to take the focused window along.
+    /// Three workspaces, stepped through with the Snappy key and the semicolon and quote
+    /// keys, or with the period and slash keys to take the focused window along. Both pairs
+    /// sit together under the right hand, on every keyboard layout's home and bottom rows.
     pub fn defaults() -> Self {
         let chord = |code: &str, label: &str| Some(KeyChord::snappy(code, []).with_label(label));
         Self {
             enabled: false,
             active_id: "workspace-1".to_owned(),
-            previous: chord("BracketLeft", "["),
-            next: chord("BracketRight", "]"),
-            move_previous: chord("Comma", ","),
-            move_next: chord("Period", "."),
+            previous: chord("Semicolon", ";"),
+            next: chord("Quote", "'"),
+            move_previous: chord("Period", "."),
+            move_next: chord("Slash", "/"),
             items: (1..=3)
                 .map(|n| Workspace::numbered(format!("workspace-{n}"), n))
                 .collect(),
@@ -908,10 +909,10 @@ mod tests {
             assert_eq!(
                 steps,
                 [
-                    snappy("BracketLeft"),
-                    snappy("BracketRight"),
-                    snappy("Comma"),
+                    snappy("Semicolon"),
+                    snappy("Quote"),
                     snappy("Period"),
+                    snappy("Slash"),
                 ],
                 "{platform:?}"
             );
@@ -950,9 +951,9 @@ mod tests {
         let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(
             loaded.workspaces.move_previous.map(|c| c.combo()),
-            snappy("Comma")
+            snappy("Period")
         );
-        assert_eq!(loaded.workspaces.move_next.map(|c| c.combo()), snappy("Period"));
+        assert_eq!(loaded.workspaces.move_next.map(|c| c.combo()), snappy("Slash"));
         assert_eq!(loaded.workspaces.next, None, "written steps are kept");
         assert_eq!(loaded.history, MoveHistory::default());
     }
@@ -961,7 +962,7 @@ mod tests {
     fn a_file_without_move_steps_skips_defaults_another_binding_uses() {
         let mut settings = Settings::defaults(MAC);
         settings.workspaces.move_next = None;
-        settings.workspaces.items[0].switch_shortcut = Some(KeyChord::snappy("Period", []));
+        settings.workspaces.items[0].switch_shortcut = Some(KeyChord::snappy("Slash", []));
         let mut written = serde_json::to_value(settings).unwrap();
         let workspaces = written["workspaces"].as_object_mut().unwrap();
         workspaces.remove("movePrevious");
@@ -969,7 +970,7 @@ mod tests {
         let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
         assert_eq!(
             loaded.workspaces.move_previous.map(|c| c.combo()),
-            snappy("Comma")
+            snappy("Period")
         );
         assert_eq!(loaded.workspaces.move_next, None);
     }
@@ -1047,8 +1048,8 @@ mod tests {
             .collect();
         assert!(registered.contains(&KeyChord::new("KeyW", [Modifier::Ctrl, Modifier::Alt]).combo()));
         assert!(registered.contains(&KeyChord::new("KeyN", [Modifier::Ctrl, Modifier::Alt]).combo()));
-        assert!(!registered.contains(&snappy("BracketLeft").unwrap()));
-        assert!(registered.contains(&snappy("Comma").unwrap()));
+        assert!(!registered.contains(&snappy("Semicolon").unwrap()));
+        assert!(registered.contains(&snappy("Period").unwrap()));
     }
 
     #[test]
@@ -1080,7 +1081,7 @@ mod tests {
         assert_eq!(loaded.workspaces.previous, Workspaces::defaults().previous);
         assert_eq!(
             loaded.workspaces.move_next,
-            Some(KeyChord::snappy("Period", [Modifier::Shift]).with_label("."))
+            Some(KeyChord::snappy("Slash", [Modifier::Shift]).with_label("/"))
         );
 
         let saved: serde_json::Value = serde_json::from_slice(&loaded.to_json().unwrap()).unwrap();

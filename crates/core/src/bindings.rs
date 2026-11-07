@@ -533,7 +533,7 @@ mod tests {
         settings.workspaces.move_next = settings.workspaces.previous.clone();
         assert_eq!(
             first_conflict(&settings, MAC).as_deref(),
-            Some("Snappy + [ is already assigned to Previous workspace.")
+            Some("Snappy + ; is already assigned to Previous workspace.")
         );
 
         let mut settings = Settings::defaults(MAC);
@@ -547,7 +547,7 @@ mod tests {
         settings.workspaces.items[2].send_shortcut = settings.workspaces.move_next.clone();
         assert_eq!(
             first_conflict(&settings, MAC).as_deref(),
-            Some("Snappy + . is already assigned to Move window to next workspace.")
+            Some("Snappy + / is already assigned to Move window to next workspace.")
         );
     }
 
@@ -588,7 +588,7 @@ mod tests {
         settings.history.undo = settings.workspaces.next.clone();
         assert_eq!(
             first_conflict(&settings, MAC).as_deref(),
-            Some("Snappy + ] is already assigned to Undo window move.")
+            Some("Snappy + ' is already assigned to Undo window move.")
         );
 
         let mut settings = Settings::defaults(MAC);

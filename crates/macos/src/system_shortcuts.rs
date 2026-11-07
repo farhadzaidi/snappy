@@ -174,19 +174,19 @@ mod tests {
     }
 
     #[test]
-    fn turning_on_the_contrast_shortcuts_takes_the_move_window_steps() {
+    fn turning_on_the_contrast_shortcuts_takes_only_the_previous_move_window_step() {
         let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
-        let steps: Vec<CarbonChord> = [&settings.workspaces.move_previous, &settings.workspaces.move_next]
-            .into_iter()
-            .map(|chord| CarbonChord::from_combo(&chord.as_ref().unwrap().combo()).unwrap())
-            .collect();
+        let step = |chord: &Option<snappy_core::keys::KeyChord>| {
+            CarbonChord::from_combo(&chord.as_ref().unwrap().combo()).unwrap()
+        };
+        let previous = step(&settings.workspaces.move_previous);
+        let next = step(&settings.workspaces.move_next);
         let mut turned_on = DEFAULTS;
         turned_on[4].enabled = true;
         turned_on[5].enabled = true;
-        for step in steps {
-            assert!(!is_taken(step, &DEFAULTS));
-            assert!(is_taken(step, &turned_on));
-        }
+        assert!(!is_taken(previous, &DEFAULTS));
+        assert!(is_taken(previous, &turned_on), "increase contrast is on period");
+        assert!(!is_taken(next, &turned_on));
     }
 
     #[test]

@@ -2439,9 +2439,9 @@ fn every_save_path_refuses_a_conflict_with_its_message() {
         refused(
             Command::SetWorkspaceStepShortcut {
                 step: snappy_core::settings::WorkspaceStep::MoveNext,
-                chord: Some(snappy("BracketLeft")),
+                chord: Some(snappy("Semicolon")),
             },
-            "Snappy + [ is already assigned to Previous workspace.",
+            "Snappy + ; is already assigned to Previous workspace.",
         );
         refused(
             Command::SetHistoryShortcut {
@@ -2800,7 +2800,7 @@ fn while_a_switch_is_pending_next_counts_from_the_requested_workspace() {
     scenario(|| async {
         let engine = live_engine("pending-switch", with_window(FLOATING));
         enable_workspaces(&engine);
-        let next = hotkey_id(&engine, &snappy("BracketRight"));
+        let next = hotkey_id(&engine, &snappy("Quote"));
         event(&engine, PlatformEvent::HotKey(next));
         event(&engine, PlatformEvent::HotKey(next));
         settle(&engine).await;
@@ -2851,7 +2851,7 @@ fn moving_the_window_to_the_next_workspace_takes_it_along_and_switches() {
     scenario(|| async {
         let engine = live_engine("move-next", two_zoned_windows());
         enable_workspaces(&engine);
-        let next = hotkey_id(&engine, &snappy("Period"));
+        let next = hotkey_id(&engine, &snappy("Slash"));
         event(&engine, PlatformEvent::HotKey(next));
         settle(&engine).await;
         assert_eq!(engine.settings().workspaces.active_id, "workspace-2");
@@ -2866,7 +2866,7 @@ fn moving_the_window_to_the_previous_workspace_wraps_to_the_last() {
     scenario(|| async {
         let engine = live_engine("move-previous", two_zoned_windows());
         enable_workspaces(&engine);
-        let previous = hotkey_id(&engine, &snappy("Comma"));
+        let previous = hotkey_id(&engine, &snappy("Period"));
         event(&engine, PlatformEvent::HotKey(previous));
         settle(&engine).await;
         assert_eq!(engine.settings().workspaces.active_id, "workspace-3");
