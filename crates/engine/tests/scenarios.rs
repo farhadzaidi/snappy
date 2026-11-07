@@ -842,16 +842,100 @@ fn the_swap_key_makes_a_drop_swap_when_moves_stack() {
     });
 }
 
+/// Window 1 focused and floating over the left zone, its center inside it, and window 2
+/// filling `occupied`.
+fn floating_over_the_left_zone(occupied: Rect) -> FakePlatform {
+    let mut fake = FakePlatform::default();
+    fake.open(2, FakeWindow::new("com.example.browser", 200, occupied));
+    fake.open(1, FakeWindow::new("com.example.editor", 100, FLOATING));
+    fake
+}
+
+/// The source kinds of the swaps in the debug log, oldest first.
+fn swap_sources(name: &str) -> Vec<String> {
+    std::fs::read_to_string(paths_kept(name).log_dir.join("debug.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|record| record["event"] == "swap")
+        .map(|record| record["source"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
 #[test]
-fn a_floating_window_swaps_with_the_occupant() {
+fn a_floating_window_moved_by_keyboard_sends_the_occupant_to_the_zone_under_its_center() {
     scenario(|| async {
-        let floating = Rect::new(300.0, 200.0, 600.0, 400.0);
-        let mut fake = with_window(floating);
-        fake.open(2, FakeWindow::new("com.example.browser", 200, RIGHT_ZONE));
-        let engine = live_engine("floating-swap", fake);
+        let engine = live_engine("floating-keyboard-swap", floating_over_the_left_zone(RIGHT_ZONE));
+        engine.force_debug_log();
+        event(
+            &engine,
+            PlatformEvent::HotKey(hotkey_id(&engine, &snappy("Digit2"))),
+        );
+        settle(&engine).await;
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (RIGHT_ZONE, LEFT_ZONE)
+        );
+        assert_eq!(status_text(&engine), "Windows swapped.");
+        assert_eq!(swap_sources("floating-keyboard-swap"), ["nearestZone"]);
+
+        undo(&engine);
+        settle(&engine).await;
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (FLOATING, RIGHT_ZONE),
+            "both windows return to their exact frames"
+        );
+    });
+}
+
+#[test]
+fn a_floating_window_dropped_on_an_occupied_zone_sends_the_occupant_to_the_zone_under_its_center() {
+    scenario(|| async {
+        let engine = live_engine("floating-swap", floating_over_the_left_zone(RIGHT_ZONE));
         drag(&engine, WindowId(1), Point::new(1000.0, 400.0), shift()).await;
-        assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(1))), RIGHT_ZONE);
-        assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(2))), floating);
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (RIGHT_ZONE, LEFT_ZONE)
+        );
+        assert_eq!(drop_outcomes("floating-swap"), ["swapped"]);
+    });
+}
+
+#[test]
+fn the_occupant_takes_the_floating_window_frame_when_the_zone_under_it_cannot_take_it() {
+    scenario(|| async {
+        // The zone under the floating window's center is the destination itself.
+        let engine = live_engine(
+            "floating-swap-destination",
+            floating_over_the_left_zone(LEFT_ZONE),
+        );
+        engine.force_debug_log();
+        drag(&engine, WindowId(1), Point::new(300.0, 400.0), shift()).await;
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (LEFT_ZONE, FLOATING)
+        );
+        assert_eq!(swap_sources("floating-swap-destination"), ["floating"]);
+    });
+
+    scenario(|| async {
+        // A third window already fills the zone under the floating window's center.
+        let mut fake = floating_over_the_left_zone(RIGHT_ZONE);
+        fake.open(3, FakeWindow::new("com.example.notes", 300, LEFT_ZONE));
+        fake.focused = Some(WindowId(1));
+        let engine = live_engine("floating-swap-taken", fake);
+        event(
+            &engine,
+            PlatformEvent::HotKey(hotkey_id(&engine, &snappy("Digit2"))),
+        );
+        settle(&engine).await;
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (RIGHT_ZONE, FLOATING)
+        );
+        assert_eq!(frame_of(&engine, 3), LEFT_ZONE, "the third window stays put");
+        assert_eq!(status_text(&engine), "Windows swapped.");
     });
 }
 

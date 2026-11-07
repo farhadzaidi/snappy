@@ -287,7 +287,8 @@ pub(crate) fn escape<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
     core.platform.hide();
 }
 
-/// Where a window at `frame` swaps from: its zone, or its own frame.
+/// Where a window at `frame` swaps from: the zone it fills, the zone under its center, or
+/// its own frame.
 pub(crate) fn swap_source<P: Platform>(core: &Core<P>, frame: Rect) -> SwapSource {
     let work_area = core.display_of(frame).map_or(frame, |display| display.work_area);
     SwapSource::find(frame, work_area, &zone_slots(core))

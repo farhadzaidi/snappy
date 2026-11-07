@@ -291,6 +291,7 @@ pub(crate) struct SwapMove {
     pub window: WindowId,
     /// The window's frame before the gesture.
     pub original: Rect,
+    /// Where the occupant goes, before `plan_swap` settles a floating window's fallback.
     pub source: SwapSource,
     pub destination: ZoneSlot,
     /// Drag drops record diagnostics.
@@ -314,7 +315,7 @@ pub(crate) async fn run_swap<P: Platform + 'static>(
             };
             return run_snap(shared, cancel, request).await;
         }
-        Ok(SwapPlan::Exchange { occupant }) => Ok(occupant),
+        Ok(SwapPlan::Exchange { occupant, source }) => Ok((occupant, source)),
         Ok(SwapPlan::Blocked(block)) => Err(("swapBlocked", block.message().to_owned())),
         Err(error) => Err(("swapFailed", error.to_string())),
     };
@@ -322,14 +323,16 @@ pub(crate) async fn run_swap<P: Platform + 'static>(
     let mut history = shared.take_history(&scope);
     let protected = |window: WindowId| shared.core.borrow().protected.contains(&window);
 
+    let mut source_kind = swap.source.kind();
     let (outcome, failure): (&str, Option<String>) = match occupant {
         Err((outcome, message)) => (outcome, Some(message)),
-        Ok(occupant) => {
+        Ok((occupant, source)) => {
+            source_kind = source.kind();
             shared.core.borrow_mut().op_windows = vec![swap.window, occupant];
             let request = SwapRequest {
                 dragged: swap.window,
                 occupant,
-                source: &swap.source,
+                source: &source,
                 destination: &swap.destination,
                 original: swap.original,
             };
@@ -368,7 +371,7 @@ pub(crate) async fn run_swap<P: Platform + 'static>(
         serde_json::json!({
             "window": swap.window.0,
             "destination": swap.destination.frame,
-            "floatingSource": matches!(swap.source, SwapSource::Floating { .. }),
+            "source": source_kind,
             "outcome": outcome,
             "reason": failure,
         })
@@ -389,9 +392,7 @@ pub(crate) async fn run_swap<P: Platform + 'static>(
 fn discover_and_plan<P: Platform>(shared: &Shared<P>, swap: &SwapMove) -> Result<SwapPlan, WindowError> {
     let mut core = shared.core.borrow_mut();
     let mut frames = vec![swap.destination.frame];
-    if let SwapSource::Zone(slot) = &swap.source {
-        frames.push(slot.frame);
-    }
+    frames.extend(swap.source.zone().map(|slot| slot.frame));
     let found = core.platform.windows_occupying(&frames)?;
     let windows: Vec<WindowSnapshot> = found
         .iter()

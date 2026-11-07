@@ -110,8 +110,8 @@ fn push_bounded(stack: &mut VecDeque<Vec<Move>>, entry: Vec<Move>) {
     }
 }
 
-/// A swap: `dragged` started at `original` in `source` and moves to `destination`, which
-/// `occupant` fills.
+/// A swap: `dragged` started at `original` and moves to `destination`, which `occupant`
+/// fills. The occupant moves to `source`.
 #[derive(Debug, Clone, Copy)]
 pub struct SwapRequest<'a> {
     pub dragged: WindowId,
@@ -200,7 +200,7 @@ pub async fn swap(
         return Err(WindowError::InvalidFrame);
     }
     let occupant_before = ops.read(occupant)?;
-    if !source.is_filled_by(original) || !destination.is_occupied_by(occupant_before) {
+    if !source.starts_at(original) || !destination.is_occupied_by(occupant_before) {
         return Err(WindowError::unavailable(
             "A window left its zone before the swap. Try the drag again.",
         ));
@@ -267,7 +267,7 @@ async fn exchange(
     let (final_dragged, final_occupant) = (ops.read(dragged)?, ops.read(occupant)?);
     // Zones never overlap, so overlapping windows mean an app overrode its frame. A
     // floating source may overlap the destination by design.
-    let overlapping = matches!(source, SwapSource::Zone(_))
+    let overlapping = source.zone().is_some()
         && final_dragged
             .intersection(final_occupant)
             .is_some_and(|shared| shared.width > ALLOWED_OVERLAP && shared.height > ALLOWED_OVERLAP);
@@ -621,6 +621,30 @@ mod tests {
         };
         block_on(swap(&mut ops, &mut history, request, &cancel, &unprotected)).unwrap();
         assert_eq!((ops.frame(1), ops.frame(2)), (RIGHT, floating));
+        assert_eq!(history.len(), 1, "one undo entry for both windows");
+        block_on(undo(&mut ops, &mut history, &cancel, &unprotected)).unwrap();
+        assert_eq!((ops.frame(1), ops.frame(2)), (floating, RIGHT));
+    }
+
+    #[test]
+    fn the_occupant_fills_the_zone_under_a_floating_window_and_undo_restores_both_frames() {
+        let floating = Rect::new(200.0, 200.0, 400.0, 300.0);
+        let mut ops = FakeOps::new(&[(1, floating), (2, RIGHT)]);
+        let mut history = UndoHistory::default();
+        let cancel = CancelToken::default();
+        let source = SwapSource::NearestZone {
+            zone: slot("l", LEFT),
+            frame: floating,
+        };
+        let destination = slot("r", RIGHT);
+        let request = SwapRequest {
+            original: floating,
+            ..request(&source, &destination)
+        };
+        let [dragged, occupant] =
+            block_on(swap(&mut ops, &mut history, request, &cancel, &unprotected)).unwrap();
+        assert_eq!((ops.frame(1), ops.frame(2)), (RIGHT, LEFT));
+        assert_eq!((dragged.requested, occupant.requested), (RIGHT, LEFT));
         assert_eq!(history.len(), 1, "one undo entry for both windows");
         block_on(undo(&mut ops, &mut history, &cancel, &unprotected)).unwrap();
         assert_eq!((ops.frame(1), ops.frame(2)), (floating, RIGHT));

@@ -63,7 +63,18 @@ pub const ALL: &[(&str, Scenario)] = &[
     ("grid_sized_windows_snap_without_waiting", grid_snap),
     ("minimum_sizes_are_respected", minimum_size),
     ("escape_cancels_the_snap", escape_cancels),
-    ("a_floating_window_swaps_with_the_occupant", floating_swap),
+    (
+        "a_floating_window_sends_the_occupant_to_the_zone_under_it",
+        floating_swap,
+    ),
+    (
+        "a_floating_window_moved_by_keyboard_sends_the_occupant_to_the_zone_under_it",
+        floating_keyboard_swap,
+    ),
+    (
+        "a_floating_window_over_the_destination_swaps_into_its_frame",
+        floating_swap_fallback,
+    ),
     (
         "overlays_float_above_windows_without_taking_focus",
         overlay_floats,
@@ -618,16 +629,58 @@ fn workspace_switch(context: &mut Context) -> Result<Outcome, String> {
     Ok(timed(elapsed))
 }
 
-fn floating_swap(context: &mut Context) -> Result<Outcome, String> {
+/// A window half the size of `zone`, centered on it, so it floats over the zone without
+/// filling it.
+fn floating_over(zone: Rect) -> Rect {
+    let size = Size::new(zone.width * 0.5, zone.height * 0.5);
+    Rect::new(
+        zone.mid_x() - size.width / 2.0,
+        zone.mid_y() - size.height / 2.0,
+        size.width,
+        size.height,
+    )
+}
+
+/// `occupant` in the right zone, then `floater` floating over zone `over`, focused.
+/// Returns the right zone and the floater's frame.
+fn occupied_right_and_floating(
+    context: &mut Context,
+    occupant: &str,
+    floater: &str,
+    over: usize,
+) -> Result<(Rect, Rect), String> {
     let right = context.zone(1)?;
-    context.open("occupant", floating(&context.display, 160.0))?;
+    context.open(occupant, floating(&context.display, 160.0))?;
     context.press(&context.zone_key(1)?)?;
-    context.wait_in("occupant", right)?;
-    context.open("floater", floating(&context.display, 180.0))?;
-    let before = context.fixture.frame("floater")?;
+    context.wait_in(occupant, right)?;
+    context.open(floater, floating_over(context.zone(over)?))?;
+    Ok((right, context.fixture.frame(floater)?))
+}
+
+/// A swap trades zones: the occupant goes to the zone under the floater's center.
+fn floating_swap(context: &mut Context) -> Result<Outcome, String> {
+    let (right, _) = occupied_right_and_floating(context, "occupant", "floater", 0)?;
     context.drag_window("floater", right.center(), context.drag_mods())?;
     let elapsed = context.wait_in("floater", right)?;
-    context.wait_in("occupant", before)?;
+    context.wait_in("occupant", context.zone(0)?)?;
+    Ok(timed(elapsed))
+}
+
+fn floating_keyboard_swap(context: &mut Context) -> Result<Outcome, String> {
+    let (right, _) = occupied_right_and_floating(context, "kocc", "kfloat", 0)?;
+    context.press(&context.zone_key(1)?)?;
+    let elapsed = context.wait_in("kfloat", right)?;
+    context.wait_in("kocc", context.zone(0)?)?;
+    Ok(timed(elapsed))
+}
+
+/// When the zone under the floater is the destination itself, the occupant takes the
+/// floater's exact frame instead.
+fn floating_swap_fallback(context: &mut Context) -> Result<Outcome, String> {
+    let (right, before) = occupied_right_and_floating(context, "focc", "ffloat", 1)?;
+    context.drag_window("ffloat", right.center(), context.drag_mods())?;
+    let elapsed = context.wait_in("ffloat", right)?;
+    context.wait_in("focc", before)?;
     Ok(timed(elapsed))
 }
 
