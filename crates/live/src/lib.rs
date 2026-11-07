@@ -3,6 +3,8 @@
 //! never in the owner's session.
 
 pub mod fixture;
+#[cfg(target_os = "linux")]
+pub mod gnome;
 pub mod input;
 pub mod protocol;
 pub mod scenarios;

@@ -31,8 +31,16 @@ pub fn on_screen_windows() -> Result<Vec<ScreenWindow>, String> {
         .collect())
 }
 
+/// On GNOME on Wayland the test helper lists windows and Snappy's overlays; on X11 the X
+/// server does.
 #[cfg(target_os = "linux")]
-pub use x11::on_screen_windows;
+pub fn on_screen_windows() -> Result<Vec<ScreenWindow>, String> {
+    if crate::gnome::is_session() {
+        crate::gnome::on_screen_windows(crate::session::daemon_pid())
+    } else {
+        x11::on_screen_windows()
+    }
+}
 
 /// The names on the D-Bus session bus, where X11 desktops find status items.
 #[cfg(target_os = "linux")]
@@ -93,9 +101,14 @@ pub fn screenshot(path: &std::path::Path) {
         .status();
 }
 
-/// Saves the whole X screen, every monitor included, as a PNG at `path`.
+/// Saves the whole screen, every monitor included, as a PNG at `path`: through GNOME Shell
+/// on GNOME on Wayland, else from the X server.
 #[cfg(target_os = "linux")]
 pub fn screenshot(path: &std::path::Path) {
+    if crate::gnome::is_session() {
+        crate::gnome::screenshot(path);
+        return;
+    }
     let _ = std::process::Command::new("sh")
         .arg("-c")
         .arg(r#"xwd -root -silent | xwdtopnm 2>/dev/null | pnmtopng >"$1""#)

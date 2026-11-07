@@ -49,6 +49,17 @@ pub struct Context<'a> {
 pub struct Outcome {
     pub elapsed_ms: Option<f64>,
     pub note: Option<String>,
+    /// Why the scenario can't apply here, when it can't.
+    pub skipped: Option<String>,
+}
+
+impl Outcome {
+    pub fn skipped(reason: &str) -> Outcome {
+        Outcome {
+            skipped: Some(reason.to_owned()),
+            ..Outcome::default()
+        }
+    }
 }
 
 pub type Scenario = fn(&mut Context) -> Result<Outcome, String>;
@@ -447,7 +458,7 @@ fn describe(frame: Rect) -> String {
 fn timed(elapsed: f64) -> Outcome {
     Outcome {
         elapsed_ms: Some(elapsed),
-        note: None,
+        ..Outcome::default()
     }
 }
 
@@ -535,6 +546,11 @@ fn inverted_drag(context: &mut Context) -> Result<Outcome, String> {
 /// Terminals size in character cells, so they can't land on the exact zone size. The snap
 /// must still finish at once instead of waiting out the settle schedule.
 fn grid_snap(context: &mut Context) -> Result<Outcome, String> {
+    if !context.fixture.supports_size_steps() {
+        return Ok(Outcome::skipped(
+            "Wayland has no way for an app to ask to size in steps; the Xwayland run covers it",
+        ));
+    }
     let left = context.zone(0)?;
     let cell = Size::new(7.0, 17.0);
     context.open_with("grid", floating(&context.display, 100.0), None, Some(cell))?;
@@ -564,6 +580,7 @@ fn grid_snap(context: &mut Context) -> Result<Outcome, String> {
             "Snappy settled in {settled:.1} ms at {}",
             describe(frame)
         )),
+        ..Outcome::default()
     })
 }
 
@@ -847,9 +864,20 @@ fn menu_bar_item(context: &mut Context) -> Result<Outcome, String> {
 }
 
 /// X11's status item is a StatusNotifierItem on the session bus, not a window. It is
-/// drawn by the desktop's tray host, so this checks that the daemon registered it.
+/// drawn by the desktop's tray host, so this checks that the daemon registered it. On GNOME
+/// on Wayland, Snappy's extension puts the item in the top bar.
 #[cfg(target_os = "linux")]
 fn menu_bar_item(context: &mut Context) -> Result<Outcome, String> {
+    if crate::gnome::is_session() {
+        let started = Instant::now();
+        while !crate::gnome::indicator_shown()? {
+            if started.elapsed() > SETTLE_TIMEOUT {
+                return Err("Snappy's item isn't in the top bar".to_owned());
+            }
+            pause(100);
+        }
+        return Ok(Outcome::default());
+    }
     let pid = context.daemon.pid().ok_or("the daemon isn't running")?;
     let started = Instant::now();
     loop {
@@ -859,6 +887,7 @@ fn menu_bar_item(context: &mut Context) -> Result<Outcome, String> {
             return Ok(Outcome {
                 elapsed_ms: None,
                 note: Some(format!("registered as {name}; no tray host runs here to draw it")),
+                ..Outcome::default()
             });
         }
         if started.elapsed() > SETTLE_TIMEOUT {

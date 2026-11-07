@@ -1,0 +1,6 @@
+{
+  "uuid": "snappy-test@farhadzaidi.github.io",
+  "name": "Snappy live-test helper",
+  "description": "Only for Snappy's live tests in a throwaway GNOME Shell: injects input and reports windows. Never install it anywhere else.",
+  "shell-version": ["46", "47", "48", "49"]
+}

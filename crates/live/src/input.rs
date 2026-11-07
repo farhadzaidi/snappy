@@ -298,7 +298,22 @@ mod win32 {
 }
 
 #[cfg(target_os = "linux")]
-pub use x11::X11Input as PlatformInput;
+pub use x11::X11Input;
+
+/// The platform's input: XTest on X11, GNOME Shell's virtual devices on GNOME on Wayland.
+#[cfg(target_os = "linux")]
+pub fn platform_input() -> Result<Box<dyn Input>, String> {
+    if crate::gnome::is_session() {
+        Ok(Box::new(crate::gnome::GnomeInput::new()?))
+    } else {
+        Ok(Box::new(X11Input::new()?))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn platform_input() -> Result<Box<dyn Input>, String> {
+    Ok(Box::new(PlatformInput::new()?))
+}
 
 #[cfg(target_os = "linux")]
 mod x11 {

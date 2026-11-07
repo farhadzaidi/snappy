@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
+use std::rc::Rc;
 
 use snappy_core::geometry::Rect;
 use snappy_live::protocol::{Reply, Request};
@@ -59,7 +60,9 @@ fn reply(reply: &Reply) {
 
 #[derive(Default)]
 struct Fixture {
-    windows: HashMap<String, Window>,
+    windows: HashMap<String, Rc<Window>>,
+    #[cfg(target_os = "linux")]
+    paint: paint::Painter,
 }
 
 impl Fixture {
@@ -85,6 +88,9 @@ impl Fixture {
                     Ok(window) => {
                         #[cfg(windows)]
                         constraints::apply(&window, min_size, grid);
+                        let window = Rc::new(window);
+                        #[cfg(target_os = "linux")]
+                        self.paint.add(event_loop, &window);
                         let reply = Reply::frame(outer_frame(&window));
                         self.windows.insert(id, window);
                         reply
@@ -102,7 +108,11 @@ impl Fixture {
                 Reply::frame(outer_frame(window))
             }),
             Request::Close { id } => match self.windows.remove(&id) {
-                Some(_) => Reply::default(),
+                Some(_window) => {
+                    #[cfg(target_os = "linux")]
+                    self.paint.remove(_window.id());
+                    Reply::default()
+                }
                 None => Reply::error(format!("no window {id}")),
             },
             Request::Quit => {
@@ -248,10 +258,79 @@ fn outer_frame(window: &Window) -> Rect {
 impl ApplicationHandler<Request> for Fixture {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
 
-    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window: WindowId, _event: WindowEvent) {}
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window: WindowId, _event: WindowEvent) {
+        #[cfg(target_os = "linux")]
+        if matches!(_event, WindowEvent::RedrawRequested | WindowEvent::Resized(_)) {
+            self.paint.draw(_window);
+        }
+    }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, request: Request) {
         let answer = self.handle(event_loop, request);
         reply(&answer);
+    }
+}
+
+/// Plain gray content. X11 shows a window that never draws; Wayland shows one only after it
+/// has drawn a frame.
+#[cfg(target_os = "linux")]
+mod paint {
+    use std::collections::HashMap;
+    use std::num::NonZeroU32;
+    use std::rc::Rc;
+
+    use softbuffer::{Context, Surface};
+    use winit::event_loop::{ActiveEventLoop, OwnedDisplayHandle};
+    use winit::window::{Window, WindowId};
+
+    const GRAY: u32 = 0x00d0_d0d0;
+
+    type WindowSurface = Surface<OwnedDisplayHandle, Rc<Window>>;
+
+    #[derive(Default)]
+    pub struct Painter {
+        context: Option<Context<OwnedDisplayHandle>>,
+        surfaces: HashMap<WindowId, WindowSurface>,
+    }
+
+    impl Painter {
+        pub fn add(&mut self, event_loop: &ActiveEventLoop, window: &Rc<Window>) {
+            if self.context.is_none() {
+                self.context = Context::new(event_loop.owned_display_handle()).ok();
+            }
+            let Some(context) = &self.context else {
+                eprintln!("snappy-fixture: no drawing context");
+                return;
+            };
+            match Surface::new(context, Rc::clone(window)) {
+                Ok(surface) => {
+                    self.surfaces.insert(window.id(), surface);
+                    self.draw(window.id());
+                }
+                Err(error) => eprintln!("snappy-fixture: can't draw a window: {error}"),
+            }
+        }
+
+        pub fn remove(&mut self, window: WindowId) {
+            self.surfaces.remove(&window);
+        }
+
+        pub fn draw(&mut self, window: WindowId) {
+            let Some(surface) = self.surfaces.get_mut(&window) else {
+                return;
+            };
+            let size = surface.window().inner_size();
+            let (Some(width), Some(height)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height))
+            else {
+                return;
+            };
+            if surface.resize(width, height).is_err() {
+                return;
+            }
+            if let Ok(mut buffer) = surface.buffer_mut() {
+                buffer.fill(GRAY);
+                let _ = buffer.present();
+            }
+        }
     }
 }

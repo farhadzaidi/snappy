@@ -32,7 +32,12 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+snappy-gnome = { path = "../gnome" }
+snappy-linux = { path = "../linux" }
 snappy-x11 = { path = "../x11" }
+# Wayland shows a window only once it has drawn, so fixture windows paint a plain frame.
+softbuffer = { version = "0.4", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "x11-dlopen"] }
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 x11rb = { version = "0.14", default-features = false, features = ["res", "xtest"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -12,7 +12,7 @@ use serde::Serialize;
 use snappy_core::keys::{KeyChord, Modifier, Platform};
 use snappy_core::settings::Settings;
 use snappy_live::fixture::Fixture;
-use snappy_live::input::{PlatformInput, pause};
+use snappy_live::input::{pause, platform_input};
 use snappy_live::scenarios::{ALL, Context};
 use snappy_live::screen::screenshot;
 use snappy_live::session::Daemon;
@@ -30,6 +30,8 @@ struct Options {
 struct ScenarioResult {
     name: String,
     passed: bool,
+    /// Why the scenario couldn't apply here; it counts as passed.
+    skipped: Option<String>,
     elapsed_ms: Option<f64>,
     detail: Option<String>,
 }
@@ -91,6 +93,7 @@ fn test_settings() -> Result<Settings, String> {
     match PLATFORM {
         Platform::MacOs => assign_macos_workspace_shortcuts(&mut settings),
         Platform::Windows => assign_windows_workspace_shortcuts(&mut settings),
+        Platform::Linux if is_gnome() => assign_gnome_workspace_shortcuts(&mut settings),
         Platform::Linux => assign_linux_workspace_shortcuts(&mut settings),
     }
     settings
@@ -154,6 +157,77 @@ fn assign_linux_workspace_shortcuts(settings: &mut Settings) {
     );
 }
 
+/// GNOME binds Super with Ctrl and a digit to opening an app's new window, and Ctrl+Alt
+/// with an F-key switches to a text console, so these use Super with Alt, Shift, or both.
+fn assign_gnome_workspace_shortcuts(settings: &mut Settings) {
+    assign_workspace_shortcuts(
+        settings,
+        digit,
+        &[Modifier::Alt, Modifier::Meta],
+        &[Modifier::Ctrl, Modifier::Shift, Modifier::Meta],
+        &[Modifier::Alt, Modifier::Shift, Modifier::Meta],
+    );
+}
+
+/// A freshly started GNOME Shell ignores title bar drags of a Wayland app until the session
+/// has handled some input, so one throwaway window is clicked and dragged first.
+#[cfg(target_os = "linux")]
+fn warm_up(
+    fixture: &mut Fixture,
+    input: &mut dyn snappy_live::input::Input,
+    display: &Display,
+) -> Result<(), String> {
+    if !is_gnome() {
+        return Ok(());
+    }
+    let area = display.work_area;
+    let frame = fixture.open(
+        "warm-up",
+        snappy_core::geometry::Rect::new(area.x + 200.0, area.y + 200.0, 500.0, 300.0),
+        None,
+        None,
+    )?;
+    fixture.focus("warm-up")?;
+    pause(500);
+    let grip = snappy_core::geometry::Point::new(frame.mid_x(), frame.y + 14.0);
+    let to = snappy_core::geometry::Point::new(grip.x + 150.0, grip.y + 100.0);
+    input.drag(grip, to, snappy_core::keys::Mods::NONE, 6)?;
+    pause(300);
+    fixture.close("warm-up")?;
+    pause(300);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn warm_up(
+    _fixture: &mut Fixture,
+    _input: &mut dyn snappy_live::input::Input,
+    _display: &Display,
+) -> Result<(), String> {
+    Ok(())
+}
+
+/// On GNOME the test helper's virtual devices keep whatever a failed scenario left held.
+#[cfg(target_os = "linux")]
+fn release_input() {
+    if is_gnome() {
+        snappy_live::gnome::release_all();
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn release_input() {}
+
+#[cfg(target_os = "linux")]
+fn is_gnome() -> bool {
+    snappy_live::gnome::is_session()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_gnome() -> bool {
+    false
+}
+
 fn run(options: &Options) -> Result<bool, String> {
     std::fs::create_dir_all(&options.out).map_err(|error| error.to_string())?;
     let settings = test_settings()?;
@@ -165,7 +239,8 @@ fn run(options: &Options) -> Result<bool, String> {
 
     let display = primary_display()?;
     let mut fixture = Fixture::launch(&options.fixture)?;
-    let mut input = PlatformInput::new()?;
+    let mut input = platform_input()?;
+    warm_up(&mut fixture, input.as_mut(), &display)?;
     let mut results = Vec::new();
     {
         let debug_log = daemon.home().join("logs").join("debug.jsonl");
@@ -173,7 +248,7 @@ fn run(options: &Options) -> Result<bool, String> {
             &daemon,
             &settings,
             &mut fixture,
-            &mut input,
+            input.as_mut(),
             display,
             debug_log,
             options.out.clone(),
@@ -190,17 +265,20 @@ fn run(options: &Options) -> Result<bool, String> {
             if outcome.is_err() {
                 screenshot(&options.out.join(format!("{name}.png")));
             }
+            release_input();
             context.close_all();
             let result = match outcome {
                 Ok(outcome) => ScenarioResult {
                     name: (*name).to_owned(),
                     passed: true,
+                    skipped: outcome.skipped,
                     elapsed_ms: outcome.elapsed_ms,
                     detail: outcome.note,
                 },
                 Err(error) => ScenarioResult {
                     name: (*name).to_owned(),
                     passed: false,
+                    skipped: None,
                     elapsed_ms: None,
                     detail: Some(error),
                 },
@@ -219,12 +297,20 @@ fn run(options: &Options) -> Result<bool, String> {
     let json = serde_json::to_vec_pretty(&results).map_err(|error| error.to_string())?;
     std::fs::write(options.out.join("results.json"), json).map_err(|error| error.to_string())?;
     let passed = results.iter().filter(|result| result.passed).count();
-    println!("{passed} of {} scenarios passed", results.len());
+    let skipped = results.iter().filter(|result| result.skipped.is_some()).count();
+    println!(
+        "{passed} of {} scenarios passed, {skipped} of them skipped as not applicable",
+        results.len()
+    );
     Ok(passed == results.len())
 }
 
 fn report(result: &ScenarioResult) {
-    let mark = if result.passed { "pass" } else { "FAIL" };
+    let mark = match (result.passed, &result.skipped) {
+        (true, Some(_)) => "skip",
+        (true, None) => "pass",
+        (false, _) => "FAIL",
+    };
     let timing = result
         .elapsed_ms
         .map(|ms| format!(" ({ms:.0} ms)"))
@@ -232,6 +318,7 @@ fn report(result: &ScenarioResult) {
     let detail = result
         .detail
         .as_deref()
+        .or(result.skipped.as_deref())
         .map(|d| format!(": {d}"))
         .unwrap_or_default();
     println!("{mark} {}{timing}{detail}", result.name);
@@ -248,6 +335,12 @@ fn primary_display() -> Result<Display, String> {
 
 #[cfg(target_os = "linux")]
 fn primary_display() -> Result<Display, String> {
+    if snappy_live::gnome::is_session() {
+        return snappy_gnome::reference::displays()?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "no display".to_owned());
+    }
     let (conn, screen) = x11rb::connect(None).map_err(|error| error.to_string())?;
     snappy_x11::reference::displays(&conn, screen)
         .map_err(|error| error.to_string())?

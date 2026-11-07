@@ -140,6 +140,11 @@ impl Daemon {
     }
 }
 
+/// The daemon's process ID while it runs, for code that has no `Daemon` at hand.
+pub fn daemon_pid() -> Option<i32> {
+    processes::pid()
+}
+
 /// Finding and stopping the daemon by its process name.
 #[cfg(unix)]
 mod processes {
