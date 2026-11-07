@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use snappy_core::keys::{KeyCode, Modifier, Mods};
 
-use super::codes::{self, keysym};
+use snappy_linux::key_codes::{self as codes, keysym};
 
 pub const SHIFT_MASK: u16 = 1 << 0;
 pub const LOCK_MASK: u16 = 1 << 1;

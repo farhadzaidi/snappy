@@ -3,7 +3,6 @@
 
 pub mod glyphs;
 pub mod render;
-pub mod style;
 mod surface;
 
 use std::sync::Arc;

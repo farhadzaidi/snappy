@@ -13,8 +13,8 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::eligibility::{WindowFacts, WindowType};
 use crate::frames::{Extents, FrameGeometry};
-use crate::process;
 use crate::x::Atoms;
+use snappy_linux::process;
 
 /// `_NET_WM_DESKTOP` for windows shown on every desktop.
 const ALL_DESKTOPS: u32 = 0xFFFF_FFFF;

@@ -18,12 +18,12 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::error::X11Error;
 use crate::events::EventLoop;
+use crate::hotkeys;
 use crate::input::{self, Monitoring};
 use crate::overlay::{self, UiCommand};
 use crate::platform::X11Platform;
 use crate::shared::Shared;
 use crate::x::{Atoms, ScreenInfo};
-use crate::{hotkeys, session};
 
 /// XInput 2.2: raw events keep arriving while another client grabs the pointer.
 const XINPUT_VERSION: (u16, u16) = (2, 2);
@@ -53,7 +53,7 @@ impl App {
 
     /// Connects to `display`, or to `DISPLAY` when `None`.
     pub fn connect(display: Option<&str>, events: Sender<PlatformEvent>) -> Result<App, X11Error> {
-        let wayland = session::current_is_wayland();
+        let wayland = snappy_linux::session::current_is_wayland();
         let (conn, number) = x11rb::connect(display).map_err(|error| {
             if wayland {
                 X11Error::WaylandWithoutX

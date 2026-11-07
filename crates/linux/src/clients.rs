@@ -1,4 +1,4 @@
-//! Turning changes of `_NET_CLIENT_LIST` into window and app lifecycle events.
+//! Turning changes of the managed window list into window and app lifecycle events.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -7,19 +7,19 @@ use snappy_platform::{PlatformEvent, WindowId};
 /// The managed clients last seen, with their process IDs.
 #[derive(Debug, Default)]
 pub struct ClientTracker {
-    clients: BTreeMap<u32, Option<u32>>,
+    clients: BTreeMap<u64, Option<u32>>,
 }
 
 impl ClientTracker {
     /// Starts from the current list without reporting it.
-    pub fn new(clients: impl IntoIterator<Item = (u32, Option<u32>)>) -> ClientTracker {
+    pub fn new(clients: impl IntoIterator<Item = (u64, Option<u32>)>) -> ClientTracker {
         ClientTracker {
             clients: clients.into_iter().collect(),
         }
     }
 
     /// Windows in `list` not seen before; their process IDs are needed for `update`.
-    pub fn added(&self, list: &[u32]) -> Vec<u32> {
+    pub fn added(&self, list: &[u64]) -> Vec<u64> {
         list.iter()
             .copied()
             .filter(|window| !self.clients.contains_key(window))
@@ -27,10 +27,10 @@ impl ClientTracker {
     }
 
     /// Records the new list. `pids` names the process of each added window.
-    pub fn update(&mut self, list: &[u32], pids: &BTreeMap<u32, Option<u32>>) -> Vec<PlatformEvent> {
+    pub fn update(&mut self, list: &[u64], pids: &BTreeMap<u64, Option<u32>>) -> Vec<PlatformEvent> {
         let before = self.running();
-        let current: BTreeSet<u32> = list.iter().copied().collect();
-        let removed: Vec<u32> = self
+        let current: BTreeSet<u64> = list.iter().copied().collect();
+        let removed: Vec<u64> = self
             .clients
             .keys()
             .copied()
@@ -39,7 +39,7 @@ impl ClientTracker {
 
         let mut events: Vec<PlatformEvent> = removed
             .iter()
-            .map(|window| PlatformEvent::WindowDestroyed(WindowId(u64::from(*window))))
+            .map(|window| PlatformEvent::WindowDestroyed(WindowId(*window)))
             .collect();
         for window in &removed {
             self.clients.remove(window);
@@ -80,7 +80,7 @@ impl ClientTracker {
 mod tests {
     use super::*;
 
-    fn pids(entries: &[(u32, Option<u32>)]) -> BTreeMap<u32, Option<u32>> {
+    fn pids(entries: &[(u64, Option<u32>)]) -> BTreeMap<u64, Option<u32>> {
         entries.iter().copied().collect()
     }
 

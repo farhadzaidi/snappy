@@ -1,5 +1,5 @@
-//! How a zone looks and where its parts sit. Sizes are given in points and drawn in
-//! pixels, multiplied by the display's scale.
+//! How a zone looks and where its parts sit. Sizes are given in points and drawn in the
+//! display's window units, the points multiplied by its scale.
 //! Rectangles are relative to the overlay's top-left corner, which is the work area's.
 
 use snappy_core::geometry::{Point, Rect};

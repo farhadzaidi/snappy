@@ -6,9 +6,9 @@ use snappy_platform::Display;
 use x11rb::rust_connection::RustConnection;
 
 use crate::error::X11Error;
-use crate::keys::codes::keysym;
 use crate::shared::Keyboard;
 use crate::x::{Atoms, ScreenInfo};
+use snappy_linux::key_codes::keysym;
 
 /// Every display on screen `screen`, primary first, as the adapter reports them.
 pub fn displays(conn: &RustConnection, screen: usize) -> Result<Vec<Display>, X11Error> {

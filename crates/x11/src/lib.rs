@@ -7,7 +7,6 @@
 #![cfg(target_os = "linux")]
 
 mod app;
-mod clients;
 mod displays;
 mod eligibility;
 mod error;
@@ -15,15 +14,11 @@ mod events;
 mod frames;
 mod hotkeys;
 mod input;
-mod instance;
 mod keys;
-mod login_item;
 mod messages;
 mod overlay;
 mod platform;
-mod process;
 pub mod reference;
-mod session;
 mod shared;
 mod tray;
 mod windows;
@@ -31,5 +26,4 @@ mod x;
 
 pub use app::{App, Stopper};
 pub use error::X11Error;
-pub use instance::{Claim, InstanceLock, claim, lock_path};
 pub use platform::X11Platform;

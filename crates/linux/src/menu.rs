@@ -1,5 +1,5 @@
-//! The tray menu's structure, built from the engine's `TrayMenu` as plain data
-//! so the StatusNotifierItem side only has to materialize it.
+//! The menu's structure, built from the engine's `TrayMenu` as plain data, so the tray
+//! icon on X11 and the top bar item on GNOME only have to materialize it.
 
 use snappy_platform::{PlatformEvent, TrayCommand, TrayDisplay, TrayItem, TrayMenu};
 

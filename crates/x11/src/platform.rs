@@ -22,7 +22,9 @@ use crate::overlay::UiCommand;
 use crate::shared::Shared;
 use crate::windows::Windows;
 use crate::x::lock;
-use crate::{displays, hotkeys, input, login_item};
+use snappy_linux::login_item;
+
+use crate::{displays, hotkeys, input};
 
 pub struct X11Platform {
     windows: Windows,

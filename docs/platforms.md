@@ -82,13 +82,13 @@ Each adapter keeps its user-facing refusals in `src/messages.rs`, worded the sam
 
 ## Linux (X11)
 
-`crates/x11`, on `x11rb` (pure Rust, no libxcb). It targets EWMH-compliant stacking window managers and has been verified against Xorg with Xfwm4, with and without its compositor.
+`crates/x11`, on `x11rb` (pure Rust, no libxcb). What doesn't depend on the display server lives in `crates/linux` and is shared with any other Linux adapter: the single-instance lock and signals, the autostart entry, `/proc` facts, recognizing the session, physical key codes, the menu's structure, the overlay's look, and stable display IDs. It targets EWMH-compliant stacking window managers and has been verified against Xorg with Xfwm4, with and without its compositor.
 
 **Threads** (`src/app.rs`). X has no main-thread rule. The event thread reads X events on one connection; the engine thread makes window requests on a second. Key grabs and input selections go out on the event connection so their events arrive where they are read. An overlay thread draws and drives the tray, and the tray's D-Bus service runs inside `ksni`.
 
-**Wayland** (`src/session.rs`). When `XDG_SESSION_TYPE` is `wayland`, or `WAYLAND_DISPLAY` is set without an X11 session type, X11 clients can't see other apps' windows, so live control and workspaces stay off and the settings app says why. With no X server at all the daemon exits with a message.
+**Wayland** (`crates/linux/src/session.rs`). When `XDG_SESSION_TYPE` is `wayland`, or `WAYLAND_DISPLAY` is set without an X11 session type, X11 clients can't see other apps' windows, so live control and workspaces stay off and the settings app says why. With no X server at all the daemon exits with a message.
 
-**Finding and moving windows** (`src/windows/`, `src/frames.rs`, `src/clients.rs`). Managed windows are `_NET_CLIENT_LIST`. Frames include `_NET_FRAME_EXTENTS` decorations and exclude client-side shadows from `_GTK_FRAME_EXTENTS`. Writes are `_NET_MOVERESIZE_WINDOW` client messages; maximized windows have their maximized state removed first. The window under the pointer is the topmost visible client in `_NET_CLIENT_LIST_STACKING`. Recovery keys use `_NET_WM_PID` and the process start time from `/proc`; app identifiers come from `WM_CLASS`.
+**Finding and moving windows** (`src/windows/`, `src/frames.rs`, `crates/linux/src/clients.rs`). Managed windows are `_NET_CLIENT_LIST`. Frames include `_NET_FRAME_EXTENTS` decorations and exclude client-side shadows from `_GTK_FRAME_EXTENTS`. Writes are `_NET_MOVERESIZE_WINDOW` client messages; maximized windows have their maximized state removed first. The window under the pointer is the topmost visible client in `_NET_CLIENT_LIST_STACKING`. Recovery keys use `_NET_WM_PID` and the process start time from `/proc`; app identifiers come from `WM_CLASS`.
 
 **Eligibility** (`src/eligibility.rs`): not full screen; a top-level client without `WM_TRANSIENT_FOR` whose window type is normal or unset; and, when `_NET_WM_ALLOWED_ACTIONS` is present, move and resize allowed (skipped for maximized and minimized windows, which window managers report without them).
 
@@ -106,9 +106,9 @@ Each adapter keeps its user-facing refusals in `src/messages.rs`, worded the sam
 
 **Permissions.** None.
 
-**Single instance and quitting** (`src/instance.rs`). An exclusive lock on `snappy.lock` in `$XDG_RUNTIME_DIR` (else the state folder) holding the daemon's process ID. A second launch sends that process `SIGUSR1`, which opens the settings window, and exits. `SIGTERM` quits like the tray's Quit, so parked windows return first.
+**Single instance and quitting** (`crates/linux/src/instance.rs`). An exclusive lock on `snappy.lock` in `$XDG_RUNTIME_DIR` (else the state folder) holding the daemon's process ID. A second launch sends that process `SIGUSR1`, which opens the settings window, and exits. `SIGTERM` quits like the tray's Quit, so parked windows return first.
 
-**Login item** (`src/login_item.rs`). `snappy.desktop` in `$XDG_CONFIG_HOME/autostart` (default `~/.config/autostart`), running the daemon with `--background`.
+**Login item** (`crates/linux/src/login_item.rs`). `snappy.desktop` in `$XDG_CONFIG_HOME/autostart` (default `~/.config/autostart`), running the daemon with `--background`.
 
 **Known quirks.**
 

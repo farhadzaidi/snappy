@@ -74,15 +74,15 @@ mod platform {
 #[cfg(target_os = "linux")]
 mod platform {
     use snappy_engine::Paths;
+    use snappy_linux::Claim;
     use snappy_platform::PlatformEvent;
-    use snappy_x11::Claim;
 
     use crate::runtime::{forward_events, run_engine};
 
     /// The X event loop runs on this thread and the engine on its own. A second launch
     /// signals the running daemon to open the settings window, then exits.
     pub fn run(paths: Paths, open_settings: bool) -> std::io::Result<()> {
-        let Claim::Primary(mut instance) = snappy_x11::claim(&snappy_x11::lock_path(&paths.state_dir))?
+        let Claim::Primary(mut instance) = snappy_linux::claim(&snappy_linux::lock_path(&paths.state_dir))?
         else {
             return Ok(());
         };

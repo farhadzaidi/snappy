@@ -3805,6 +3805,7 @@ dependencies = [
  "snappy-core",
  "snappy-engine",
  "snappy-ipc",
+ "snappy-linux",
  "snappy-macos",
  "snappy-platform",
  "snappy-windows",
@@ -3853,6 +3854,14 @@ dependencies = [
  "snappy-core",
  "snappy-platform",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "snappy-linux"
+version = "0.0.0"
+dependencies = [
+ "snappy-core",
+ "snappy-platform",
 ]
 
 [[package]]
@@ -3938,6 +3947,7 @@ version = "0.0.0"
 dependencies = [
  "ksni",
  "snappy-core",
+ "snappy-linux",
  "snappy-platform",
  "thiserror 2.0.21",
  "tiny-skia 0.12.0",

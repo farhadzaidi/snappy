@@ -1,8 +1,6 @@
 //! The tray icon: a StatusNotifierItem on the session bus. GNOME shows it only
 //! with the AppIndicator extension.
 
-pub mod menu;
-
 use std::sync::mpsc::Sender;
 
 use ksni::blocking::{Handle, TrayMethods};
@@ -11,7 +9,7 @@ use ksni::{Icon, MenuItem, ToolTip, Tray};
 use snappy_platform::{PlatformEvent, TrayMenu};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
-use menu::{MenuEntry, build};
+use snappy_linux::menu::{MenuEntry, build};
 
 const ICON_SIZES: [u32; 2] = [22, 44];
 

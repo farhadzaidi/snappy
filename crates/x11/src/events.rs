@@ -7,12 +7,12 @@ use std::sync::mpsc::Sender;
 
 use snappy_core::geometry::Point;
 use snappy_core::keys::Mods;
+use snappy_linux::clients::ClientTracker;
 use snappy_platform::{PlatformEvent, WindowId};
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, Window};
 
-use crate::clients::ClientTracker;
 use crate::error::X11Error;
 use crate::input::{HeldModifiers, PRIMARY_BUTTON};
 use crate::shared::Shared;
@@ -42,7 +42,10 @@ enum Flow {
 impl EventLoop {
     pub fn new(shared: Arc<Shared>, events: Sender<PlatformEvent>) -> EventLoop {
         let list = x::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_CLIENT_LIST);
-        let clients = ClientTracker::new(list.iter().map(|window| (*window, pid(&shared, *window))));
+        let clients = ClientTracker::new(
+            list.iter()
+                .map(|window| (u64::from(*window), pid(&shared, *window))),
+        );
         EventLoop {
             shared,
             events,
@@ -253,12 +256,15 @@ impl EventLoop {
 
     fn clients_changed(&mut self) {
         let shared = &self.shared;
-        let list = x::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_CLIENT_LIST);
-        let pids: BTreeMap<Window, Option<u32>> = self
+        let list: Vec<u64> = x::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_CLIENT_LIST)
+            .into_iter()
+            .map(u64::from)
+            .collect();
+        let pids: BTreeMap<u64, Option<u32>> = self
             .clients
             .added(&list)
             .into_iter()
-            .map(|window| (window, pid(shared, window)))
+            .filter_map(|id| Some((id, pid(shared, Window::try_from(id).ok()?))))
             .collect();
         for event in self.clients.update(&list, &pids) {
             if let PlatformEvent::WindowDestroyed(id) = &event

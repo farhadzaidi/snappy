@@ -6,7 +6,7 @@ use snappy_platform::{OverlayScene, OverlayZone};
 use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, Stroke, Transform};
 
 use super::glyphs;
-use super::style::{self, BLACK, Placement, Rgb, WHITE, place, zone_style};
+use snappy_linux::overlay_style::{self as style, BLACK, Placement, Rgb, WHITE, place, zone_style};
 
 /// Rows drawn beyond each side of a band and then dropped, so curves are anti-aliased
 /// away from the band's clip edges, exactly as in a whole image.

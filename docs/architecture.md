@@ -38,6 +38,7 @@ After every command the daemon replies, then sends a new `State`, which is what 
 core ◄── platform ◄── engine ◄── apps/snappy
  ▲          ▲           ▲             │
  │          ├── macos / windows / x11 ◄┘
+ │          │           linux ◄── x11
  │          ├── fake (engine tests)
  │          └── live (live tests)
  ├── ipc ◄── engine, apps/settings/src-tauri
@@ -51,6 +52,7 @@ core ◄── platform ◄── engine ◄── apps/snappy
 | `engine` | core, platform, ipc, tokio | Runtime state, event handling, the operation queue, stores, diagnostics. |
 | `ipc` | core, platform | `ToSettings`, `ToDaemon`, `Command`, `AppState`, and framing. |
 | `macos`, `windows`, `x11` | core, platform, OS bindings | One adapter each. Every dependency is behind a `cfg(target_os)` table, so each crate is empty elsewhere. |
+| `linux` | core, platform | What Linux adapters share whatever the display server: the single-instance lock and signals, the autostart entry, `/proc` facts, the session kind, physical key codes, the menu's structure, the overlay's look, and display IDs. Empty elsewhere. |
 | `wasm` | core, wasm-bindgen | A JSON API over `core` for the settings UI. |
 | `fake`, `live` | core, platform; `live` also the adapter for its OS | Test support; never linked into the shipped daemon. |
 

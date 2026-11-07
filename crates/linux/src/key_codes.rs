@@ -1,5 +1,6 @@
-//! W3C `KeyboardEvent.code` names mapped to X keys: the evdev keycode of the physical
-//! key, and the keysym a US layout gives it. Keysym 0 means no unambiguous US keysym.
+//! W3C `KeyboardEvent.code` names mapped to Linux keys: the evdev keycode of the physical
+//! key, which X servers and GNOME Shell both use, and the keysym a US layout gives it.
+//! Keysym 0 means no unambiguous US keysym.
 
 /// `(code, evdev keycode, US keysym)`. Evdev keycodes are Linux input codes plus 8.
 const KEYS: &[(&str, u8, u32)] = &[

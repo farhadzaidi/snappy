@@ -11,7 +11,8 @@ use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
 use x11rb::rust_connection::RustConnection;
 
 use crate::x::{self, Atoms, ScreenInfo};
-use rules::{Strut, display_id, edid_name, struts, work_area};
+use rules::{Strut, edid_name, struts, work_area};
+use snappy_linux::display_id::display_id;
 
 /// EDID blocks are 128 bytes each; four cover every extension in practice.
 const EDID_LONGS: u32 = 128;
