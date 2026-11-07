@@ -1,19 +1,22 @@
 //! Global shortcut actions: zones and moving between zones (swapping with the occupant or
-//! stacking on it, as the settings say), layout selection, undo and redo, and workspaces.
+//! stacking on it, as the settings say), moving to the nearest empty zone, layout
+//! selection, undo and redo, and workspaces.
 
 use std::rc::Rc;
 
 use snappy_core::bindings::HotKeyAction;
+use snappy_core::empty_zone::nearest_empty_zone;
 use snappy_core::error::WindowError;
 use snappy_core::geometry::Rect;
 use snappy_core::keys::Combo;
 use snappy_core::layout::{Zone, zone_frame};
 use snappy_core::navigate::{Direction, destination};
 use snappy_core::swap::ZoneSlot;
+use snappy_core::window::WindowSnapshot;
 use snappy_platform::{Display, Platform, WindowInfo};
 
 use crate::core::{Core, PendingNavigation};
-use crate::drag::swap_source;
+use crate::drag::{swap_source, zone_slots};
 use crate::ops::{Shared, SnapRequest, SwapMove, run_redo, run_snap, run_swap, run_undo};
 use crate::workspaces;
 
@@ -48,7 +51,69 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         HotKeyAction::SelectLayout(layout) => select_layout_under_pointer(shared, &layout),
         HotKeyAction::Navigate(direction) => move_focused(shared, Target::Direction(direction)),
         HotKeyAction::Zone => move_focused(shared, Target::Zone(combo)),
+        HotKeyAction::NearestEmptyZone => move_to_nearest_empty(shared),
     }
+}
+
+/// Snap the focused window into the nearest empty zone. Occupants are looked up once the
+/// operation runs, after any move in flight has stopped, as a swap does.
+fn move_to_nearest_empty<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
+    let focused = shared.core.borrow_mut().platform.focused_window();
+    let window = match focused {
+        Ok(window) => window,
+        Err(error) => {
+            shared.core.borrow_mut().announce_error(&error.to_string());
+            return;
+        }
+    };
+    shared.submit(move |shared, cancel| async move {
+        let planned = nearest_empty_snap(&mut shared.core.borrow_mut(), &window);
+        match planned {
+            Ok(Some(request)) => run_snap(shared, cancel, request).await,
+            Ok(None) => {}
+            Err(error) => shared.core.borrow_mut().announce_error(&error.to_string()),
+        }
+    });
+}
+
+/// The snap into the empty zone nearest `window`, or `None` when there is none.
+fn nearest_empty_snap<P: Platform>(
+    core: &mut Core<P>,
+    window: &WindowInfo,
+) -> Result<Option<SnapRequest>, WindowError> {
+    if core.workspaces.is_inactive(window.id) {
+        return Ok(None);
+    }
+    let frame = core.platform.frame(window.id)?;
+    let Some(display) = core.display_of(frame).cloned() else {
+        return Ok(None);
+    };
+    let slots = zone_slots(core);
+    let frames: Vec<Rect> = slots.iter().map(|slot| slot.frame).collect();
+    let windows: Vec<WindowSnapshot> = core
+        .platform
+        .windows_occupying(&frames)?
+        .iter()
+        .map(|found| WindowSnapshot {
+            id: found.id,
+            frame: found.frame,
+        })
+        .collect();
+    let workspaces = &core.workspaces;
+    let chosen = nearest_empty_zone(window.id, frame, &display.id, &slots, &windows, |id| {
+        workspaces.is_inactive(id)
+    });
+    let Some(slot) = chosen else {
+        core.announce_quietly("No empty zone on this display.");
+        return Ok(None);
+    };
+    Ok(Some(SnapRequest {
+        window: window.id,
+        frame: slot.frame,
+        original: None,
+        work_area: slot.work_area,
+        drop: None,
+    }))
 }
 
 fn select_layout_under_pointer<P: Platform + 'static>(shared: &Rc<Shared<P>>, layout: &str) {

@@ -7,7 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::keys::{Combo, KeyChord, Platform, reserved_app_commands};
 use crate::layout::Layout;
 use crate::navigate::Direction;
-use crate::settings::{HistoryStep, LayoutOptions, Navigation, Settings, WorkspaceStep, Workspaces};
+use crate::settings::{
+    HistoryStep, LayoutOptions, NEAREST_EMPTY_TITLE, Navigation, Settings, WorkspaceStep, Workspaces,
+};
 
 /// What a registered shortcut does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +25,8 @@ pub enum HotKeyAction {
     SendAndSwitch(String),
     /// Move the focused window to the neighboring zone.
     Navigate(Direction),
+    /// Move the focused window into the nearest empty zone.
+    NearestEmptyZone,
     SelectLayout(String),
     /// A zone chord, resolved against the focused window's display layout.
     Zone,
@@ -92,6 +96,9 @@ pub fn desired_hotkeys(settings: &Settings, display_ids: &[String], snapping_liv
         for (direction, chord) in settings.navigation.chords() {
             add(chord, HotKeyAction::Navigate(direction));
         }
+        if let Some(chord) = &settings.navigation.nearest_empty {
+            add(chord, HotKeyAction::NearestEmptyZone);
+        }
         for layout in settings.enabled_layouts() {
             if let Some(chord) = settings.options(layout).select_shortcut {
                 add(&chord, HotKeyAction::SelectLayout(layout.id.clone()));
@@ -155,11 +162,16 @@ fn global_names(settings: &Settings) -> Vec<(String, &KeyChord)> {
         .navigation
         .chords()
         .map(|(direction, chord)| (format!("Move window {}", direction.name()), chord));
+    let nearest_empty = settings
+        .navigation
+        .nearest_empty
+        .iter()
+        .map(|chord| (NEAREST_EMPTY_TITLE.to_owned(), chord));
     let history = settings
         .history
         .chords()
         .map(|(step, chord)| (step.title().to_owned(), chord));
-    navigation.chain(history).collect()
+    navigation.chain(nearest_empty).chain(history).collect()
 }
 
 /// The reserved chords and the global chords, by owner.
@@ -325,6 +337,13 @@ pub fn unused_navigation_defaults(settings: &Settings) -> Navigation {
         {
             navigation.set(direction, None);
         }
+    }
+    if navigation
+        .nearest_empty
+        .as_ref()
+        .is_some_and(|chord| used.contains(&chord.combo()))
+    {
+        navigation.nearest_empty = None;
     }
     navigation
 }
@@ -579,6 +598,67 @@ mod tests {
             first_conflict(&settings, MAC).as_deref(),
             Some("Snappy + U is already assigned to Undo window move.")
         );
+    }
+
+    #[test]
+    fn the_nearest_empty_zone_chord_registers_only_while_live_control_is_on() {
+        let settings = Settings::defaults(MAC);
+        let displays = vec!["d".to_owned()];
+        let nearest = |live: bool| {
+            desired_hotkeys(&settings, &displays, live)
+                .into_iter()
+                .filter(|hotkey| hotkey.action == HotKeyAction::NearestEmptyZone)
+                .map(|hotkey| hotkey.chord.combo())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(nearest(true), vec![snappy("Space").combo()]);
+        assert!(nearest(false).is_empty());
+    }
+
+    #[test]
+    fn the_nearest_empty_zone_chord_conflicts_with_other_shortcuts() {
+        let mut settings = Settings::defaults(MAC);
+        settings.navigation.nearest_empty = settings.navigation.up.clone();
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + ↑ is already assigned to Move window up.")
+        );
+
+        let mut settings = Settings::defaults(MAC);
+        settings.history.redo = Some(snappy("Space"));
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + Space is already assigned to Move to the nearest empty zone.")
+        );
+
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.items[0].switch_shortcut = Some(snappy("Space"));
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + Space is already assigned to Move to the nearest empty zone.")
+        );
+    }
+
+    #[test]
+    fn snappy_space_is_not_a_standard_app_command_anywhere() {
+        for platform in [Platform::MacOs, Platform::Windows, Platform::Linux] {
+            let settings = Settings::defaults(platform);
+            let chord = settings.navigation.nearest_empty.as_ref().unwrap();
+            assert!(
+                !reserved_app_commands(platform).contains(&chord.combo()),
+                "{platform:?}"
+            );
+            assert_eq!(first_conflict(&settings, platform), None, "{platform:?}");
+        }
+    }
+
+    #[test]
+    fn navigation_defaults_skip_a_nearest_empty_chord_in_use() {
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.items[1].send_shortcut = Some(snappy("Space"));
+        let navigation = unused_navigation_defaults(&settings);
+        assert!(navigation.nearest_empty.is_none());
+        assert!(navigation.left.is_some());
     }
 
     #[test]

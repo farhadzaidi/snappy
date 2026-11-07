@@ -8,7 +8,12 @@ import {
   type WhenTaken,
   type WorkspaceStep,
 } from "../core/model";
-import { historyConflict, navigationConflict, workspaceStepConflict } from "../recorder/conflicts";
+import {
+  historyConflict,
+  navigationConflict,
+  nearestEmptyConflict,
+  workspaceStepConflict,
+} from "../recorder/conflicts";
 import { ShortcutRecorder } from "../recorder/ShortcutRecorder";
 import { useAppState, useSend, useServices } from "../state/services";
 import { Button } from "../ui/Button";
@@ -99,12 +104,17 @@ function SnappingGroup() {
   );
 }
 
-/** Move between zones: four recorders. */
+const NEAREST_EMPTY_TITLE = "Move to the nearest empty zone";
+
+/** Move between zones: a recorder for each direction, and one for the nearest empty zone. */
 function MoveBetweenZonesGroup() {
   const { settings, platform } = useAppState();
   const send = useSend();
   return (
-    <Group title="Move between zones" caption="Move the focused window to the next zone in that direction.">
+    <Group
+      title="Move between zones"
+      caption="Move the focused window to the next zone in that direction, or into the nearest empty zone."
+    >
       {DIRECTIONS.map((direction) => {
         const title = `Move window ${direction}`;
         return (
@@ -126,6 +136,14 @@ function MoveBetweenZonesGroup() {
           </Row>
         );
       })}
+      <Row label={<span className="muted">{NEAREST_EMPTY_TITLE}</span>}>
+        <ShortcutRecorder
+          title={NEAREST_EMPTY_TITLE}
+          chord={settings.navigation.nearestEmpty}
+          conflictOf={(chord: KeyChord) => nearestEmptyConflict(settings, chord, platform)}
+          onChange={(chord) => void send({ kind: "setNearestEmptyShortcut", chord })}
+        />
+      </Row>
     </Group>
   );
 }

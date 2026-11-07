@@ -26,6 +26,17 @@ export function navigationConflict(
   );
 }
 
+export function nearestEmptyConflict(
+  settings: Settings,
+  chord: KeyChord,
+  platform: PlatformName,
+): string | null {
+  return core.settingsConflict(
+    { ...settings, navigation: { ...settings.navigation, nearestEmpty: chord } },
+    platform,
+  );
+}
+
 export function workspaceConflict(
   settings: Settings,
   workspace: Workspace,

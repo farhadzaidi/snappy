@@ -88,6 +88,7 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
         Command::SetNavigationShortcut { direction, chord } => {
             change(core, |s| s.navigation.set(direction, chord))
         }
+        Command::SetNearestEmptyShortcut { chord } => change(core, |s| s.navigation.nearest_empty = chord),
         Command::ApplyLayout { display, layout } => {
             apply_layout(core, &display, &layout);
             Ok(())

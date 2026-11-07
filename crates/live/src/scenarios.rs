@@ -76,6 +76,10 @@ pub const ALL: &[(&str, Scenario)] = &[
         floating_swap_fallback,
     ),
     (
+        "the_nearest_empty_zone_shortcut_skips_the_occupied_zone",
+        nearest_empty_zone,
+    ),
+    (
         "overlays_float_above_windows_without_taking_focus",
         overlay_floats,
     ),
@@ -343,6 +347,14 @@ impl<'a> Context<'a> {
             .get(direction)
             .cloned()
             .ok_or_else(|| format!("moving {direction:?} has no shortcut"))
+    }
+
+    fn nearest_empty_key(&self) -> Result<KeyChord, String> {
+        self.settings
+            .navigation
+            .nearest_empty
+            .clone()
+            .ok_or_else(|| "moving to the nearest empty zone has no shortcut".to_owned())
     }
 
     /// The modifiers held to snap while dragging.
@@ -681,6 +693,22 @@ fn floating_swap_fallback(context: &mut Context) -> Result<Outcome, String> {
     context.drag_window("ffloat", right.center(), context.drag_mods())?;
     let elapsed = context.wait_in("ffloat", right)?;
     context.wait_in("focc", before)?;
+    Ok(timed(elapsed))
+}
+
+/// A floater over the occupied right zone goes to the left one, the nearest empty zone,
+/// as an ordinary snap.
+fn nearest_empty_zone(context: &mut Context) -> Result<Outcome, String> {
+    let (right, _) = occupied_right_and_floating(context, "nocc", "nfloat", 1)?;
+    let left = context.zone(0)?;
+    let seen = context.snaps().len();
+    context.press(&context.nearest_empty_key()?)?;
+    let elapsed = context.wait_in("nfloat", left)?;
+    context.wait_in("nocc", right)?;
+    let (outcome, _) = context.finished_snap(seen)?;
+    if outcome != "snapped" {
+        return Err(format!("Snappy logged the move as {outcome}, not a snap"));
+    }
     Ok(timed(elapsed))
 }
 

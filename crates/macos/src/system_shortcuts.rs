@@ -190,6 +190,37 @@ mod tests {
     }
 
     #[test]
+    fn the_space_bar_shortcuts_macos_ships_leave_the_nearest_empty_zone_default_free() {
+        let space = |id: u32, modifiers: u64| SystemShortcut {
+            id,
+            enabled: true,
+            key_code: 49,
+            modifiers,
+        };
+        // Spotlight, Finder search, and the input source switches as they ship, plus
+        // Control-Command-Space, which opens the emoji picker. Each uses fewer modifiers
+        // than the Snappy key.
+        let shipped = [
+            space(64, 0x10_0000),
+            space(65, 0x18_0000),
+            space(60, 0x4_0000),
+            space(61, 0xC_0000),
+            space(0, 0x14_0000),
+        ];
+        assert!(is_taken(carbon("Space", &[Modifier::Meta]), &shipped));
+        assert!(is_taken(
+            carbon("Space", &[Modifier::Ctrl, Modifier::Meta]),
+            &shipped
+        ));
+
+        let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
+        let nearest_empty = settings.navigation.nearest_empty.unwrap().combo();
+        let carbon = CarbonChord::from_combo(&nearest_empty).unwrap();
+        assert!(!is_taken(carbon, &shipped));
+        assert!(!is_taken(carbon, &DEFAULTS));
+    }
+
+    #[test]
     fn shortcuts_turned_off_in_system_settings_are_free() {
         let mut turned_off = DEFAULTS;
         turned_off[3].enabled = false;

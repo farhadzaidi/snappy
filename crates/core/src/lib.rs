@@ -5,6 +5,7 @@ pub mod bindings;
 pub mod bounds;
 pub mod drag;
 pub mod editor;
+pub mod empty_zone;
 pub mod error;
 pub mod geometry;
 pub mod keys;

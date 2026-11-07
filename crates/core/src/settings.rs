@@ -73,12 +73,19 @@ impl DragModifier {
 
 /// Move-between-zones shortcuts.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Navigation {
     pub left: Option<KeyChord>,
     pub right: Option<KeyChord>,
     pub up: Option<KeyChord>,
     pub down: Option<KeyChord>,
+    /// Move the focused window into the nearest empty zone.
+    #[serde(default)]
+    pub nearest_empty: Option<KeyChord>,
 }
+
+/// The name the settings app and conflict messages give the nearest-empty-zone shortcut.
+pub const NEAREST_EMPTY_TITLE: &str = "Move to the nearest empty zone";
 
 impl Navigation {
     pub fn get(&self, direction: Direction) -> Option<&KeyChord> {
@@ -397,6 +404,7 @@ impl Navigation {
             right: chord("ArrowRight", "→"),
             up: chord("ArrowUp", "↑"),
             down: chord("ArrowDown", "↓"),
+            nearest_empty: Some(KeyChord::snappy("Space", [])),
         }
     }
 }
@@ -517,6 +525,11 @@ impl Settings {
             && self.workspaces.items.iter().all(Workspace::is_valid)
             && self.workspaces.steps().all(|(_, chord)| chord.is_valid())
             && self.navigation.chords().all(|(_, chord)| chord.is_valid())
+            && self
+                .navigation
+                .nearest_empty
+                .as_ref()
+                .is_none_or(KeyChord::is_valid)
             && self.history.chords().all(|(_, chord)| chord.is_valid());
         if valid {
             Ok(())
@@ -558,8 +571,8 @@ impl Settings {
     }
 
     /// Parse a settings file. Fields missing from the file take their defaults; a file
-    /// without `navigation`, or without the move-window workspace steps, gets those
-    /// default chords only where unused.
+    /// without `navigation`, without the nearest-empty-zone shortcut, or without the
+    /// move-window workspace steps, gets those default chords only where unused.
     pub fn from_json(bytes: &[u8], platform: Platform) -> Result<Settings, SettingsError> {
         if bytes.len() > MAX_FILE_BYTES {
             return Err(SettingsError::Invalid);
@@ -567,6 +580,14 @@ impl Settings {
         let file: SettingsFile = serde_json::from_slice(bytes).map_err(|_| SettingsError::Invalid)?;
         let defaults = Settings::defaults(platform);
         let navigation_missing = file.navigation.is_none();
+        let nearest_empty_missing = file
+            .navigation
+            .as_ref()
+            .is_some_and(|written| written.get("nearestEmpty").is_none());
+        let navigation = match file.navigation {
+            Some(written) => serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?,
+            None => Navigation::default(),
+        };
         let missing_steps: Vec<WorkspaceStep> = file
             .workspaces
             .as_ref()
@@ -584,7 +605,7 @@ impl Settings {
         let mut settings = Settings {
             version: file.version.unwrap_or(FORMAT_VERSION),
             snapping: file.snapping.unwrap_or(defaults.snapping),
-            navigation: file.navigation.unwrap_or_default(),
+            navigation,
             layouts: file.layouts.unwrap_or(defaults.layouts),
             workspaces,
             history: file.history.unwrap_or_default(),
@@ -600,6 +621,12 @@ impl Settings {
                 .step(step)
                 .filter(|chord| !used.contains(&chord.combo()));
             settings.workspaces.set_step(step, chord.cloned());
+        }
+        if nearest_empty_missing {
+            settings.navigation.nearest_empty = defaults
+                .navigation
+                .nearest_empty
+                .filter(|chord| !used.contains(&chord.combo()));
         }
         settings.validate(platform)
     }
@@ -619,7 +646,8 @@ impl Settings {
 struct SettingsFile {
     version: Option<u32>,
     snapping: Option<Snapping>,
-    navigation: Option<Navigation>,
+    /// Kept as written so shortcuts added after the file was saved can be told apart.
+    navigation: Option<serde_json::Value>,
     layouts: Option<Layouts>,
     /// Kept as written so steps added after the file was saved can be told apart.
     workspaces: Option<serde_json::Value>,
@@ -890,6 +918,16 @@ mod tests {
             assert!(workspaces.steps().all(|(_, chord)| chord.mods.has_snappy_key()));
             assert!(workspaces.items.iter().all(|item| item.chords().count() == 0));
             assert_eq!(combo(settings.navigation.left.as_ref()), snappy("ArrowLeft"));
+            assert_eq!(combo(settings.navigation.nearest_empty.as_ref()), snappy("Space"));
+            assert!(
+                settings
+                    .navigation
+                    .nearest_empty
+                    .as_ref()
+                    .unwrap()
+                    .mods
+                    .has_snappy_key()
+            );
             let focus = &settings.layouts.options["focus"];
             assert_eq!(Some(focus.zone_shortcuts["focus-0"].combo()), snappy("Digit1"));
             assert!(focus.zone_shortcuts["focus-0"].mods.has_snappy_key());
@@ -942,6 +980,45 @@ mod tests {
         settings.workspaces.set_step(WorkspaceStep::MoveNext, None);
         let loaded = Settings::from_json(&settings.to_json().unwrap(), MAC).unwrap();
         assert_eq!(loaded.workspaces.move_next, None);
+    }
+
+    /// The defaults written without the nearest-empty-zone shortcut, as older files are.
+    fn written_without_nearest_empty(settings: Settings) -> Vec<u8> {
+        let mut written = serde_json::to_value(settings).unwrap();
+        let navigation = written["navigation"].as_object_mut().unwrap();
+        navigation.remove("nearestEmpty");
+        serde_json::to_vec(&written).unwrap()
+    }
+
+    #[test]
+    fn a_file_without_the_nearest_empty_shortcut_gets_its_default() {
+        let loaded =
+            Settings::from_json(&written_without_nearest_empty(Settings::defaults(MAC)), MAC).unwrap();
+        assert_eq!(
+            loaded.navigation.nearest_empty.map(|c| c.combo()),
+            snappy("Space")
+        );
+        assert_eq!(loaded.navigation.left, Navigation::defaults().left);
+    }
+
+    #[test]
+    fn a_file_without_the_nearest_empty_shortcut_skips_the_default_another_binding_uses() {
+        let mut settings = Settings::defaults(MAC);
+        settings.navigation.nearest_empty = None;
+        settings.history.undo = Some(KeyChord::snappy("Space", []));
+        let loaded = Settings::from_json(&written_without_nearest_empty(settings), MAC).unwrap();
+        assert_eq!(loaded.navigation.nearest_empty, None);
+        assert_eq!(loaded.history.undo.map(|c| c.combo()), snappy("Space"));
+    }
+
+    #[test]
+    fn a_saved_cleared_nearest_empty_shortcut_stays_cleared() {
+        let mut settings = Settings::defaults(MAC);
+        settings.navigation.nearest_empty = None;
+        let json = String::from_utf8(settings.to_json().unwrap()).unwrap();
+        assert!(json.contains(r#""nearestEmpty": null"#), "{json}");
+        let loaded = Settings::from_json(json.as_bytes(), MAC).unwrap();
+        assert_eq!(loaded.navigation.nearest_empty, None);
     }
 
     #[test]

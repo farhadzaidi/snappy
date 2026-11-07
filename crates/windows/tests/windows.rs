@@ -607,8 +607,9 @@ fn registered_shortcuts_fire_on_their_keys() {
     session.platform.unregister_all();
 }
 
-/// The reserved-chord audit: every default zone, move-between-zones, and workspace step
-/// chord is free on a stock Windows 11, so Windows and the shell leave them to Snappy.
+/// The reserved-chord audit: every default zone, move-between-zones, nearest-empty-zone,
+/// and workspace step chord is free on a stock Windows 11, so Windows and the shell leave
+/// them to Snappy.
 #[test]
 fn the_windows_default_shortcuts_are_free() {
     require_desktop!();
@@ -617,6 +618,7 @@ fn the_windows_default_shortcuts_are_free() {
     let layout = settings.layout("six").unwrap();
     let mut chords: Vec<KeyChord> = settings.options(layout).zone_shortcuts.into_values().collect();
     chords.extend(settings.navigation.chords().map(|(_, chord)| chord.clone()));
+    chords.extend(settings.navigation.nearest_empty.clone());
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     let taken: Vec<String> = chords
         .iter()

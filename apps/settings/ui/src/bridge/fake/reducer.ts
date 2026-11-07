@@ -45,6 +45,11 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
         ...settings,
         navigation: { ...settings.navigation, [command.direction]: command.chord },
       });
+    case "setNearestEmptyShortcut":
+      return save(state, {
+        ...settings,
+        navigation: { ...settings.navigation, nearestEmpty: command.chord },
+      });
     case "applyLayout":
       return applyLayout(state, command.display, command.layout);
     case "saveLayout":

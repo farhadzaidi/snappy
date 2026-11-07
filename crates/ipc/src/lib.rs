@@ -71,6 +71,10 @@ pub enum Command {
         direction: Direction,
         chord: Option<KeyChord>,
     },
+    /// The shortcut that moves the focused window into the nearest empty zone.
+    SetNearestEmptyShortcut {
+        chord: Option<KeyChord>,
+    },
     ApplyLayout {
         display: String,
         layout: String,

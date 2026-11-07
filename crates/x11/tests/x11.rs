@@ -838,8 +838,8 @@ fn chords_grabbed_elsewhere_are_unavailable() {
     assert!(desktop.platform.is_available(&taken));
 }
 
-/// Every default zone, move-between-zones, and workspace step chord is free under the
-/// session's window manager, Xfwm4 with its default key bindings.
+/// Every default zone, move-between-zones, nearest-empty-zone, and workspace step chord is
+/// free under the session's window manager, Xfwm4 with its default key bindings.
 #[test]
 fn the_default_shortcuts_are_free() {
     let mut desktop = desktop!();
@@ -847,6 +847,7 @@ fn the_default_shortcuts_are_free() {
     let layout = settings.layout("six").unwrap();
     let mut chords: Vec<KeyChord> = settings.options(layout).zone_shortcuts.into_values().collect();
     chords.extend(settings.navigation.chords().map(|(_, chord)| chord.clone()));
+    chords.extend(settings.navigation.nearest_empty.clone());
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     let taken: Vec<String> = chords
         .iter()

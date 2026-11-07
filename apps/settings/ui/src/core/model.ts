@@ -75,7 +75,7 @@ export interface Settings {
     whenTaken: WhenTaken;
     shortcutsEnabled: boolean;
   };
-  navigation: Record<Direction, KeyChord | null>;
+  navigation: Navigation;
   layouts: {
     defaultLayoutId: string;
     displays: DisplayAssignments;
@@ -94,6 +94,9 @@ export interface Settings {
   history: Record<HistoryStep, KeyChord | null>;
   debugLog: boolean;
 }
+
+/** Move-between-zones shortcuts, and the one that moves to the nearest empty zone. */
+export type Navigation = Record<Direction, KeyChord | null> & { nearestEmpty: KeyChord | null };
 
 export interface Display {
   id: string;
@@ -153,6 +156,7 @@ export type Command =
   | { kind: "setWhenTaken"; choice: WhenTaken }
   | { kind: "setShortcutsEnabled"; enabled: boolean }
   | { kind: "setNavigationShortcut"; direction: Direction; chord: KeyChord | null }
+  | { kind: "setNearestEmptyShortcut"; chord: KeyChord | null }
   | { kind: "applyLayout"; display: string; layout: string }
   | { kind: "saveLayout"; layout: Layout; options: LayoutOptions; display: string }
   | { kind: "deleteLayout"; layout: string }

@@ -101,6 +101,26 @@ describe("fake daemon", () => {
     expect(error).toBe("Snappy + ← is already assigned to Move window left.");
   });
 
+  it("every platform moves to the nearest empty zone with Snappy + Space", () => {
+    for (const platform of ["macos", "windows", "linux"] as const) {
+      expect(initialState(platform).settings.navigation.nearestEmpty).toEqual(snappy("Space"));
+    }
+  });
+
+  it("the nearest-empty-zone shortcut is saved, cleared, and checked for conflicts", () => {
+    const start = initialState("macos");
+    const changed = run(start, { kind: "setNearestEmptyShortcut", chord: snappy("KeyE") });
+    expect(changed.error).toBeNull();
+    expect(changed.state.settings.navigation.nearestEmpty).toEqual(snappy("KeyE"));
+
+    const clash = run(changed.state, { kind: "setNearestEmptyShortcut", chord: snappy("ArrowUp") });
+    expect(clash.error).toBe("Snappy + ↑ is already assigned to Move window up.");
+    expect(clash.state.settings.navigation.nearestEmpty).toEqual(snappy("KeyE"));
+
+    const cleared = run(changed.state, { kind: "setNearestEmptyShortcut", chord: null });
+    expect(cleared.state.settings.navigation.nearestEmpty).toBeNull();
+  });
+
   it("when the zone is taken starts as swap and can be stack on top", () => {
     const start = initialState("windows");
     expect(start.settings.snapping.whenTaken).toBe("swap");

@@ -78,17 +78,54 @@ test("the keyboard shortcuts switch turns every shortcut off", async ({ page }) 
   );
 });
 
-test("move between zones has four recorders and no Shift swap hint", async ({ page }) => {
+test("move between zones has a recorder per direction and one for the nearest empty zone", async ({
+  page,
+}) => {
   const zones = group(page, "Move between zones");
   await expect(zones.locator(".group-caption")).toHaveText(
-    "Move the focused window to the next zone in that direction.",
+    "Move the focused window to the next zone in that direction, or into the nearest empty zone.",
   );
   await expect(zones.locator(".recorder-button")).toHaveText([
     "Snappy + ←",
     "Snappy + →",
     "Snappy + ↑",
     "Snappy + ↓",
+    "Snappy + Space",
   ]);
+  await expect(zones.getByText("Move to the nearest empty zone", { exact: true })).toBeVisible();
+});
+
+test("the nearest-empty-zone shortcut is recorded like the others", async ({ page }) => {
+  const recorder = group(page, "Move between zones").getByRole("button", {
+    name: "Move to the nearest empty zone",
+    exact: true,
+  });
+  await recorder.click();
+  await expect(recorder).toHaveText("Press shortcut…");
+  await page.keyboard.press("Control+Alt+Meta+KeyE");
+  await expect(recorder).toHaveText("Snappy + E");
+  expect(await lastCommandOf(page, "setNearestEmptyShortcut")).toEqual({
+    kind: "setNearestEmptyShortcut",
+    chord: { code: "KeyE", mods: ["snappy"] },
+  });
+
+  await recorder.click();
+  await page.keyboard.press("Control+Alt+Meta+ArrowLeft");
+  await expect(toast(page)).toContainText("Snappy + ← is already assigned to Move window left.");
+  await page.keyboard.press("Escape");
+  await expect(recorder).toHaveText("Snappy + E");
+});
+
+test("the nearest-empty-zone default is Snappy + Space on Windows and Linux too", async ({ page }) => {
+  for (const platform of ["windows", "linux"] as const) {
+    await openApp(page, platform);
+    await showPage(page, "Settings");
+    const recorder = group(page, "Move between zones").getByRole("button", {
+      name: "Move to the nearest empty zone",
+      exact: true,
+    });
+    await expect(recorder).toHaveText("Snappy + Space");
+  }
 });
 
 test("the workspaces group shows the previous, next, and move-window shortcuts", async ({ page }) => {
