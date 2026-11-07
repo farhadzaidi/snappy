@@ -120,6 +120,17 @@ export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace
   }
 }
 
+/** Paused on another desktop, else whatever keeps Snappy from controlling windows. */
+function notRunningReason(app: ReturnType<typeof useAppState>): string {
+  if (app.workspaces.pauseMessage !== null) {
+    return app.workspaces.pauseMessage;
+  }
+  if (app.snapping.unavailableReason !== null) {
+    return app.snapping.unavailableReason;
+  }
+  return app.snapping.needsPermission ? "Waiting for Accessibility access." : "Workspaces aren't running.";
+}
+
 /** Why workspaces aren't running. */
 function WorkspacesStatus() {
   const app = useAppState();
@@ -131,7 +142,7 @@ function WorkspacesStatus() {
     );
   }
   if (!app.workspaces.running) {
-    return <p className="muted">{app.workspaces.pauseMessage ?? "Waiting for Accessibility access."}</p>;
+    return <p className="muted">{notRunningReason(app)}</p>;
   }
   return null;
 }

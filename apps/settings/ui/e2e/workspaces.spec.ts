@@ -132,3 +132,22 @@ test("the three per-workspace shortcuts are recorders", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Move here and switch", exact: true })).toBeVisible();
   await expect(page.getByText("Switch between workspaces")).toHaveCount(0);
 });
+
+test("when Snappy can't control windows, the page says why instead of asking for access", async ({
+  page,
+}) => {
+  const reason = "Log out and back in to finish setting up Snappy's GNOME Shell extension.";
+  await page.evaluate(
+    (unavailableReason) =>
+      window.snappyFake.patchState((state) => ({
+        ...state,
+        platform: "linux",
+        settings: { ...state.settings, workspaces: { ...state.settings.workspaces, enabled: true } },
+        snapping: { ...state.snapping, live: false, needsPermission: false, unavailableReason },
+        workspaces: { ...state.workspaces, running: false, pauseMessage: null },
+      })),
+    reason,
+  );
+  await expect(page.locator(".workspace-detail, .page").getByText(reason).last()).toBeVisible();
+  await expect(page.getByText("Waiting for Accessibility access.")).toHaveCount(0);
+});
