@@ -1,0 +1,25 @@
+[package]
+name = "snappy"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+snappy-core = { path = "../../crates/core" }
+snappy-engine = { path = "../../crates/engine" }
+snappy-ipc = { path = "../../crates/ipc" }
+snappy-platform = { path = "../../crates/platform" }
+directories = "6"
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+snappy-macos = { path = "../../crates/macos" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+snappy-x11 = { path = "../../crates/x11" }
+
+[target.'cfg(windows)'.dependencies]
+snappy-windows = { path = "../../crates/windows" }
+
+[lints]
+workspace = true

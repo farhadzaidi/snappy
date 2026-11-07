@@ -1,0 +1,37 @@
+{
+  "name": "snappy-settings-ui",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "wasm": "cargo build -p snappy-wasm --target wasm32-unknown-unknown --release && wasm-bindgen --target web --out-dir src/wasm ../../../target/wasm32-unknown-unknown/release/snappy_wasm.wasm",
+    "dev": "pnpm wasm && vite",
+    "build": "pnpm wasm && vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "check": "pnpm wasm && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && vite build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/plugin-dialog": "2.8.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.65.0",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "eslint": "10.14.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}

@@ -1,0 +1,12 @@
+[package]
+name = "snappy-platform"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+snappy-core = { path = "../core" }
+serde.workspace = true
+
+[lints]
+workspace = true

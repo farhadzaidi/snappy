@@ -1,0 +1,106 @@
+/* The settings app's palette and sizes. The app is dark only. */
+:root {
+  --background: #0e1115;
+  --sidebar: #13171c;
+  --surface: #1a1f25;
+  --line: rgb(255 255 255 / 9%);
+  --mint: #7ae8c2;
+  --mint-wash: rgb(122 232 194 / 10%);
+  --muted: #99a8b5;
+  --destructive: #ffa394;
+  --warning: #ffb35c;
+  --text: #ffffff;
+
+  --radius-small: 7px;
+  --radius: 8px;
+  --radius-card: 10px;
+  --radius-panel: 12px;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-rounded: ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--text);
+  font: 13px/1.35 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(122 232 194 / 60%);
+  outline-offset: 2px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.page-title {
+  font: 600 28px/1.15 var(--font-rounded);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.mint {
+  color: var(--mint);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

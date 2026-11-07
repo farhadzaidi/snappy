@@ -1,0 +1,48 @@
+[package]
+name = "snappy-live"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "snappy-live"
+path = "src/bin/snappy-live.rs"
+
+[[bin]]
+name = "snappy-fixture"
+path = "src/bin/snappy-fixture.rs"
+
+[dependencies]
+snappy-core = { path = "../core" }
+snappy-platform = { path = "../platform" }
+serde.workspace = true
+serde_json.workspace = true
+winit = "0.30"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+snappy-macos = { path = "../macos" }
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std",
+    "CGEvent",
+    "CGEventSource",
+    "CGEventTypes",
+    "CGRemoteOperation",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+snappy-x11 = { path = "../x11" }
+x11rb = { version = "0.14", default-features = false, features = ["res", "xtest"] }
+
+[target.'cfg(windows)'.dependencies]
+snappy-windows = { path = "../windows" }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[lints]
+workspace = true

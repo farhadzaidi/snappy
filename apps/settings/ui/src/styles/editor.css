@@ -1,0 +1,398 @@
+.editor-page {
+  display: flex;
+  height: 100%;
+}
+
+.editor-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 24px;
+}
+
+.title-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.layout-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.layout-title-input {
+  padding: 5px 0;
+  border: none;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  outline: none;
+}
+
+.layout-title-input:focus {
+  border-bottom-color: rgb(122 232 194 / 60%);
+}
+
+.lock {
+  display: grid;
+  color: var(--muted);
+}
+
+.title-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tool-group {
+  padding: 2px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.tool {
+  font-size: 12px;
+}
+
+.history-buttons {
+  display: flex;
+  gap: 1px;
+}
+
+.canvas-area {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+}
+
+.canvas {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-panel);
+  outline: 1px solid var(--line);
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 3.5%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 3.5%) 1px, transparent 1px);
+  background-size: calc(100% / 12) calc(100% / 12);
+  touch-action: none;
+}
+
+.canvas[data-tool="verticalCut"],
+.canvas[data-tool="horizontalCut"] {
+  cursor: crosshair;
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.zone {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  text-align: center;
+  border-radius: var(--radius-small);
+  border: 1px solid rgb(122 232 194 / 35%);
+  background: rgb(122 232 194 / 8%);
+  color: var(--mint);
+  cursor: grab;
+}
+
+.zone[data-selected="true"] {
+  z-index: 2;
+  border: 2px solid rgb(122 232 194 / 90%);
+  background: rgb(122 232 194 / 22%);
+}
+
+.canvas[data-moving="true"] .zone {
+  cursor: grabbing;
+}
+
+.canvas[data-read-only="true"] .zone,
+.canvas[data-tool="verticalCut"] .zone,
+.canvas[data-tool="horizontalCut"] .zone {
+  cursor: inherit;
+}
+
+.zone-number {
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.zone-size {
+  font: 11px var(--font-mono);
+  color: rgb(122 232 194 / 75%);
+  white-space: nowrap;
+}
+
+/* Resize handles stay out of the way until the selected zone is hovered: small squares at
+   the corners and slim bars along the edges. The cursor shows what each edge does. */
+.zone-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 2px;
+  background: var(--text);
+  box-shadow: 0 0 0 1px rgb(14 17 21 / 60%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.zone-handle[data-handle="north"],
+.zone-handle[data-handle="south"] {
+  width: 18px;
+  height: 4px;
+  margin: -2px 0 0 -9px;
+}
+
+.zone-handle[data-handle="east"],
+.zone-handle[data-handle="west"] {
+  width: 4px;
+  height: 18px;
+  margin: -9px 0 0 -2px;
+}
+
+.zone:hover .zone-handle,
+.canvas[data-moving="true"] .zone-handle {
+  opacity: 0.9;
+}
+
+.cut-line {
+  position: absolute;
+  pointer-events: none;
+}
+
+.cut-line[data-vertical="true"] {
+  top: 0;
+  bottom: 0;
+  border-left: 2px dashed var(--mint);
+}
+
+.cut-line[data-vertical="false"] {
+  left: 0;
+  right: 0;
+  border-top: 2px dashed var(--mint);
+}
+
+.divider {
+  position: absolute;
+  z-index: 4;
+  background: transparent;
+}
+
+.divider[data-vertical="true"] {
+  width: 12px;
+  margin-left: -6px;
+  cursor: col-resize;
+}
+
+.divider[data-vertical="false"] {
+  height: 12px;
+  margin-top: -6px;
+  cursor: row-resize;
+}
+
+.divider:hover {
+  background: rgb(122 232 194 / 16%);
+}
+
+.divider:hover::after {
+  content: "";
+  position: absolute;
+  background: var(--mint);
+}
+
+.divider[data-vertical="true"]:hover::after {
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+}
+
+.divider[data-vertical="false"]:hover::after {
+  left: 0;
+  right: 0;
+  top: 5px;
+  height: 2px;
+}
+
+.drawing {
+  position: absolute;
+  border-radius: var(--radius-small);
+  border: 1px solid rgb(122 232 194 / 60%);
+  background: rgb(122 232 194 / 20%);
+  pointer-events: none;
+}
+
+.guide {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.guide[data-vertical="true"] {
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed rgb(122 232 194 / 65%);
+}
+
+.guide[data-vertical="false"] {
+  left: 0;
+  right: 0;
+  border-top: 1px dashed rgb(122 232 194 / 65%);
+}
+
+.editor-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 300px;
+  padding: 20px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  background: rgb(19 23 28 / 50%);
+}
+
+.editor-sidebar .display-chooser {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.editor-sidebar .display-menu {
+  width: 100%;
+}
+
+.sidebar-divider {
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--line);
+}
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.inspector-heading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inspector-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.coordinates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 12px;
+}
+
+.pixel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.pixel-label {
+  font-size: 12px;
+}
+
+.pixel-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: rgb(14 17 21 / 80%);
+  font-size: 11px;
+}
+
+.pixel-input:focus-within {
+  border-color: rgb(122 232 194 / 60%);
+}
+
+.pixel-input input {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font: 13px var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+.shortcuts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.zone-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zone-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zone-shortcut-number {
+  flex: 1;
+  text-align: left;
+}
+
+.zone-shortcut-number[data-selected="true"] {
+  color: var(--mint);
+}
