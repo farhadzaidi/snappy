@@ -8,11 +8,11 @@
 | Engine scenarios | `crates/engine/tests/scenarios.rs`, plus unit tests in `crates/engine/src` | anywhere, `cargo test` |
 | WebAssembly API | `crates/wasm/src/lib.rs`, `crates/wasm/src/gestures.rs` | anywhere, `cargo test` |
 | Adapter unit tests | `mod tests` in each adapter module | on the adapter's OS |
-| Adapter integration tests | `crates/x11/tests/x11.rs`, `crates/windows/tests/windows.rs` | the Linux container, the Windows VM |
+| Adapter integration tests | `crates/x11/tests/x11.rs`, `crates/gnome/tests/gnome.rs`, `crates/windows/tests/windows.rs` | the Linux container, the GNOME containers, the Windows VM |
 | Daemon checks | `apps/snappy/tests/bundle.rs` (bundle and permissions), `apps/snappy/tests/privacy.rs` (no network, no window content) | anywhere, `cargo test` |
 | Settings UI unit tests | `apps/settings/ui/src/**/*.test.ts`, Vitest | anywhere, `pnpm -C apps/settings/ui test` |
 | Settings UI end to end | `apps/settings/ui/e2e/*.spec.ts`, Playwright | anywhere, `pnpm -C apps/settings/ui e2e` |
-| Live suites | `crates/live` | the Linux container and the macOS and Windows VMs |
+| Live suites | `crates/live` | the Linux and GNOME containers and the macOS and Windows VMs |
 
 ### Core
 
@@ -50,14 +50,15 @@ Apps that lag, ignore one axis, or size in cells are scripted in `core`'s own se
 
 ### Adapter tests
 
-Adapter unit tests cover the pure parts: eligibility rules, key maps, display ordering, menu structure, overlay styles and rendering. They only compile on their own OS, so `cargo test` on a Mac runs the macOS ones. On macOS they also check the default shortcuts against the system shortcuts macOS ships with (`src/system_shortcuts.rs`).
+Adapter unit tests cover the pure parts: eligibility rules, key maps, display ordering, menu structure, overlay styles and rendering. The GNOME adapter's also run anywhere `dbus-daemon` is installed against a fake GNOME Shell on a private bus (`crates/gnome/tests/fake_shell.rs`): what it asks the extension, how it reads the replies, and how the extension's events become engine events, in order. The fake bus gets its own temporary home and an in-memory settings backend, so nothing reaches the session the tests run in. They only compile on their own OS, so `cargo test` on a Mac runs the macOS ones. On macOS they also check the default shortcuts against the system shortcuts macOS ships with (`src/system_shortcuts.rs`).
 
 The integration tests drive a real window system and real input, and skip themselves (printing "skipped") unless their sandbox is present:
 
 - `crates/x11/tests/x11.rs` runs when `SNAPPY_X11_TEST_DISPLAY` names a display, which `tools/live/linux/x11-session.sh` sets: `tools/live/linux/run.sh tools/live/linux/x11-session.sh`. `SNAPPY_X11_COMPOSITOR=off` runs the window manager without its compositor.
+- `crates/gnome/tests/gnome.rs` runs when `SNAPPY_GNOME_TEST=1`, which `tools/live/gnome/test.sh` sets inside a throwaway GNOME Shell with Snappy's extension and the test helper loaded: `tools/live/gnome/test.sh [--gnome 46,47,48,49]`.
 - `crates/windows/tests/windows.rs` runs when `SNAPPY_WINDOWS_TEST=1`, which `tools/live/windows/desktop.sh` sets: `tools/live/windows/test.sh [test name filter]`.
 
-Both run one test at a time, since the tests share one screen, pointer, and keyboard. Each probes every default shortcut (`the_default_shortcuts_are_free` and `the_windows_default_shortcuts_are_free`), so a default the window manager or Windows itself holds fails the suite.
+They run one test at a time, since the tests share one screen, pointer, and keyboard. Each probes every default shortcut (`the_default_shortcuts_are_free` and `the_windows_default_shortcuts_are_free`), so a default the window manager or Windows itself holds fails the suite.
 
 ### Settings UI
 
@@ -96,6 +97,21 @@ Needs Docker. In the development container it builds the daemon, runner, and fix
 - The container runs no tray host, so the menu bar scenario checks that the daemon registered its StatusNotifierItem.
 - Screenshots are of the whole X screen, through `xwd` and netpbm.
 
+### GNOME on Wayland
+
+```sh
+tools/live/gnome/live.sh [--gnome 46,47,48,49] [--static-workspaces] [scenario prefix]
+```
+
+Needs Docker. It builds the daemon, runner, and fixture in an Ubuntu 24.04 container (`Dockerfile.build`), then for each GNOME version asked for (46 by default) starts a container from `Dockerfile` (Ubuntu 24.04 for GNOME 46, Fedora 41, 42, and 43 for 47, 48, and 49) and runs `suite.sh` inside a fresh headless GNOME Shell (`gnome-session.sh`: two side-by-side 1920×1080 virtual monitors, Xwayland, its own system and session buses, animations off). Results, screenshots, the daemon's logs, and GNOME Shell's log land in `target/live/gnome/<version>/`.
+
+- **Installing is part of the run.** The daemon's first launch must install its extension and turn it on; then `restart-shell` stops GNOME Shell and starts it again in the same session, as logging out and back in would, and the extension must be running and speak this protocol version (`install.txt`).
+- **Twice over.** The scenarios run with the fixture's windows on Wayland (`wayland/`), then through Xwayland (`xwayland/`). Wayland has no way to ask to size in steps, so the grid scenario is skipped, with that reason, in the Wayland run.
+- **Input and frames** come from a test-only extension, `tools/live/gnome/test-extension`, loaded only in these containers: Clutter virtual devices inject pointer and key events that GNOME Shell handles like hardware, and it places and reads fixture windows by their titles, since Wayland apps can't. It also lists windows and Snappy's overlays front to back, checks the top bar item, and takes screenshots. The shipped extension has no test-only code.
+- `--static-workspaces` gives GNOME a fixed number of workspaces instead of dynamic ones, which changes where the parking workspace goes.
+- **Input like a hand's.** Drags rest on the title bar before the press, take a first step just past GTK's 8-pixel drag threshold (GNOME draws Xwayland title bars with GTK, which ignores a press whose first movement jumps far away), and wait until GNOME Shell is moving the window before covering the rest. Fixture windows are focused by activating and then clicking them, and a freshly started GNOME Shell gets one throwaway window clicked and dragged before the scenarios: GNOME 49 ignores a Wayland app's title bar drags until the session has handled some input. Between scenarios every key and the button are let go, so a failure doesn't leave Shift held for the next.
+- To look around by hand, run a shell in the session: `docker run --rm -it --init -v "$PWD:/work" snappy-gnome:46 /work/tools/live/gnome/gnome-session.sh bash`.
+
 ### macOS
 
 ```sh
@@ -131,4 +147,4 @@ pnpm -C apps/settings/ui e2e
 
 `tools/check.sh` runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, and the settings UI's `check` script (WebAssembly build, type check, ESLint, Prettier, Vitest, and a production build). Both must pass.
 
-When you change an adapter, also lint and test it where it compiles: `tools/live/linux/run.sh cargo clippy -p snappy-x11 --all-targets -- -D warnings` and `tools/live/linux/run.sh tools/live/linux/x11-session.sh` for X11, `cargo xwin clippy --target aarch64-pc-windows-msvc -p snappy-windows --all-targets -- -D warnings` and `tools/live/windows/test.sh` for Windows. Run the live suite for the platform when a change affects how windows really move.
+When you change an adapter, also lint and test it where it compiles. The GNOME adapter compiles on any Linux machine, and `tools/live/gnome/test.sh` runs its integration tests against real GNOME Shells: `tools/live/linux/run.sh cargo clippy -p snappy-x11 --all-targets -- -D warnings` and `tools/live/linux/run.sh tools/live/linux/x11-session.sh` for X11, `cargo xwin clippy --target aarch64-pc-windows-msvc -p snappy-windows --all-targets -- -D warnings` and `tools/live/windows/test.sh` for Windows. Run the live suite for the platform when a change affects how windows really move.

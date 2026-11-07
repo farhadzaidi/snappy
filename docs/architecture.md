@@ -37,8 +37,8 @@ After every command the daemon replies, then sends a new `State`, which is what 
 ```
 core ◄── platform ◄── engine ◄── apps/snappy
  ▲          ▲           ▲             │
- │          ├── macos / windows / x11 ◄┘
- │          │           linux ◄── x11
+ │          ├── macos / windows / x11 / gnome ◄┘
+ │          │           linux ◄── x11, gnome
  │          ├── fake (engine tests)
  │          └── live (live tests)
  ├── ipc ◄── engine, apps/settings/src-tauri
@@ -51,14 +51,14 @@ core ◄── platform ◄── engine ◄── apps/snappy
 | `platform` | core | The `Platform` trait family (`WindowSystem`, `Input`, `HotKeys`, `Overlay`, `Permissions`, `DesktopGuard`, `Tray`, `LoginItem`) and `PlatformEvent`. |
 | `engine` | core, platform, ipc, tokio | Runtime state, event handling, the operation queue, stores, diagnostics. |
 | `ipc` | core, platform | `ToSettings`, `ToDaemon`, `Command`, `AppState`, and framing. |
-| `macos`, `windows`, `x11` | core, platform, OS bindings | One adapter each. Every dependency is behind a `cfg(target_os)` table, so each crate is empty elsewhere. |
-| `linux` | core, platform | What Linux adapters share whatever the display server: the single-instance lock and signals, the autostart entry, `/proc` facts, the session kind, physical key codes, the menu's structure, the overlay's look, and display IDs. Empty elsewhere. |
+| `macos`, `windows`, `x11`, `gnome` | core, platform, OS bindings | One adapter each; `gnome` drives GNOME Shell on Wayland through the extension in `apps/gnome-extension`. Every dependency is behind a `cfg(target_os)` table, so each crate is empty elsewhere. |
+| `linux` | core, platform | What the X11 and GNOME adapters share: the single-instance lock and signals, the autostart entry, `/proc` facts, the session kind, physical key codes, the menu's structure, the overlay's look, and display IDs. Empty elsewhere. |
 | `wasm` | core, wasm-bindgen | A JSON API over `core` for the settings UI. |
 | `fake`, `live` | core, platform; `live` also the adapter for its OS | Test support; never linked into the shipped daemon. |
 
 They are separate crates for three reasons:
 
-- **Platform dependencies stay contained.** `objc2`, `windows`, and `x11rb` appear only in their adapter's manifest, so `core` and `engine` build and test on any machine.
+- **Platform dependencies stay contained.** `objc2`, `windows`, `x11rb`, and `zbus` appear only in their adapter's manifest, so `core` and `engine` build and test on any machine.
 - **`core` compiles to WebAssembly.** The settings app's editor and shortcut recorder call the same Rust functions the daemon uses, through `crates/wasm`, so a zone drawn in the editor lands exactly where the daemon will put the window.
 - **The compiler enforces the layering.** `core` can't reach the engine, the engine can't call an OS API, and an adapter can't make a policy decision without importing something it has no dependency on.
 
@@ -141,7 +141,7 @@ How a window is hidden depends on the platform (`core::workspace::ParkingPolicy`
 |---|---|---|
 | `CornerSliver` | macOS | macOS pulls fully off-screen windows back, so the window is moved to an exposed lower corner with a 1-point sliver left on screen. |
 | `OffScreen` | Windows | The window is moved entirely outside every display: left of the leftmost one with 64 pixels to spare, level with the top of the highest. |
-| `Desktop` | X11 | The window is moved to a native desktop of Snappy's own, named "Snappy", and its frame is left alone. |
+| `Desktop` | X11, GNOME on Wayland | The window is moved to a native desktop of Snappy's own, named "Snappy" on X11, and its frame is left alone. |
 
 Apps that bring a parked window back on their own are parked again, at most once a second (containment, `workspaces::window_moved`).
 

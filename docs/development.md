@@ -53,7 +53,16 @@ tools/live/linux/run.sh cargo build -p snappy
 tools/live/linux/run.sh cargo clippy -p snappy-x11 -p snappy-live -p snappy --all-targets -- -D warnings
 ```
 
-`run.sh` builds the image and runs the command with the repository at `/work`. Build output goes to the `snappy-linux-target` volume and the cargo registry to `snappy-cargo-registry`, so your own `target/` is untouched.
+`run.sh` builds the image and runs the command with the repository at `/work`.
+
+### GNOME on Wayland
+
+`crates/gnome` builds on any Linux machine with `cargo build`. Its extension, `apps/gnome-extension`, is plain JavaScript in GNOME Shell's module format, built into the daemon (`crates/gnome/src/extension.rs` lists every file, and a test checks the list matches the folder), so there is nothing to build for it. The daemon installs it at launch ([platforms.md](platforms.md#linux-gnome-on-wayland)).
+
+- Keep the extension thin: it carries out requests and reports events, and every decision stays in Rust.
+- A request, reply, or event that changes shape bumps `PROTOCOL_VERSION` in both `service.js` and `crates/gnome/src/protocol.rs`; a test checks they match.
+- GNOME Shell's JavaScript API changes between releases. Calls that differ between GNOME 46 and 49 go through `compat.js`, and `tools/live/gnome/live.sh --gnome 46,47,48,49` runs every supported version.
+- `tools/check.sh` checks the extension's syntax with Node. Build output goes to the `snappy-linux-target` volume and the cargo registry to `snappy-cargo-registry`, so your own `target/` is untouched.
 
 ## Running safely
 
@@ -61,6 +70,7 @@ The daemon moves other apps' windows, registers global shortcuts, and on macOS a
 
 - **The settings UI in a browser.** `pnpm -C apps/settings/ui dev` serves the UI at `http://localhost:5179` against the in-memory fake daemon. Add `?platform=windows` or `?platform=linux` to see another platform's modifier names and controls. In the browser console, `window.snappyFake` is the fake daemon, for inspecting sent commands or patching its state.
 - **The Linux container.** `tools/live/linux/run.sh tools/live/linux/x11-session.sh <command>` runs any command against a headless two-monitor X desktop, and `tools/live/linux/live.sh` runs the real daemon against real windows there.
+- **The GNOME containers.** `tools/live/gnome/gnome-session.sh <command>` inside a `snappy-gnome` container runs any command in a headless two-monitor GNOME Shell on Wayland; `tools/live/gnome/live.sh` and `tools/live/gnome/test.sh` run the live suite and the adapter's integration tests there. Never install a development build's extension into your own GNOME session: it replaces the installed copy's, and GNOME loads it at your next login.
 - **The test VMs.** `tools/live/macos/run.sh` and `tools/live/windows/live.sh` run the daemon inside VMs that nothing on your screen depends on. [testing.md](testing.md#live-tests) describes them.
 
 ## The debug log
@@ -78,7 +88,7 @@ The debug log records what Snappy saw, what it decided, and what happened: recei
 |---|---|
 | A rule: geometry, snapping, swaps, navigation, settings validation, shortcut conflicts, workspace bookkeeping | `crates/core`, with unit tests beside it |
 | When something happens, or what state changes as a result | `crates/engine` |
-| How an OS does something | the adapter, `crates/macos`, `crates/windows`, or `crates/x11` |
+| How an OS does something | the adapter, `crates/macos`, `crates/windows`, `crates/x11`, or `crates/gnome` with its extension in `apps/gnome-extension`; what both Linux adapters need goes in `crates/linux` |
 | A new capability every adapter must provide | a trait method in `crates/platform`, implemented in each adapter and in `crates/fake` |
 | Something the settings app can ask for | a `Command` in `crates/ipc`, handled in `crates/engine/src/commands.rs` |
 | A rule the settings UI needs too | `crates/core`, exported through `crates/wasm/src/api.rs` and `apps/settings/ui/src/core/snappyCore.ts` |
@@ -132,7 +142,7 @@ Full sentences that say what happened and what to do next, in plain words: "Leav
 
 ### Dependencies
 
-Each one is a cost: build time, binary size, and code that touches users' windows. Prefer the standard library and what the workspace already uses: `serde`, `serde_json`, `thiserror`, `tokio` (only `rt`, `time`, `sync`, `macros`), `directories`; `objc2` crates and `block2` on macOS, `windows` on Windows, `x11rb`, `ksni`, and `tiny-skia` on Linux; `wasm-bindgen` in `crates/wasm`; `tauri` and `tauri-plugin-dialog` in the settings app; React and Vite in the UI. Ask the owner before adding anything new. Nothing may add network access, telemetry, or update checks; `apps/snappy/tests/privacy.rs` fails the build if the daemon links a network client.
+Each one is a cost: build time, binary size, and code that touches users' windows. Prefer the standard library and what the workspace already uses: `serde`, `serde_json`, `thiserror`, `tokio` (only `rt`, `time`, `sync`, `macros`), `directories`; `objc2` crates and `block2` on macOS, `windows` on Windows, `x11rb`, `ksni` (on its `async-io` backend, so the daemon runs no second async runtime), `tiny-skia`, and `zbus` (`async-io` and `blocking-api` only) on Linux, plus `softbuffer` in the live fixture app; `wasm-bindgen` in `crates/wasm`; `tauri` and `tauri-plugin-dialog` in the settings app; React and Vite in the UI. Ask the owner before adding anything new. Nothing may add network access, telemetry, or update checks; `apps/snappy/tests/privacy.rs` fails the build if the daemon links a network client.
 
 ### Formatting and lints
 

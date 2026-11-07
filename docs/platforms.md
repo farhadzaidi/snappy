@@ -86,7 +86,7 @@ Each adapter keeps its user-facing refusals in `src/messages.rs`, worded the sam
 
 **Threads** (`src/app.rs`). X has no main-thread rule. The event thread reads X events on one connection; the engine thread makes window requests on a second. Key grabs and input selections go out on the event connection so their events arrive where they are read. An overlay thread draws and drives the tray, and the tray's D-Bus service runs inside `ksni`.
 
-**Wayland** (`crates/linux/src/session.rs`). When `XDG_SESSION_TYPE` is `wayland`, or `WAYLAND_DISPLAY` is set without an X11 session type, X11 clients can't see other apps' windows, so live control and workspaces stay off and the settings app says why. With no X server at all the daemon exits with a message.
+**Wayland** (`crates/linux/src/session.rs`). GNOME on Wayland gets its own adapter (next section). In any other Wayland session (`XDG_SESSION_TYPE` is `wayland`, or `WAYLAND_DISPLAY` is set without an X11 session type) X11 clients can't see other apps' windows, so live control and workspaces stay off and the settings app says why. With no X server at all the daemon exits with a message.
 
 **Finding and moving windows** (`src/windows/`, `src/frames.rs`, `crates/linux/src/clients.rs`). Managed windows are `_NET_CLIENT_LIST`. Frames include `_NET_FRAME_EXTENTS` decorations and exclude client-side shadows from `_GTK_FRAME_EXTENTS`. Writes are `_NET_MOVERESIZE_WINDOW` client messages; maximized windows have their maximized state removed first. The window under the pointer is the topmost visible client in `_NET_CLIENT_LIST_STACKING`. Recovery keys use `_NET_WM_PID` and the process start time from `/proc`; app identifiers come from `WM_CLASS`.
 
@@ -116,3 +116,43 @@ Each adapter keeps its user-facing refusals in `src/messages.rs`, worded the sam
 - Desktop bindings that use a subset of Snappy's modifiers don't collide, because grabs match modifiers exactly. A chord the desktop has grabbed is reported unavailable. GNOME, KDE Plasma, and Xfce bind nothing to Ctrl+Alt+Super by default; their nearest bindings, such as Plasma's Meta+period emoji picker, use fewer modifiers.
 
 **Building.** In the Linux development container: `tools/live/linux/run.sh cargo build -p snappy` ([development.md](development.md#linux)).
+
+## Linux (GNOME on Wayland)
+
+`crates/gnome` and the GNOME Shell extension in `apps/gnome-extension`, for GNOME 46 through 49, each verified by the live suite (Wayland and Xwayland windows) and the adapter's integration tests in headless GNOME Shells: 46.0 on Ubuntu 24.04, and Fedora's 47, 48, and 49. Wayland lets no ordinary program move other apps' windows, watch global input, or own global shortcuts; on GNOME only GNOME Shell can. The extension does those things when the daemon asks over the session bus and reports what happens; it makes no decisions. `apps/snappy` picks this adapter when `XDG_SESSION_TYPE` is `wayland` and `XDG_CURRENT_DESKTOP` names GNOME. It shares `crates/linux` with the X11 adapter.
+
+**The protocol** (`src/protocol.rs`, `apps/gnome-extension/service.js`). The extension exports `io.github.farhadzaidi.Snappy.Shell` at `/io/github/farhadzaidi/Snappy/Shell` on GNOME Shell's own bus name, `org.gnome.Shell`. One method, `Call`, takes a JSON request tagged with its `op` and returns `{"ok": …}` or `{"error": …}`; one signal, `Event`, carries every event as JSON, in the order it happened. The `Version` property is the protocol version; a daemon and an extension from different releases notice the mismatch and the settings app says to log out and back in.
+
+**Threads** (`src/app.rs`, `src/bus.rs`). Requests run on a bus thread of their own: the engine thread drives an async runtime, inside which zbus can't block, so it waits for the bus thread's answer like any other blocking call, at most two seconds. One thread per signal subscription forwards the extension's events, GNOME Shell's extension state changes, its bus name changing hands, and Mutter's `MonitorsChanged`; the daemon's main thread turns them into `PlatformEvent`s.
+
+**Installing the extension** (`src/extension.rs`). The extension's files are built into the daemon. At every start it writes any that are missing or differ into `~/.local/share/gnome-shell/extensions/snappy@farhadzaidi.github.io/`, each through a temporary file. GNOME Shell on Wayland loads a newly installed extension only at the next login, and can't be asked to turn on an extension it hasn't loaded, so a fresh install adds itself to `org.gnome.shell enabled-extensions` (and takes itself off `disabled-extensions`) through `gsettings`. After that, turning it on or off is the user's choice.
+
+**Live control** (`Platform::live_control`). Available when the extension answers in this protocol version. Otherwise `GetExtensionInfo` and `UserExtensionsEnabled` say why, and `src/messages.rs` words it: log out and back in to finish setting up, turn the extension on in the Extensions app, turn extensions back on, another version is loaded, or the extension failed with GNOME Shell's error. A state change or the extension starting reports `LiveControlChanged`. A freshly started extension holds none of Snappy's shortcuts, monitoring, followed windows, or menu, so the adapter sends them again (`Shared::replay`).
+
+**When the daemon goes away** (`service.js`). The extension watches the bus name of whoever set up shortcuts, monitoring, overlays, or the menu. When it vanishes, as on a crash, the extension releases the shortcuts, stops sampling, and removes the overlay and the menu, so no dead shortcut swallows keys. Parked windows stay parked; the daemon brings them back when it starts again (workspace recovery).
+
+**Finding and moving windows** (`src/windows.rs`, `windows.js`). Managed windows are Mutter's non-override-redirect windows, top of the stack first; Wayland and Xwayland windows are treated the same, and titles are never read. A window ID is Mutter's stable sequence. Eligibility is decided in Rust on the facts the extension reports: not full screen; normal type and not transient; and able to move and resize unless maximized or minimized. Writes are `move_frame` and `move_resize_frame` after restoring a maximized or tiled window. The app ID is the window's desktop file ID, else its class, else the executable name; recovery keys use the process ID, its start time from `/proc`, and the stable sequence.
+
+**Coordinates and scale** (`src/displays.rs`). Frames are in GNOME Shell's stage coordinates. In Mutter's logical layout those are logical pixels, which are points, so a display's scale is 1; in the physical layout they are device pixels and the scale is the monitor's. Display IDs and names come from Mutter's `DisplayConfig` (connector, plus a hash of vendor, product, and serial; the monitor's display name); frames and work areas from the extension. Without the extension, displays come from `DisplayConfig` alone with the whole display as the work area. Because X11 hashes the full EDID, the same monitor has a different ID under X11 and under Wayland.
+
+**Drag detection** (`input.js`). Clicks on Wayland windows go straight to their apps, so, as on Windows, a press is reported when a pointer-driven move or resize starts (`grab-op-begin`), naming the window, and the release when it ends. While a drag runs and drag monitoring is on, the pointer and modifiers are sampled once per frame; nothing is sampled otherwise and no keystroke is reported. The release's modifiers come from the release event itself (`Clutter.get_current_event`), because asking the seat afterwards can already see a modifier let go right behind the button.
+
+**Shortcuts** (`src/keys.rs`, `shortcuts.js`). `grab_accelerator` with the physical keycode (`<Control><Alt><Super>0x0a` for Snappy + 1), so shortcuts follow the physical key on every layout, ignoring key repeat, and allowed only in the normal session, not in the overview or on the lock screen. A grab is refused when GNOME Shell, Mutter, gnome-settings-daemon, or another program binds the chord, which doubles as the availability probe. GNOME binds Super with Ctrl and a digit (open a new window of the nth app) and Ctrl+Alt with an F-key (text consoles); Snappy's defaults avoid both.
+
+**Overlays** (`src/overlay.rs`, `overlay.js`). One non-reactive St container per display above everything in GNOME Shell's UI group, so it takes no clicks or focus. The daemon sends finished shapes placed and colored by the style every Linux overlay shares (`crates/linux/src/overlay_style.rs`); the engine asks to show the overlay on every pointer move, so only changed scenes cross the bus.
+
+**Menu** (`src/menu.rs`, `menu.js`). A top bar item in place of a tray icon, built from the same structure as the X11 tray menu (`crates/linux/src/menu.rs`). Each choice carries a number the daemon maps back to its event. The item shows only while the daemon runs.
+
+**Workspaces** (`parking.js`). Windows park on a GNOME workspace of Snappy's own, frames untouched. With dynamic workspaces GNOME keeps an empty workspace last, so the parking workspace is kept just before it; with a fixed number it is added last and removed when workspaces stop. Parked windows are left out of Alt+Tab (`Meta.Display.get_tab_list`) and the overview. Workspaces belong to the GNOME workspace that was in use when they started; on any other, the parking one included, they pause. When the extension is turned off, it returns every parked window first.
+
+**Permissions.** None; the extension is the requirement, and live control reports on it.
+
+**Single instance, quitting, and the login item.** As on X11 (`crates/linux`).
+
+**Known quirks.**
+
+- Holding Shift while dragging a window makes GNOME snap the window to nearby edges as it moves. Drops still land in the zone under the pointer; Ctrl as the drag modifier avoids the effect.
+- With "Workspaces on primary display only" on (Settings, Multitasking), GNOME shows windows on other displays on every workspace, so Snappy can't hide them and a switch involving one is refused with a message saying so.
+- Wayland has no way for an app to ask to size in steps, so only Xwayland apps such as some terminals snap to a cell grid.
+- Activating a parked window from the dock or a notification makes GNOME switch to the parking workspace; Snappy's workspaces pause there until you switch back.
+

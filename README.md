@@ -1,6 +1,6 @@
 # Snappy
 
-Snappy arranges windows into zones on macOS, Windows, and Linux (X11). A layout divides each display into zones, and Snappy moves windows into them when you drag with a modifier held or press a shortcut.
+Snappy arranges windows into zones on macOS, Windows, and Linux (X11, and GNOME on Wayland). A layout divides each display into zones, and Snappy moves windows into them when you drag with a modifier held or press a shortcut.
 
 It runs as a small background program with a menu bar item (a notification-area or tray icon on Windows and Linux). The settings window opens on demand to pick and design layouts, set shortcuts, and manage workspaces. Snappy never reads window titles or contents, and never touches the network.
 
@@ -20,7 +20,8 @@ It runs as a small background program with a menu bar item (a notification-area 
 |---|---|
 | macOS 14 or later | Needs Accessibility permission. |
 | Windows 11 | Tested on ARM64. Windows of apps running as administrator can't be moved. |
-| Linux, X11 | EWMH window managers such as GNOME on Xorg, KDE Plasma on X11, Xfce, and Cinnamon. Wayland sessions are recognized and live control stays off. |
+| Linux, X11 | EWMH window managers such as GNOME on Xorg, KDE Plasma on X11, Xfce, and Cinnamon. |
+| Linux, GNOME on Wayland | GNOME 46 to 49, through a GNOME Shell extension Snappy installs itself. Other Wayland desktops are recognized and live control stays off. |
 
 ## Install from source
 
@@ -54,7 +55,7 @@ open /Applications/Snappy.app
 
 Allow Snappy in System Settings → Privacy & Security → Accessibility when asked. Snapping starts as soon as access is granted.
 
-### Linux (X11)
+### Linux
 
 Install the settings window's system libraries first. On Debian or Ubuntu:
 
@@ -71,7 +72,9 @@ install -Dm755 target/release/snappy target/release/snappy-settings -t ~/.local/
 ~/.local/bin/snappy
 ```
 
-Log in to an X11 session; Wayland sessions aren't supported yet. Turn on "Open at login" in Snappy's settings to start it automatically.
+On GNOME on Wayland, the first launch installs Snappy's GNOME Shell extension into `~/.local/share/gnome-shell/extensions/` and turns it on. GNOME loads new extensions only at login, so log out and back in once; Snappy starts snapping then, and the settings window says what it is waiting for until it does. Later updates replace the extension's files the same way and take effect at the next login. On X11 there is nothing more to do. Other Wayland desktops aren't supported yet.
+
+Turn on "Open at login" in Snappy's settings to start it automatically.
 
 ### Windows
 
@@ -108,11 +111,14 @@ git pull
 | `crates/macos` | macOS adapter (Accessibility, AppKit, Carbon hotkeys). |
 | `crates/windows` | Windows adapter (Win32). |
 | `crates/x11` | Linux X11 adapter (x11rb). |
+| `crates/gnome` | GNOME on Wayland adapter: talks to the extension over D-Bus (zbus). |
+| `crates/linux` | What the Linux adapters share: single instance, login item, session, key codes, menu, overlay style. |
+| `apps/gnome-extension` | The GNOME Shell extension that carries out the GNOME adapter's requests. |
 | `crates/wasm` | `core`'s editor and shortcut rules compiled to WebAssembly for the settings app. |
 | `crates/live` | Live tests: a runner and a fixture app that drive the real daemon in a sandbox. |
 | `apps/snappy` | The daemon binary. |
 | `apps/settings` | The settings app: `src-tauri` (Tauri shell) and `ui` (React and TypeScript). |
-| `tools` | The full check, macOS bundling and signing, and the Linux, macOS, and Windows sandboxes. |
+| `tools` | The full check, macOS bundling and signing, and the Linux (X11 and GNOME), macOS, and Windows sandboxes. |
 
 Package names keep the `snappy-` prefix: `crates/core` is `snappy-core`, and so on.
 
@@ -125,6 +131,7 @@ tools/check.sh                          # format, lint, every Rust test, and the
 pnpm -C apps/settings/ui e2e            # settings UI end-to-end tests in a headless browser
 pnpm -C apps/settings/ui dev            # the settings UI in a browser, against a fake daemon
 tools/live/linux/live.sh                # the real daemon against real windows, in a Linux container
+tools/live/gnome/live.sh                # the same on GNOME Shell under Wayland, in containers
 ```
 
 While developing, never run a development or test build of the daemon on the desktop you work at: it moves windows and registers global shortcuts, and a broken build does that badly. Run it in the Linux container or in one of the test VMs ([docs/testing.md](docs/testing.md#live-tests)). Installing Snappy from source to use it day to day is what it's for.
