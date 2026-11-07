@@ -1,13 +1,18 @@
 //! Swapping two windows between zones, or a floating window with a zone's occupant.
 
+use crate::bounds::GRID_TOLERANCE;
 use crate::geometry::Rect;
 use crate::keys::{Modifier, Mods};
 use crate::window::{WindowId, WindowSnapshot};
 
-/// Largest edge mismatch, in points, for a window to count as filling a zone.
+/// Largest mismatch, in points, of a window's top and left edges for it to count as
+/// filling a zone. Snapping places a window at the zone's corner exactly.
 const OCCUPANCY_TOLERANCE: f64 = 12.0;
 /// The tolerance never exceeds this fraction of the zone's shorter side.
 const OCCUPANCY_FRACTION: f64 = 0.04;
+/// The right and bottom edges may be further off, by as much as a snap accepts from apps
+/// that size in steps, so a terminal snapped into a zone still counts as filling it.
+const GRID_FRACTION: f64 = 0.08;
 
 /// A zone on a specific display, with its frame on screen.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,25 +30,25 @@ impl ZoneSlot {
 
     /// True when a window with `frame` fills this zone.
     pub fn is_occupied_by(&self, frame: Rect) -> bool {
-        fills(frame, self.frame)
+        fills_zone(frame, self.frame)
     }
 }
 
-/// True when `frame` matches `target` on all four edges. Small mismatches from terminal
-/// cell grids and app borders still count.
-fn fills(frame: Rect, target: Rect) -> bool {
+/// True when `frame` sits in `target`: its top-left corner matches closely, and its size is
+/// as close as a snap accepts, since apps on a cell grid or with a minimum size can't
+/// match the zone exactly.
+pub fn fills_zone(frame: Rect, target: Rect) -> bool {
     if !is_real(frame) || !is_real(target) {
         return false;
     }
-    let tolerance = OCCUPANCY_TOLERANCE.min(target.width.min(target.height) * OCCUPANCY_FRACTION);
-    [
-        (frame.min_x(), target.min_x()),
-        (frame.min_y(), target.min_y()),
-        (frame.max_x(), target.max_x()),
-        (frame.max_y(), target.max_y()),
-    ]
-    .iter()
-    .all(|(a, b)| (a - b).abs() <= tolerance)
+    let shorter = target.width.min(target.height);
+    let corner = OCCUPANCY_TOLERANCE.min(shorter * OCCUPANCY_FRACTION);
+    let size = GRID_TOLERANCE.min(shorter * GRID_FRACTION);
+    let close = |a: f64, b: f64, tolerance: f64| (a - b).abs() <= tolerance;
+    close(frame.min_x(), target.min_x(), corner)
+        && close(frame.min_y(), target.min_y(), corner)
+        && close(frame.max_x(), target.max_x(), size)
+        && close(frame.max_y(), target.max_y(), size)
 }
 
 /// Where the swapping window starts, and so where the occupant goes.
@@ -80,7 +85,7 @@ impl SwapSource {
 
     /// True when a window with `frame` fills the source.
     pub fn is_filled_by(&self, frame: Rect) -> bool {
-        fills(frame, self.frame())
+        fills_zone(frame, self.frame())
     }
 
     pub fn is_zone(&self, slot: &ZoneSlot) -> bool {
@@ -248,6 +253,28 @@ mod tests {
             id: WindowId(id),
             frame,
         }
+    }
+
+    #[test]
+    fn a_window_snapped_to_a_cell_grid_still_fills_its_zone() {
+        // A terminal snapped into a 1264 × 1049 zone that landed 18 px narrower and 8 px
+        // shorter, as Terminal does.
+        let zone = ZoneSlot {
+            display_id: "d".into(),
+            zone_id: "bottom-left".into(),
+            frame: Rect::new(12.0, 1099.0, 1264.0, 1049.0),
+            work_area: Rect::new(0.0, 25.0, 3840.0, 2135.0),
+        };
+        assert!(zone.is_occupied_by(Rect::new(12.0, 1099.0, 1246.0, 1041.0)));
+        assert!(zone.is_occupied_by(Rect::new(12.0, 1099.0, 1268.0, 1041.0)));
+        assert!(
+            !zone.is_occupied_by(Rect::new(30.0, 1099.0, 1246.0, 1041.0)),
+            "the corner must still match closely"
+        );
+        assert!(
+            !zone.is_occupied_by(Rect::new(12.0, 1099.0, 1200.0, 1049.0)),
+            "a window well short of the zone isn't in it"
+        );
     }
 
     #[test]

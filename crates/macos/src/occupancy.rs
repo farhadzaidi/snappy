@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::Rect;
-use snappy_core::swap::ZoneSlot;
 
 use crate::messages::{SWAP_NOT_SWAPPABLE, SWAP_UNIDENTIFIED, unavailable};
 use crate::thresholds::WINDOW_LIST_MATCH;
@@ -37,15 +36,9 @@ pub fn same_frame(ax: Rect, server: Rect) -> bool {
     .all(|(a, b)| (a - b).abs() < WINDOW_LIST_MATCH)
 }
 
-/// True when a window with `frame` fills `zone`.
+/// True when a window with `frame` fills `zone`, by the same rule snapping uses.
 pub fn fills_zone(frame: Rect, zone: Rect) -> bool {
-    let slot = ZoneSlot {
-        display_id: String::new(),
-        zone_id: String::new(),
-        frame: zone,
-        work_area: zone,
-    };
-    slot.is_occupied_by(frame)
+    snappy_core::swap::fills_zone(frame, zone)
 }
 
 /// Layer-0 window server frames that fill any of `zones`, grouped by owning process.

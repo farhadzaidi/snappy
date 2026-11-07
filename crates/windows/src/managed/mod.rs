@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::swap::ZoneSlot;
 use snappy_platform::{WindowId, WindowInfo, WindowState};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -272,15 +271,9 @@ impl Windows {
     }
 }
 
-/// A window fills a zone when every edge is within the occupancy tolerance.
+/// A window fills a zone by the same rule snapping uses.
 fn fills(frame: Rect, zone: Rect) -> bool {
-    ZoneSlot {
-        display_id: String::new(),
-        zone_id: String::new(),
-        frame: zone,
-        work_area: zone,
-    }
-    .is_occupied_by(frame)
+    snappy_core::swap::fills_zone(frame, zone)
 }
 
 #[cfg(test)]

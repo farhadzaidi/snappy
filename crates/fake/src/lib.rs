@@ -290,13 +290,9 @@ impl WindowSystem for FakePlatform {
         self.occupancy_queries += 1;
         let mut found = Vec::new();
         for (id, window) in &self.windows {
-            let fills = frames.iter().any(|frame| {
-                let close = |a: f64, b: f64| (a - b).abs() <= 12.0;
-                close(window.frame.x, frame.x)
-                    && close(window.frame.y, frame.y)
-                    && close(window.frame.max_x(), frame.max_x())
-                    && close(window.frame.max_y(), frame.max_y())
-            });
+            let fills = frames
+                .iter()
+                .any(|frame| snappy_core::swap::fills_zone(window.frame, *frame));
             if fills && window.is_shown() {
                 found.extend(self.info(*id));
             }

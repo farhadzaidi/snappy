@@ -21,7 +21,7 @@ const SIZE_WAITS: [u64; 4] = [16, 32, 64, 64];
 pub const CONSTRAINED_THRESHOLD: f64 = 3.0;
 /// Apps that size in steps, such as terminals on a character grid, can land this far from
 /// a request on each axis. A size this close is the nearest the app allows.
-const GRID_TOLERANCE: f64 = 32.0;
+pub const GRID_TOLERANCE: f64 = 32.0;
 
 /// Raw access to one window's bounds.
 pub trait BoundsBackend {
