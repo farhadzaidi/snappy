@@ -7,6 +7,9 @@ import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+/** A text's box is this many times its font size tall, room for the shadow too. */
+const TEXT_BOX_PER_SIZE = 2;
+
 /** CSS lengths in St grow with the UI scale; the app's sizes are already in stage pixels. */
 function cssPixels(stagePixels) {
     const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor || 1;
@@ -19,7 +22,7 @@ function rgba([red, green, blue, alpha]) {
 
 /** A text centered on `center` inside a box as wide as the zone. */
 function centeredText(zone, text) {
-    const height = text.size * 2;
+    const height = text.size * TEXT_BOX_PER_SIZE;
     const label = new St.Label({
         text: text.text,
         style:
@@ -118,7 +121,8 @@ export class Overlays {
         }
     }
 
-    destroy() {
+    /** Takes every overlay down. */
+    clear() {
         this.retain([]);
     }
 }

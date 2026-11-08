@@ -2,6 +2,25 @@
 
 use std::path::{Path, PathBuf};
 
+const NO_CONFIG_FOLDER: &str = "Snappy couldn't find your settings folder.";
+const NOT_CHANGED: &str = "Snappy couldn't change Open at login.";
+
+/// Whether Snappy opens at login.
+pub fn enabled() -> bool {
+    entry_path().is_some_and(|path| is_enabled(&path))
+}
+
+/// Turns opening at login on or off for this program. The cause of a failure goes to the
+/// daemon's output; the message says only what didn't happen.
+pub fn set_enabled_for_this_program(on: bool) -> Result<(), String> {
+    let path = entry_path().ok_or_else(|| NO_CONFIG_FOLDER.to_owned())?;
+    let executable = std::env::current_exe().map_err(|error| {
+        eprintln!("snappy: can't find its own program: {error}");
+        NOT_CHANGED.to_owned()
+    })?;
+    set_enabled(&path, &executable, on)
+}
+
 const FILE_NAME: &str = "snappy.desktop";
 
 /// `$XDG_CONFIG_HOME/autostart/snappy.desktop`, defaulting to `~/.config`.
@@ -27,7 +46,10 @@ pub fn set_enabled(path: &Path, executable: &Path, on: bool) -> Result<(), Strin
             other => other,
         }
     };
-    result.map_err(|error| format!("Snappy could not change the login item: {error}"))
+    result.map_err(|error| {
+        eprintln!("snappy: can't change the autostart entry: {error}");
+        NOT_CHANGED.to_owned()
+    })
 }
 
 fn write_entry(path: &Path, executable: &Path) -> std::io::Result<()> {

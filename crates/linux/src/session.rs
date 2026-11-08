@@ -65,20 +65,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn d8_wayland_session_type_turns_live_control_off() {
+    fn wayland_session_types_count_as_wayland() {
         assert!(is_wayland(Some("wayland"), None));
         assert!(is_wayland(Some("Wayland"), Some("wayland-0")));
     }
 
     #[test]
-    fn d8_wayland_display_without_an_x11_session_counts_as_wayland() {
+    fn a_wayland_display_without_an_x11_session_counts_as_wayland() {
         assert!(is_wayland(None, Some("wayland-0")));
         assert!(is_wayland(Some("tty"), Some("wayland-0")));
         assert!(!is_wayland(None, Some("")));
     }
 
     #[test]
-    fn d8_x11_sessions_keep_live_control() {
+    fn x11_and_unknown_sessions_count_as_x11() {
         assert!(!is_wayland(Some("x11"), None));
         assert!(!is_wayland(Some("x11"), Some("wayland-1")));
         assert!(!is_wayland(None, None));

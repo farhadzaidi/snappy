@@ -42,13 +42,20 @@ export function findWindow(id) {
     return managedWindows().find(window => window.get_stable_sequence() === id) ?? null;
 }
 
+function checkedNumbers(...values) {
+    if (!values.every(Number.isFinite))
+        throw new Error('not a number');
+}
+
 export function setPosition(window, x, y) {
+    checkedNumbers(x, y);
     unmaximize(window);
     window.move_frame(false, Math.round(x), Math.round(y));
 }
 
 /** Resizes from the current top-left corner. */
 export function setSize(window, width, height) {
+    checkedNumbers(width, height);
     unmaximize(window);
     const frame = window.get_frame_rect();
     window.move_resize_frame(false, frame.x, frame.y, Math.round(width), Math.round(height));
@@ -77,6 +84,8 @@ export class WindowEvents {
     constructor(emit) {
         this._emit = emit;
         this._followed = new Set();
+        /** Owner of the connections on followed windows, apart from the lifetime ones. */
+        this._followConnections = {};
         global.display.connectObject(
             'window-created', (_display, window) => this._created(window),
             'notify::focus-window', () => this._focusChanged(),
@@ -96,6 +105,7 @@ export class WindowEvents {
         window.connectObject('unmanaged', () => {
             const id = window.get_stable_sequence();
             window.disconnectObject(this);
+            window.disconnectObject(this._followConnections);
             this._followed.delete(window);
             this._emit({type: 'windowRemoved', id});
         }, this);
@@ -123,14 +133,21 @@ export class WindowEvents {
                     if (!window.minimized)
                         moved();
                 },
-                this);
+                this._followConnections);
         }
     }
 
+    /** Stops following every window, as when the app that asked is gone. */
+    unfollowAll() {
+        for (const window of this._followed)
+            window.disconnectObject(this._followConnections);
+        this._followed.clear();
+    }
+
     destroy() {
+        this.unfollowAll();
         global.display.disconnectObject(this);
         for (const window of managedWindows())
             window.disconnectObject(this);
-        this._followed.clear();
     }
 }

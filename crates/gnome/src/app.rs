@@ -28,6 +28,8 @@ enum Incoming {
     MonitorsChanged,
     /// Another tool that snaps windows was turned on or off.
     NotesChanged,
+    /// The session bus went away; nothing more will arrive.
+    BusLost,
     Stop,
 }
 
@@ -55,9 +57,8 @@ impl App {
     pub fn new(events: Sender<PlatformEvent>) -> Result<App, GnomeError> {
         let bus = Bus::session()?;
         let installed = install_extension();
-        let shared = Arc::new(Shared::new(bus, installed));
-        let live_control = extension::live_control(&shared.bus, installed);
-        shared.state().live_control = Some(live_control);
+        let live_control = extension::live_control(&bus, installed);
+        let shared = Arc::new(Shared::new(bus, installed, live_control));
 
         let (sender, incoming) = mpsc::channel();
         listen(
@@ -129,14 +130,17 @@ impl App {
 
     /// Handles events until `Stopper::stop`, then releases what Snappy asked the extension
     /// to keep. Hidden workspace windows stay where they are; quitting returns them first.
+    /// Fails when the session bus goes away, as the session ending does.
     pub fn run(self) -> Result<(), GnomeError> {
-        let mut windows = WindowList::read(&self.shared.bus);
+        let mut windows = WindowList::default();
+        windows.refresh(&self.shared.bus);
         for incoming in &self.incoming {
             match incoming {
                 Incoming::Stop => break,
+                Incoming::BusLost => return Err(GnomeError::BusLost),
                 Incoming::ExtensionChanged => self.extension_changed(false, &mut windows),
                 Incoming::MonitorsChanged => self.emit(PlatformEvent::DisplaysChanged),
-                Incoming::NotesChanged => self.emit(PlatformEvent::LiveControlChanged),
+                Incoming::NotesChanged => self.emit(PlatformEvent::NotesChanged),
                 Incoming::Event(Event::Ready) => self.extension_changed(true, &mut windows),
                 Incoming::Event(event) => self.event(event, &mut windows),
             }
@@ -156,25 +160,29 @@ impl App {
         let _ = self.events.send(event);
     }
 
-    /// Asks again whether the extension answers. A freshly started one has none of Snappy's
-    /// shortcuts, monitoring, or menu yet, so the engine hears about it either way.
+    /// Asks again whether the extension answers. A freshly started one holds none of
+    /// Snappy's shortcuts, monitoring, followed windows, or menu, and windows may have come
+    /// and gone meanwhile, so it is told everything again and the differences are reported
+    /// before the engine hears about it.
     fn extension_changed(&self, started: bool, windows: &mut WindowList) {
         let live_control = extension::live_control(&self.shared.bus, self.shared.installed);
-        let changed = {
-            let mut state = self.shared.state();
-            let changed = state.live_control.as_ref() != Some(&live_control);
-            if started || changed {
-                state.replay_needed = live_control.is_available();
+        let available = live_control.is_available();
+        let changed = self.shared.set_live_control(live_control);
+        if !(started || changed) {
+            return;
+        }
+        if available {
+            if started {
+                self.shared.state().replay_needed = true;
             }
-            state.live_control = Some(live_control.clone());
-            changed
-        };
-        if live_control.is_available() && (started || changed) {
-            *windows = WindowList::read(&self.shared.bus);
+            if self.shared.state().replay_needed {
+                self.shared.replay();
+            }
+            for event in windows.refresh(&self.shared.bus) {
+                self.emit(event);
+            }
         }
-        if started || changed {
-            self.emit(PlatformEvent::LiveControlChanged);
-        }
+        self.emit(PlatformEvent::LiveControlChanged);
     }
 
     fn event(&self, event: Event, windows: &mut WindowList) {
@@ -215,14 +223,18 @@ impl App {
             }],
             Event::Displays => vec![PlatformEvent::DisplaysChanged],
             Event::Workspace => vec![PlatformEvent::NativeDesktopChanged],
-            Event::Menu { item } => {
+            Event::Menu { item, generation } => {
                 let state = self.shared.state();
-                state
-                    .menu_actions
-                    .get(item as usize)
-                    .cloned()
-                    .into_iter()
-                    .collect()
+                if generation == state.menu_generation {
+                    state
+                        .menu_actions
+                        .get(item as usize)
+                        .cloned()
+                        .into_iter()
+                        .collect()
+                } else {
+                    Vec::new()
+                }
             }
             Event::Ready | Event::Unknown => Vec::new(),
         };
@@ -233,38 +245,47 @@ impl App {
 }
 
 /// The managed windows with their processes, to tell apps launching and quitting.
+#[derive(Default)]
 struct WindowList {
-    pids: BTreeMap<u64, Option<u32>>,
     tracker: ClientTracker,
+    /// The list was read once; until then there's nothing to compare with.
+    seeded: bool,
 }
 
 impl WindowList {
-    fn read(bus: &Bus) -> WindowList {
-        let records: Vec<WindowRecord> = bus.call(&Request::Windows).unwrap_or_default();
+    /// Reads the list again. The first read is taken as it is; later ones report what came
+    /// and went since, as after the extension started over. Nothing changes when the
+    /// extension doesn't answer.
+    fn refresh(&mut self, bus: &Bus) -> Vec<PlatformEvent> {
+        let Ok(records) = bus.call::<Vec<WindowRecord>>(&Request::Windows) else {
+            return Vec::new();
+        };
         let pids: BTreeMap<u64, Option<u32>> = records
             .iter()
             .map(|record| (record.id, (record.pid > 0).then_some(record.pid)))
             .collect();
-        WindowList {
-            tracker: ClientTracker::new(pids.iter().map(|(id, pid)| (*id, *pid))),
-            pids,
+        if !std::mem::replace(&mut self.seeded, true) {
+            self.tracker = ClientTracker::new(pids);
+            return Vec::new();
         }
-    }
-
-    fn list(&self) -> Vec<u64> {
-        self.pids.keys().copied().collect()
+        let list: Vec<u64> = pids.keys().copied().collect();
+        self.tracker.update(&list, &pids)
     }
 
     fn added(&mut self, id: u64, pid: u32) -> Vec<PlatformEvent> {
         let pid = (pid > 0).then_some(pid);
-        self.pids.insert(id, pid);
-        let list = self.list();
+        let mut list = self.tracker.windows();
+        list.push(id);
         self.tracker.update(&list, &BTreeMap::from([(id, pid)]))
     }
 
     fn removed(&mut self, id: u64) -> Vec<PlatformEvent> {
-        self.pids.remove(&id);
-        let list = self.list();
+        let list: Vec<u64> = self
+            .tracker
+            .windows()
+            .into_iter()
+            .filter(|window| *window != id)
+            .collect();
         self.tracker.update(&list, &BTreeMap::new())
     }
 }
@@ -302,8 +323,8 @@ fn signal_rule(interface: &str, member: &str, path: Option<&str>) -> Result<Matc
     Ok(rule.build())
 }
 
-/// Forwards each matching signal, in order, from a thread of its own. Blocking reads can't be
-/// interrupted, so the threads end with the process.
+/// Forwards each matching signal, in order, from a thread of its own, and reports the bus
+/// going away. Blocking reads can't be interrupted, so the threads end with the process.
 fn listen(
     bus: &Bus,
     rule: MatchRule<'static>,
@@ -315,13 +336,14 @@ fn listen(
         .name("snappy-gnome-signals".into())
         .spawn(move || {
             for message in messages {
-                let Ok(message) = message else { continue };
+                let Ok(message) = message else { break };
                 if let Some(incoming) = translate(&message)
                     && sender.send(incoming).is_err()
                 {
                     return;
                 }
             }
+            let _ = sender.send(Incoming::BusLost);
         })?;
     Ok(())
 }

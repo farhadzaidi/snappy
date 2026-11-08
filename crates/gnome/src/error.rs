@@ -7,4 +7,6 @@ pub enum GnomeError {
     Bus(#[from] zbus::Error),
     #[error("Snappy could not start a thread: {0}")]
     Thread(#[from] std::io::Error),
+    #[error("The connection to the session bus closed.")]
+    BusLost,
 }

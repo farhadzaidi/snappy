@@ -45,30 +45,44 @@ export class Parking {
         }
     }
 
-    _exists(workspace) {
-        if (workspace === null)
-            return false;
+    _workspaces() {
         const manager = global.workspace_manager;
-        for (let index = 0; index < manager.get_n_workspaces(); index++) {
-            if (manager.get_workspace_by_index(index) === workspace)
-                return true;
-        }
-        return false;
+        return Array.from({length: manager.get_n_workspaces()}, (_, index) => manager.get_workspace_by_index(index));
+    }
+
+    _exists(workspace) {
+        return workspace !== null && this._workspaces().includes(workspace);
+    }
+
+    /**
+     * Where shown windows belong: the bound workspace, else the one in use, else the first.
+     * Never the parking workspace, which the user may be looking at.
+     */
+    _home() {
+        const candidates = [this._bound, global.workspace_manager.get_active_workspace(), ...this._workspaces()];
+        return candidates.find(workspace => this._exists(workspace) && workspace !== this._parking) ?? null;
     }
 
     _forgetRemoved() {
-        if (this._parking !== null && !this._exists(this._parking))
+        let changed = false;
+        if (this._parking !== null && !this._exists(this._parking)) {
+            // GNOME moved what it held onto a visible workspace; the app hears it and looks.
             this._parking = null;
-        if (this._bound !== null && !this._exists(this._bound)) {
-            // The workspace emptied and GNOME removed it; the one in use now takes its place.
-            this._bound = global.workspace_manager.get_active_workspace();
-            this._emit({type: 'workspace'});
+            changed = true;
         }
+        if (this._bound !== null && !this._exists(this._bound)) {
+            // GNOME removes an empty workspace the user left; the one shown windows go to
+            // next takes its place, as a desktop number does on X11.
+            this._bound = this._home();
+            changed = true;
+        }
+        if (changed)
+            this._emit({type: 'workspace'});
     }
 
     /** Dynamic workspaces: just before GNOME's empty last one. Fixed: last. */
     _keepInPlace() {
-        if (this._parking === null || !this._exists(this._parking))
+        if (!this._exists(this._parking))
             return;
         const manager = global.workspace_manager;
         const count = manager.get_n_workspaces();
@@ -78,7 +92,7 @@ export class Parking {
     }
 
     _ensureParking() {
-        if (this._parking === null || !this._exists(this._parking)) {
+        if (!this._exists(this._parking)) {
             this._parking = global.workspace_manager.append_new_workspace(false, global.get_current_time());
             this._keepInPlace();
         }
@@ -111,31 +125,41 @@ export class Parking {
         return null;
     }
 
-    /** Brings a window back to the bound workspace, or the one in use. */
+    /** Brings a window back to where shown windows belong. */
     unpark(window) {
-        const home = this._exists(this._bound) ? this._bound : global.workspace_manager.get_active_workspace();
-        if (window.get_workspace() !== home && !window.is_on_all_workspaces())
+        const home = this._home();
+        if (home !== null && window.get_workspace() !== home && !window.is_on_all_workspaces())
             window.change_workspace(home);
     }
 
-    /** Stops: unbinds, and removes the parking workspace once nothing is on it. */
+    /**
+     * Stops: unbinds, and removes the parking workspace once nothing is on it. Someone looking
+     * at the empty parking workspace is taken to where shown windows belong first, since GNOME
+     * won't remove the workspace in use. Returns whether it is gone.
+     */
     clear() {
+        const home = this._home();
         this._bound = null;
-        if (this._parking === null || !this._exists(this._parking)) {
+        if (!this._exists(this._parking)) {
             this._parking = null;
             return true;
         }
         if (this._parking.list_windows().some(window => !window.is_on_all_workspaces()))
             return false;
-        if (this._parking !== global.workspace_manager.get_active_workspace())
-            global.workspace_manager.remove_workspace(this._parking, global.get_current_time());
+        const manager = global.workspace_manager;
+        if (manager.get_active_workspace() === this._parking) {
+            if (home === null)
+                return false;
+            home.activate(global.get_current_time());
+        }
+        manager.remove_workspace(this._parking, global.get_current_time());
         this._parking = null;
         return true;
     }
 
     /** Every parked window goes back, frames untouched, so none is lost while turned off. */
     destroy() {
-        if (this._parking !== null && this._exists(this._parking)) {
+        if (this._exists(this._parking)) {
             for (const window of this._parking.list_windows()) {
                 if (!window.is_on_all_workspaces())
                     this.unpark(window);

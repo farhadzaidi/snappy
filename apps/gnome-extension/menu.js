@@ -17,9 +17,12 @@ export class Menu {
         this._iconPath = `${extensionPath}/icons/snappy-symbolic.svg`;
         this._emit = emit;
         this._button = null;
+        this._visible = true;
+        /** The menu sent last; choices name it so the app can ignore stale ones. */
+        this._generation = 0;
     }
 
-    _ensureButton(tooltip) {
+    _ensureButton(name) {
         if (!this._button) {
             this._button = new PanelMenu.Button(0.0, 'Snappy', false);
             this._button.add_child(new St.Icon({
@@ -28,13 +31,15 @@ export class Menu {
             }));
             Main.panel.addToStatusArea(STATUS_AREA_ROLE, this._button);
         }
-        this._button.accessible_name = tooltip;
+        this._button.accessible_name = name;
+        this._button.visible = this._visible;
         return this._button;
     }
 
-    /** Replaces the menu with `entries`. */
-    update(tooltip, entries) {
-        const button = this._ensureButton(tooltip);
+    /** Replaces the menu with `entries`; `name` is what assistive technology calls it. */
+    update(name, generation, entries) {
+        this._generation = generation;
+        const button = this._ensureButton(name);
         button.menu.removeAll();
         this._addEntries(button.menu, entries);
     }
@@ -60,19 +65,23 @@ export class Menu {
             if (entry.checked !== null)
                 item.setOrnament(entry.checked ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
             item.setSensitive(entry.enabled);
-            item.connect('activate', () => this._emit({type: 'menu', item: entry.id}));
+            const generation = this._generation;
+            item.connect('activate', () => this._emit({type: 'menu', item: entry.id, generation}));
             return item;
         }
         }
+    }
+
+    /** Hides the item, as on the lock screen, or shows it again. */
+    setVisible(visible) {
+        this._visible = visible;
+        if (this._button)
+            this._button.visible = visible;
     }
 
     /** Takes the item out of the top bar, as when the app quits. */
     remove() {
         this._button?.destroy();
         this._button = null;
-    }
-
-    destroy() {
-        this.remove();
     }
 }

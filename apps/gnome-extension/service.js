@@ -7,7 +7,6 @@ import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {SHELL_MAJOR} from './compat.js';
 import {Drags} from './input.js';
 import {Menu} from './menu.js';
 import {Overlays} from './overlay.js';
@@ -16,7 +15,7 @@ import {Shortcuts} from './shortcuts.js';
 import * as Windows from './windows.js';
 
 /** Changes whenever a request, reply, or event changes shape. The app checks it. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 const OBJECT_PATH = '/io/github/farhadzaidi/Snappy/Shell';
 const INTERFACE = `
@@ -33,26 +32,47 @@ const INTERFACE = `
   </interface>
 </node>`;
 
-/** Requests that leave something behind for the app: grabs, monitoring, overlays, a menu. */
-const STATEFUL = new Set(['monitoring', 'register', 'overlayPrepare', 'overlayShow', 'menu']);
+/**
+ * Requests that leave something behind for the app: grabs, monitoring, followed windows,
+ * overlays, a menu.
+ */
+const STATEFUL = new Set(['monitoring', 'register', 'follow', 'overlayPrepare', 'overlayShow', 'menu']);
 
 export class Service {
+    /** Sets everything up, or, when any part fails, takes down what was set up and throws. */
     constructor(extensionPath) {
-        const emit = event => this._emitEvent(event);
-        this._parking = new Parking(emit);
-        this._events = new Windows.WindowEvents(emit);
-        this._drags = new Drags(emit);
-        this._shortcuts = new Shortcuts(emit);
-        this._overlays = new Overlays();
-        this._menu = new Menu(extensionPath, emit);
         this._app = null;
         this._appWatch = 0;
-        Main.layoutManager.connectObject('monitors-changed', () => emit({type: 'displays'}), this);
-        global.display.connectObject('workareas-changed', () => emit({type: 'displays'}), this);
+        try {
+            const emit = event => this._emitEvent(event);
+            this._parking = new Parking(emit);
+            this._events = new Windows.WindowEvents(emit);
+            this._drags = new Drags(emit);
+            this._shortcuts = new Shortcuts(emit);
+            this._overlays = new Overlays();
+            this._menu = new Menu(extensionPath, emit);
+            Main.layoutManager.connectObject('monitors-changed', () => emit({type: 'displays'}), this);
+            global.display.connectObject('workareas-changed', () => emit({type: 'displays'}), this);
+            Main.sessionMode.connectObject('updated', () => this._sessionModeChanged(), this);
 
-        this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE, this);
-        this._dbus.export(Gio.DBus.session, OBJECT_PATH);
-        this._emitEvent({type: 'ready'});
+            this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE, this);
+            this._dbus.export(Gio.DBus.session, OBJECT_PATH);
+            this._emitEvent({type: 'ready'});
+        } catch (error) {
+            this.destroy();
+            throw error;
+        }
+    }
+
+    /**
+     * The extension keeps running on the lock screen so hidden windows stay hidden; nothing
+     * of Snappy's shows there.
+     */
+    _sessionModeChanged() {
+        const locked = Main.sessionMode.isLocked;
+        if (locked)
+            this._overlays.hide();
+        this._menu.setVisible(!locked);
     }
 
     get Version() {
@@ -101,7 +121,8 @@ export class Service {
         this._unwatchApp();
         this._shortcuts.unregisterAll();
         this._drags.setMonitoring(false, false, 0);
-        this._overlays.destroy();
+        this._events.unfollowAll();
+        this._overlays.clear();
         this._menu.remove();
     }
 
@@ -118,8 +139,6 @@ export class Service {
 
     _handle(request) {
         switch (request.op) {
-        case 'hello':
-            return {version: PROTOCOL_VERSION, shellMajor: SHELL_MAJOR};
         case 'windows':
             return Windows.managedWindows().map(window => this._record(window));
         case 'window':
@@ -173,7 +192,7 @@ export class Service {
             this._overlays.retain(request.displays);
             return null;
         case 'menu':
-            this._menu.update(request.tooltip, request.entries);
+            this._menu.update(request.name, request.generation, request.entries);
             return null;
         case 'bind':
             this._parking.bind();
@@ -210,17 +229,19 @@ export class Service {
         return monitors;
     }
 
+    /** Takes down whatever was set up; safe to call on a half-built service. */
     destroy() {
         Main.layoutManager.disconnectObject(this);
         global.display.disconnectObject(this);
+        Main.sessionMode.disconnectObject(this);
         this._unwatchApp();
-        this._drags.destroy();
-        this._shortcuts.destroy();
-        this._overlays.destroy();
-        this._menu.destroy();
-        this._events.destroy();
-        this._parking.destroy();
-        this._dbus.unexport();
+        this._drags?.destroy();
+        this._shortcuts?.destroy();
+        this._overlays?.clear();
+        this._menu?.remove();
+        this._events?.destroy();
+        this._parking?.destroy();
+        this._dbus?.unexport();
         this._dbus = null;
     }
 }

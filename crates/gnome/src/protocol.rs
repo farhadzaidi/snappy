@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use snappy_core::geometry::Rect;
 
 /// Matches `PROTOCOL_VERSION` in the extension's `service.js`.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 pub const EXTENSION_UUID: &str = "snappy@farhadzaidi.github.io";
 /// GNOME Shell owns this name; the extension exports its object on Shell's connection.
@@ -22,7 +22,6 @@ pub const GONE: &str = "gone";
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Request {
-    Hello,
     Windows,
     Window {
         id: u64,
@@ -75,8 +74,11 @@ pub enum Request {
     OverlayRetain {
         displays: Vec<String>,
     },
+    /// `name` is what assistive technology calls the item. Choices come back with
+    /// `generation`, so a click on a menu that was replaced meanwhile is ignored.
     Menu {
-        tooltip: String,
+        name: String,
+        generation: u32,
         entries: Vec<MenuEntry>,
     },
     Bind,
@@ -262,6 +264,7 @@ pub enum Event {
     Workspace,
     Menu {
         item: u32,
+        generation: u32,
     },
     /// Anything a newer extension reports that this version doesn't know.
     #[serde(other)]
@@ -281,10 +284,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, r#"{"op":"setPosition","id":7,"x":10.0,"y":20.0}"#);
-        assert_eq!(
-            serde_json::to_string(&Request::Hello).unwrap(),
-            r#"{"op":"hello"}"#
-        );
+        assert_eq!(serde_json::to_string(&Request::Bind).unwrap(), r#"{"op":"bind"}"#);
         let json = serde_json::to_string(&Request::Monitoring {
             press: true,
             drag: false,

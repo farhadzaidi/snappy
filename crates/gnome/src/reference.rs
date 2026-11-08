@@ -2,7 +2,7 @@
 //! keys.
 
 use snappy_core::keys::Combo;
-use snappy_platform::{Display, WindowSystem};
+use snappy_platform::{Display, LiveControl, WindowSystem};
 
 use crate::bus::Bus;
 use crate::platform::GnomePlatform;
@@ -11,7 +11,11 @@ use crate::shared::Shared;
 /// Every display, primary first, as the adapter reports them.
 pub fn displays() -> Result<Vec<Display>, String> {
     let bus = Bus::session().map_err(|error| error.to_string())?;
-    let mut platform = GnomePlatform::new(std::sync::Arc::new(Shared::new(bus, true)));
+    let mut platform = GnomePlatform::new(std::sync::Arc::new(Shared::new(
+        bus,
+        true,
+        LiveControl::Available,
+    )));
     Ok(platform.displays())
 }
 

@@ -1,9 +1,17 @@
 {
   "uuid": "snappy@farhadzaidi.github.io",
   "name": "Snappy",
-  "description": "Lets the Snappy app snap windows into zones, swap them, and group them into workspaces on GNOME Shell under Wayland. The Snappy app makes every decision; this extension carries out its requests and reports what happens.",
+  "description": "Lets Snappy snap, swap, and hide windows on GNOME.",
   "url": "https://github.com/farhadzaidi/snappy",
-  "shell-version": ["46", "47", "48", "49"],
-  "session-modes": ["user", "unlock-dialog"],
-  "version-name": "2"
+  "shell-version": [
+    "46",
+    "47",
+    "48",
+    "49"
+  ],
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
+  "version-name": "3"
 }

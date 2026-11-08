@@ -14,13 +14,15 @@ pub struct Shared {
     pub bus: Bus,
     /// The extension's files are in place, so GNOME Shell loads it at the next login.
     pub installed: bool,
+    /// Whether the extension answers, as last checked.
+    live_control: Mutex<LiveControl>,
     state: Mutex<State>,
 }
 
 #[derive(Default)]
 pub struct State {
-    pub live_control: Option<LiveControl>,
-    /// The extension started since it was last told what to keep.
+    /// What to send again when the extension starts over: shortcuts that couldn't be sent
+    /// while it was unreachable count too.
     pub replay_needed: bool,
     pub press_monitoring: bool,
     pub drag_monitoring: bool,
@@ -28,6 +30,8 @@ pub struct State {
     pub follow: u32,
     pub registered: Vec<Accelerator>,
     pub menu: Option<(String, Vec<MenuEntry>)>,
+    /// Counts menus sent, so choices from a replaced one are told apart.
+    pub menu_generation: u32,
     /// What each numbered menu choice stands for.
     pub menu_actions: Vec<PlatformEvent>,
     pub followed: BTreeSet<u64>,
@@ -38,13 +42,41 @@ pub struct State {
     pub scales: HashMap<String, f64>,
 }
 
+impl State {
+    /// What the extension watches. Windows follow the pointer only while Snappy is live,
+    /// which is when it watches presses.
+    pub fn monitoring(&self) -> Request {
+        Request::Monitoring {
+            press: self.press_monitoring,
+            drag: self.drag_monitoring,
+            follow: if self.press_monitoring { self.follow } else { 0 },
+        }
+    }
+}
+
 impl Shared {
-    pub fn new(bus: Bus, installed: bool) -> Shared {
+    pub fn new(bus: Bus, installed: bool, live_control: LiveControl) -> Shared {
         Shared {
             bus,
             installed,
+            live_control: Mutex::new(live_control),
             state: Mutex::new(State::default()),
         }
+    }
+
+    pub fn live_control(&self) -> LiveControl {
+        self.live_control
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Records the new answer; returns whether it differs from the last one.
+    pub fn set_live_control(&self, live_control: LiveControl) -> bool {
+        let mut current = self.live_control.lock().unwrap_or_else(PoisonError::into_inner);
+        let changed = *current != live_control;
+        *current = live_control;
+        changed
     }
 
     pub fn state(&self) -> MutexGuard<'_, State> {
@@ -59,11 +91,7 @@ impl Shared {
             state.replay_needed = false;
             state.overlay_shown = None;
             state.overlay_prepared.clear();
-            let mut requests = vec![Request::Monitoring {
-                press: state.press_monitoring,
-                drag: state.drag_monitoring,
-                follow: state.follow,
-            }];
+            let mut requests = vec![state.monitoring()];
             if !state.registered.is_empty() {
                 requests.push(Request::Register {
                     keys: state.registered.clone(),
@@ -74,9 +102,10 @@ impl Shared {
                     ids: state.followed.iter().copied().collect(),
                 });
             }
-            if let Some((tooltip, entries)) = &state.menu {
+            if let Some((name, entries)) = &state.menu {
                 requests.push(Request::Menu {
-                    tooltip: tooltip.clone(),
+                    name: name.clone(),
+                    generation: state.menu_generation,
                     entries: entries.clone(),
                 });
             }

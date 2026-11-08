@@ -5,7 +5,8 @@
 use snappy_core::geometry::{Point, Rect};
 use snappy_platform::OverlayZone;
 
-/// No system accent color is readable on X11, so the documented default is used.
+/// Linux overlays use the documented default accent, not a system one: X11 has none to
+/// read, and GNOME 46 has none either.
 pub const ACCENT: Rgb = Rgb(0x00, 0x7A, 0xFF);
 pub const MINT: Rgb = Rgb(0x00, 0xC7, 0xBE);
 pub const WHITE: Rgb = Rgb(0xFF, 0xFF, 0xFF);

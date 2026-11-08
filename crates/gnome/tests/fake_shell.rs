@@ -28,6 +28,8 @@ use zbus::message::Type;
 use zbus::zvariant::{OwnedValue, Value as Variant};
 
 const WAIT: Duration = Duration::from_secs(5);
+/// A shortcut ID no test registers, sent to mark a point in the event stream.
+const MARKER: u32 = u32::MAX;
 
 /// What the fake extension holds and has been asked.
 #[derive(Default)]
@@ -203,10 +205,19 @@ fn serve(connection: Connection, state: Arc<Mutex<FakeState>>) {
                 },
                 (OBJECT_PATH, "Call") => match state.version {
                     Some(_) => {
-                        let (text,): (String,) = message.body().deserialize().unwrap();
-                        let request: Value = serde_json::from_str(&text).unwrap();
-                        let reply = answer(&mut state, &request);
-                        state.requests.push(request);
+                        let request: Option<Value> = message
+                            .body()
+                            .deserialize::<(String,)>()
+                            .ok()
+                            .and_then(|(text,)| serde_json::from_str(&text).ok());
+                        let reply = match request {
+                            Some(request) => {
+                                let reply = answer(&mut state, &request);
+                                state.requests.push(request);
+                                reply
+                            }
+                            None => json!({"error": "not a request"}),
+                        };
                         connection.reply(&header, &(reply.to_string(),))
                     }
                     None => connection.reply_error(
@@ -216,7 +227,11 @@ fn serve(connection: Connection, state: Arc<Mutex<FakeState>>) {
                     ),
                 },
                 ("/org/gnome/Shell", "GetExtensionInfo") => {
-                    let (uuid,): (String,) = message.body().deserialize().unwrap();
+                    let uuid = message
+                        .body()
+                        .deserialize::<(String,)>()
+                        .map(|(uuid,)| uuid)
+                        .unwrap_or_default();
                     let extension_state = if uuid == EXTENSION_UUID {
                         state.extension_state
                     } else {
@@ -239,7 +254,10 @@ fn serve(connection: Connection, state: Arc<Mutex<FakeState>>) {
                 }
                 _ => connection.reply_error(&header, "org.freedesktop.DBus.Error.UnknownMethod", &member),
             };
-            replied.unwrap();
+            // A reply that can't go out fails the test waiting for it, with its own message.
+            if let Err(error) = replied {
+                eprintln!("fake shell: couldn't reply to {member}: {error}");
+            }
         }
     });
 }
@@ -332,8 +350,6 @@ impl Adapter {
         let platform = app.platform();
         let stopper = app.stopper();
         let run = std::thread::spawn(move || app.run().unwrap());
-        // The listeners subscribe before `new` returns; give the bus a moment to apply them.
-        std::thread::sleep(Duration::from_millis(100));
         Adapter {
             platform,
             events,
@@ -346,9 +362,17 @@ impl Adapter {
         self.events.recv_timeout(WAIT).expect("an event")
     }
 
-    fn drain(&self) -> Vec<PlatformEvent> {
-        std::thread::sleep(Duration::from_millis(200));
-        self.events.try_iter().collect()
+    /// Everything reported before a marker the fake sends now: events are delivered in order,
+    /// so when the marker arrives, nothing sent before it is still on its way.
+    fn settle(&self, fake: &Fake) -> Vec<PlatformEvent> {
+        fake.emit(json!({"type": "hotkey", "id": MARKER}));
+        let mut seen = Vec::new();
+        loop {
+            match self.next() {
+                PlatformEvent::HotKey(MARKER) => return seen,
+                event => seen.push(event),
+            }
+        }
     }
 }
 
@@ -438,7 +462,8 @@ fn the_extensions_events_arrive_in_order_as_engine_events() {
     fake.state().windows = vec![record(1, 100, 0.0)];
     let mut adapter = Adapter::start();
     adapter.platform.update(&TrayMenu::default());
-    adapter.drain();
+    adapter.settle(fake);
+    let generation = fake.requests("menu")[0]["generation"].clone();
 
     for event in [
         json!({"type": "pointerDown", "x": 10, "y": 20, "mods": 1, "window": 1}),
@@ -453,7 +478,7 @@ fn the_extensions_events_arrive_in_order_as_engine_events() {
         json!({"type": "workspace"}),
         json!({"type": "displays"}),
         json!({"type": "somethingFromANewerExtension"}),
-        json!({"type": "menu", "item": 0}),
+        json!({"type": "menu", "item": 0, "generation": generation}),
     ] {
         fake.emit(event);
     }
@@ -662,13 +687,13 @@ fn a_running_tiling_assistant_is_noted_and_its_changes_are_reported() {
 
     fake.state().running = vec!["tiling-assistant@ubuntu.com".into()];
     fake.extension_changed("tiling-assistant@ubuntu.com");
-    assert_eq!(adapter.next(), PlatformEvent::LiveControlChanged);
+    assert_eq!(adapter.next(), PlatformEvent::NotesChanged);
     let notes = adapter.platform.notes();
     assert_eq!(notes.len(), 1);
     assert!(notes[0].contains("Enhanced Tiling"), "{notes:?}");
 
     fake.extension_changed("someone-else@example.com");
-    assert!(adapter.drain().is_empty(), "other extensions don't matter");
+    assert!(adapter.settle(fake).is_empty(), "other extensions don't matter");
 }
 
 #[test]
@@ -677,6 +702,8 @@ fn changing_the_drag_key_tells_the_extension_once() {
     let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
     fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
     let mut adapter = Adapter::start();
+    adapter.platform.set_press_monitoring(true);
+    fake.state().requests.clear();
     adapter.platform.set_drag_modifier(Modifier::Ctrl);
     adapter.platform.set_drag_modifier(Modifier::Ctrl);
     let follows: Vec<Value> = fake
@@ -685,4 +712,85 @@ fn changing_the_drag_key_tells_the_extension_once() {
         .map(|request| request["follow"].clone())
         .collect();
     assert_eq!(follows, vec![json!(4)], "Ctrl's mask, sent once");
+}
+
+#[test]
+fn shortcuts_registered_while_gnome_is_away_are_kept_and_grabbed_when_it_returns() {
+    let fake = fake!();
+    let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
+    fake.reset(None, None);
+    let mut adapter = Adapter::start();
+    let one = KeyChord::snappy("Digit1", []).combo();
+    assert!(
+        adapter.platform.register(&[(1, one.clone())]).is_empty(),
+        "an unanswered request says nothing about the chord"
+    );
+    assert!(fake.requests("register").is_empty());
+
+    fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
+    fake.emit(json!({"type": "ready"}));
+    assert_eq!(adapter.next(), PlatformEvent::LiveControlChanged);
+    let registered = fake.requests("register");
+    assert_eq!(
+        registered.last().unwrap()["keys"],
+        json!([{"id": 1, "accelerator": "<Control><Alt><Super>0x0a"}])
+    );
+}
+
+#[test]
+fn windows_that_came_and_went_while_the_extension_was_away_are_reported() {
+    let fake = fake!();
+    let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
+    fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
+    fake.state().windows = vec![record(1, 100, 0.0), record(2, 200, 700.0)];
+    let adapter = Adapter::start();
+    assert!(
+        adapter.settle(fake).is_empty(),
+        "the first list is taken as it is"
+    );
+
+    fake.state().windows = vec![record(1, 100, 0.0), record(3, 300, 700.0)];
+    fake.emit(json!({"type": "ready"}));
+    let events = adapter.settle(fake);
+    assert!(
+        events.contains(&PlatformEvent::WindowDestroyed(WindowId(2))),
+        "{events:?}"
+    );
+    assert!(
+        events.contains(&PlatformEvent::AppTerminated { pid: 200 }),
+        "{events:?}"
+    );
+    assert!(
+        events.contains(&PlatformEvent::AppLaunched { pid: 300 }),
+        "{events:?}"
+    );
+    assert!(
+        events.contains(&PlatformEvent::WindowCreated { pid: 300 }),
+        "{events:?}"
+    );
+    assert_eq!(events.last(), Some(&PlatformEvent::LiveControlChanged));
+}
+
+#[test]
+fn a_choice_from_a_replaced_menu_is_ignored() {
+    let fake = fake!();
+    let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
+    fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
+    let mut adapter = Adapter::start();
+    adapter.platform.update(&TrayMenu::default());
+    let first = fake.requests("menu")[0]["generation"].clone();
+    adapter.platform.update(&TrayMenu {
+        live: true,
+        ..TrayMenu::default()
+    });
+    let second = fake.requests("menu")[1]["generation"].clone();
+    assert_ne!(first, second);
+
+    fake.emit(json!({"type": "menu", "item": 0, "generation": first}));
+    assert!(
+        adapter.settle(fake).is_empty(),
+        "the old menu's choice does nothing"
+    );
+    fake.emit(json!({"type": "menu", "item": 0, "generation": second}));
+    assert_eq!(adapter.settle(fake), vec![PlatformEvent::OpenSettingsRequested]);
 }

@@ -2,7 +2,6 @@
 //! grabs and input selection use the event connection, so their events reach the event
 //! thread; overlay and tray work goes to the overlay thread.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -72,10 +71,6 @@ impl X11Platform {
 
     fn ui(&self, command: UiCommand) {
         let _ = self.ui.send(command);
-    }
-
-    fn login_entry() -> Result<PathBuf, String> {
-        login_item::entry_path().ok_or_else(|| "Snappy could not find your configuration folder.".to_owned())
     }
 }
 
@@ -265,14 +260,11 @@ impl Tray for X11Platform {
 
 impl LoginItem for X11Platform {
     fn is_enabled(&mut self) -> bool {
-        Self::login_entry().is_ok_and(|path| login_item::is_enabled(&path))
+        login_item::enabled()
     }
 
     fn set_enabled(&mut self, on: bool) -> Result<(), String> {
-        let path = Self::login_entry()?;
-        let executable = std::env::current_exe()
-            .map_err(|error| format!("Snappy could not find its own program: {error}"))?;
-        login_item::set_enabled(&path, &executable, on)
+        login_item::set_enabled_for_this_program(on)
     }
 }
 

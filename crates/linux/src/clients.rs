@@ -18,6 +18,11 @@ impl ClientTracker {
         }
     }
 
+    /// The windows known now.
+    pub fn windows(&self) -> Vec<u64> {
+        self.clients.keys().copied().collect()
+    }
+
     /// Windows in `list` not seen before; their process IDs are needed for `update`.
     pub fn added(&self, list: &[u64]) -> Vec<u64> {
         list.iter()

@@ -1,6 +1,5 @@
 //! The engine thread's handle: every platform trait, carried out by asking the extension.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,8 +15,8 @@ use snappy_platform::{
 
 use crate::bus::CallError;
 use crate::messages::{
-    LOG_OUT_FAILED, NO_FOCUSED_WINDOW, NOT_STANDARD, ON_ALL_WORKSPACES, SHELL_UNREACHABLE, WINDOW_GONE,
-    unavailable,
+    HIDE_REFUSED, LOG_OUT_FAILED, NO_FOCUSED_WINDOW, NOT_STANDARD, ON_ALL_WORKSPACES, SHELL_UNREACHABLE,
+    UNEXPECTED_REPLY, WINDOW_GONE, unavailable,
 };
 use crate::protocol::{
     Accelerator, GONE, Monitor, PointerPosition, REFUSED_ALL_WORKSPACES, Request, WindowRecord,
@@ -48,10 +47,10 @@ const _: () = {
 };
 
 fn window_error(error: CallError) -> WindowError {
-    if error.is_refusal(GONE) {
-        unavailable(WINDOW_GONE)
-    } else {
-        unavailable(SHELL_UNREACHABLE)
+    match error {
+        CallError::Refused(reason) if reason == GONE => unavailable(WINDOW_GONE),
+        CallError::Unreachable(_) => unavailable(SHELL_UNREACHABLE),
+        CallError::Refused(_) | CallError::Malformed(_) => unavailable(UNEXPECTED_REPLY),
     }
 }
 
@@ -128,19 +127,12 @@ impl GnomePlatform {
     }
 
     fn send_monitoring(&self) {
-        let (press, drag, follow) = {
-            let state = self.shared.state();
-            (state.press_monitoring, state.drag_monitoring, state.follow)
-        };
-        let _ = self.shared.bus.send(&Request::Monitoring { press, drag, follow });
+        let request = self.shared.state().monitoring();
+        let _ = self.shared.bus.send(&request);
     }
 
     fn scale(&self, display: &str) -> f64 {
         self.shared.state().scales.get(display).copied().unwrap_or(1.0)
-    }
-
-    fn login_entry() -> Result<PathBuf, String> {
-        login_item::entry_path().ok_or_else(|| "Snappy could not find your configuration folder.".to_owned())
     }
 }
 
@@ -258,7 +250,7 @@ impl WindowSystem for GnomePlatform {
         match refusal.as_deref() {
             None => Ok(()),
             Some(REFUSED_ALL_WORKSPACES) => Err(unavailable(ON_ALL_WORKSPACES)),
-            Some(_) => Err(unavailable(WINDOW_GONE)),
+            Some(_) => Err(unavailable(HIDE_REFUSED)),
         }
     }
 
@@ -338,6 +330,14 @@ impl HotKeys for GnomePlatform {
         }
         let refused_grabs: Vec<u32> = match self.call(&Request::Register { keys: grabs.clone() }) {
             Ok(ids) => ids,
+            // GNOME isn't answering, which says nothing about the chords: keep them and grab
+            // them when the extension is back, rather than report them as taken.
+            Err(CallError::Unreachable(_)) => {
+                let mut state = self.shared.state();
+                state.registered = grabs;
+                state.replay_needed = true;
+                return refused;
+            }
             Err(_) => grabs.iter().map(|grab| grab.id).collect(),
         };
         for grab in &grabs {
@@ -474,24 +474,28 @@ impl DesktopGuard for GnomePlatform {
     }
 
     fn clear(&mut self) {
-        let _ = self.call::<bool>(&Request::ClearWorkspaces);
+        let _ = self.shared.bus.send(&Request::ClearWorkspaces);
     }
 }
 
 impl Tray for GnomePlatform {
     fn update(&mut self, tray: &TrayMenu) {
         let (entries, actions) = menu::build(tray);
-        {
+        let menu = (tray.tooltip.clone(), entries);
+        let generation = {
             let mut state = self.shared.state();
-            if state.menu.as_ref() == Some(&(tray.tooltip.clone(), entries.clone())) {
-                state.menu_actions = actions;
+            if state.menu.as_ref() == Some(&menu) {
                 return;
             }
-            state.menu = Some((tray.tooltip.clone(), entries.clone()));
+            state.menu_generation = state.menu_generation.wrapping_add(1);
+            state.menu = Some(menu.clone());
             state.menu_actions = actions;
-        }
+            state.menu_generation
+        };
+        let (name, entries) = menu;
         let _ = self.send(&Request::Menu {
-            tooltip: tray.tooltip.clone(),
+            name,
+            generation,
             entries,
         });
     }
@@ -499,14 +503,11 @@ impl Tray for GnomePlatform {
 
 impl LoginItem for GnomePlatform {
     fn is_enabled(&mut self) -> bool {
-        Self::login_entry().is_ok_and(|path| login_item::is_enabled(&path))
+        login_item::enabled()
     }
 
     fn set_enabled(&mut self, on: bool) -> Result<(), String> {
-        let path = Self::login_entry()?;
-        let executable = std::env::current_exe()
-            .map_err(|error| format!("Snappy could not find its own program: {error}"))?;
-        login_item::set_enabled(&path, &executable, on)
+        login_item::set_enabled_for_this_program(on)
     }
 }
 
@@ -521,7 +522,10 @@ impl Platform for GnomePlatform {
 
     fn apply_remedy(&mut self, remedy: Remedy) -> Result<(), String> {
         match remedy {
-            Remedy::LogOut => self.shared.bus.log_out().map_err(|_| LOG_OUT_FAILED.to_owned()),
+            Remedy::LogOut => self.shared.bus.log_out().map_err(|error| {
+                eprintln!("snappy: GNOME didn't log out: {error:?}");
+                LOG_OUT_FAILED.to_owned()
+            }),
         }
     }
 
@@ -529,19 +533,8 @@ impl Platform for GnomePlatform {
         extension::notes(&self.shared.bus)
     }
 
-    /// When the extension has started over, it is first told everything it was asked to keep.
     fn live_control(&mut self) -> LiveControl {
-        let (live_control, replay) = {
-            let state = self.shared.state();
-            (
-                state.live_control.clone().unwrap_or(LiveControl::Available),
-                state.replay_needed,
-            )
-        };
-        if live_control.is_available() && replay {
-            self.shared.replay();
-        }
-        live_control
+        self.shared.live_control()
     }
 
     fn now(&self) -> f64 {

@@ -28,6 +28,18 @@ pub enum CallError {
     Unreachable(String),
     /// The extension answered with an error, such as `gone` for a closed window.
     Refused(String),
+    /// A reply that doesn't have the shape this version expects.
+    Malformed(String),
+}
+
+impl CallError {
+    /// Logs what went wrong for the daemon's output, once, where it happened.
+    fn logged(self) -> CallError {
+        if let CallError::Malformed(detail) = &self {
+            eprintln!("snappy: unexpected reply from GNOME Shell: {detail}");
+        }
+        self
+    }
 }
 
 impl CallError {
@@ -89,29 +101,27 @@ impl Bus {
         interface: &'static str,
         method: &'static str,
         body: B,
-    ) -> Result<zbus::Message, String>
+    ) -> Result<zbus::Message, CallError>
     where
         B: serde::Serialize + zbus::zvariant::DynamicType + Send + 'static,
     {
         self.run(move |conn| {
             conn.call_method(Some(destination), path, Some(interface), method, &body)
-                .map_err(|error| error.to_string())
+                .map_err(|error| CallError::Unreachable(error.to_string()))
         })
-        .unwrap_or_else(|| Err("the bus thread stopped".to_owned()))
+        .unwrap_or_else(|| Err(CallError::Unreachable("the bus thread stopped".to_owned())))
     }
 
     /// Sends a request to the extension and reads the `ok` value of its reply.
     pub fn call<T: DeserializeOwned>(&self, request: &Request) -> Result<T, CallError> {
-        let json =
-            serde_json::to_string(request).map_err(|error| CallError::Unreachable(error.to_string()))?;
-        let reply = self
-            .call_method(SHELL_BUS_NAME, OBJECT_PATH, INTERFACE, "Call", (json,))
-            .map_err(CallError::Unreachable)?;
+        let json = serde_json::to_string(request)
+            .map_err(|error| CallError::Malformed(error.to_string()).logged())?;
+        let reply = self.call_method(SHELL_BUS_NAME, OBJECT_PATH, INTERFACE, "Call", (json,))?;
         let (text,): (String,) = reply
             .body()
             .deserialize()
-            .map_err(|error| CallError::Unreachable(error.to_string()))?;
-        parse_reply(&text)
+            .map_err(|error| CallError::Malformed(error.to_string()).logged())?;
+        parse_reply(&text).map_err(CallError::logged)
     }
 
     /// A request whose reply carries nothing.
@@ -163,7 +173,7 @@ impl Bus {
     }
 
     /// Ends the desktop session after GNOME's own confirmation, as its menu's Log Out does.
-    pub fn log_out(&self) -> Result<(), String> {
+    pub fn log_out(&self) -> Result<(), CallError> {
         self.call_method(
             "org.gnome.SessionManager",
             "/org/gnome/SessionManager",
@@ -192,14 +202,14 @@ impl Bus {
 /// `{"ok": value}` or `{"error": message}`.
 fn parse_reply<T: DeserializeOwned>(text: &str) -> Result<T, CallError> {
     let mut reply: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(text).map_err(|error| CallError::Unreachable(error.to_string()))?;
+        serde_json::from_str(text).map_err(|error| CallError::Malformed(error.to_string()))?;
     if let Some(error) = reply.remove("error") {
         return Err(CallError::Refused(
             error.as_str().map_or_else(|| error.to_string(), str::to_owned),
         ));
     }
     let value = reply.remove("ok").unwrap_or(serde_json::Value::Null);
-    serde_json::from_value(value).map_err(|error| CallError::Unreachable(error.to_string()))
+    serde_json::from_value(value).map_err(|error| CallError::Malformed(error.to_string()))
 }
 
 #[cfg(test)]
@@ -215,10 +225,13 @@ mod tests {
             parse_reply::<u32>(r#"{"error":"gone"}"#),
             Err(CallError::Refused("gone".into()))
         );
-        assert!(parse_reply::<u32>(r#"{"ok":"text"}"#).is_err());
+        assert!(matches!(
+            parse_reply::<u32>(r#"{"ok":"text"}"#),
+            Err(CallError::Malformed(_))
+        ));
         assert!(matches!(
             parse_reply::<u32>("not json"),
-            Err(CallError::Unreachable(_))
+            Err(CallError::Malformed(_))
         ));
     }
 

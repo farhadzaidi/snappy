@@ -24,6 +24,10 @@ use snappy_platform::{
 use zbus::blocking::Connection;
 
 const WAIT: Duration = Duration::from_secs(5);
+/// Where a title bar is grabbed, below the window's top edge.
+const TITLE_BAR_GRIP: f64 = 14.0;
+/// The modifier keys the tests press, in the order they press them.
+const MODIFIERS: [Modifier; 4] = [Modifier::Ctrl, Modifier::Alt, Modifier::Shift, Modifier::Meta];
 
 macro_rules! shell {
     () => {
@@ -75,17 +79,14 @@ impl Shell {
     /// A freshly started GNOME Shell ignores title bar drags of a Wayland app until the
     /// session has handled some input, so a throwaway window is clicked and dragged first.
     fn warm_up(&mut self) {
-        self.open("warm-up", Rect::new(1000.0, 500.0, 500.0, 300.0));
+        let frame = Rect::new(1000.0, 500.0, 500.0, 300.0);
+        self.open("warm-up", frame);
         std::thread::sleep(Duration::from_millis(500));
-        self.pointer(Point::new(1250.0, 514.0));
+        let grip = Point::new(frame.mid_x(), frame.y + TITLE_BAR_GRIP);
+        self.pointer(grip);
         std::thread::sleep(Duration::from_millis(100));
         self.button(true);
-        for step in 1..=6 {
-            self.pointer(Point::new(
-                1250.0 + 20.0 * f64::from(step),
-                514.0 + 10.0 * f64::from(step),
-            ));
-        }
+        self.pointer_steps(grip, (20.0, 10.0), 6);
         self.button(false);
         std::thread::sleep(Duration::from_millis(300));
         self.fixtures.clear();
@@ -133,23 +134,23 @@ impl Shell {
         panic!("never saw {what}; saw {seen:?}");
     }
 
+    /// Presses or releases the key with this evdev keycode, as the virtual keyboard would.
     fn key(&self, keycode: u8, pressed: bool) {
-        self.helper(json!({"op": "key", "keycode": keycode - 8, "pressed": pressed}));
+        self.helper(key_request(keycode, pressed));
         std::thread::sleep(Duration::from_millis(15));
+    }
+
+    fn modifier(&self, modifier: Modifier, pressed: bool) {
+        self.key(key_codes::modifier_keycode(modifier), pressed);
     }
 
     fn press_chord(&self, chord: &KeyChord) {
         let combo = chord.combo();
-        let modifiers: Vec<u8> = [
-            (Modifier::Ctrl, 37),
-            (Modifier::Alt, 64),
-            (Modifier::Shift, 50),
-            (Modifier::Meta, 133),
-        ]
-        .into_iter()
-        .filter(|(modifier, _)| combo.mods.contains(*modifier))
-        .map(|(_, keycode)| keycode)
-        .collect();
+        let modifiers: Vec<u8> = MODIFIERS
+            .into_iter()
+            .filter(|modifier| combo.mods.contains(*modifier))
+            .map(key_codes::modifier_keycode)
+            .collect();
         for keycode in &modifiers {
             self.key(*keycode, true);
         }
@@ -169,6 +170,26 @@ impl Shell {
     fn button(&self, pressed: bool) {
         self.helper(json!({"op": "button", "pressed": pressed}));
         std::thread::sleep(Duration::from_millis(30));
+    }
+
+    /// Moves the pointer `count` times by `by`, starting from `from`.
+    fn pointer_steps(&self, from: Point, by: (f64, f64), count: u32) {
+        for step in 1..=count {
+            let step = f64::from(step);
+            self.pointer(Point::new(from.x + by.0 * step, from.y + by.1 * step));
+        }
+    }
+
+    /// Waits until GNOME Shell moves the window under the pressed button.
+    fn wait_until_moving(&self) {
+        let deadline = Instant::now() + WAIT;
+        while self.helper(json!({"op": "grabbing"})) != true {
+            assert!(
+                Instant::now() < deadline,
+                "GNOME Shell never started moving the window"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Opens a fixture window titled `Fixture <id>`, placed at `frame`'s origin.
@@ -202,13 +223,16 @@ impl Shell {
             focused["x"].as_f64().unwrap() + focused["width"].as_f64().unwrap() / 2.0,
             focused["y"].as_f64().unwrap() + focused["height"].as_f64().unwrap() / 2.0,
         );
-        std::thread::sleep(Duration::from_millis(100));
         self.pointer(center);
         std::thread::sleep(Duration::from_millis(100));
         self.button(true);
         std::thread::sleep(Duration::from_millis(50));
         self.button(false);
-        std::thread::sleep(Duration::from_millis(200));
+        let deadline = Instant::now() + WAIT;
+        while self.helper(json!({"op": "focused", "title": title})) != true {
+            assert!(Instant::now() < deadline, "{title} never got focus");
+            std::thread::sleep(Duration::from_millis(10));
+        }
         self.platform
             .visible_windows(None)
             .into_iter()
@@ -241,7 +265,7 @@ impl Drop for Shell {
             "/io/github/farhadzaidi/SnappyTest",
             Some("io.github.farhadzaidi.SnappyTest"),
             "Call",
-            &(json!({"op": "releaseAll"}).to_string(),),
+            &(release_all_request().to_string(),),
         );
         self.fixtures.clear();
         self.platform.unregister_all();
@@ -469,29 +493,18 @@ fn a_drag_reports_its_window_and_the_modifiers_held_at_the_release() {
     shell.platform.set_drag_monitoring(true);
     shell.drain();
 
-    let grip = Point::new(800.0, 314.0);
+    let frame = floating(500.0);
+    let grip = Point::new(frame.mid_x(), frame.y + TITLE_BAR_GRIP);
     shell.pointer(grip);
     std::thread::sleep(Duration::from_millis(100));
-    shell.key(50, true);
+    shell.modifier(Modifier::Shift, true);
     shell.button(true);
     shell.pointer(Point::new(grip.x - 10.0, grip.y + 7.0));
-    let deadline = Instant::now() + WAIT;
-    while shell.helper(json!({"op": "grabbing"})) != true {
-        assert!(
-            Instant::now() < deadline,
-            "GNOME Shell never started moving the window"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    for step in 1..=8 {
-        shell.pointer(Point::new(
-            grip.x - 30.0 * f64::from(step),
-            grip.y + 20.0 * f64::from(step),
-        ));
-    }
+    shell.wait_until_moving();
+    shell.pointer_steps(grip, (-30.0, 20.0), 8);
     // Let go of Shift right behind the button, as fast as input allows.
     shell.helper(json!({"op": "button", "pressed": false}));
-    shell.helper(json!({"op": "key", "keycode": 42, "pressed": false}));
+    shell.helper(key_request(key_codes::modifier_keycode(Modifier::Shift), false));
 
     let events = shell.wait_for("the release", |event| {
         matches!(event, PlatformEvent::PointerUp { .. })
@@ -834,26 +847,14 @@ fn shift_drag_past_an_edge(shell: &mut Shell, id: u64) -> Rect {
     std::thread::sleep(Duration::from_millis(300));
     shell.pointer(Point::new(500.0, 164.0));
     std::thread::sleep(Duration::from_millis(100));
-    shell.key(50, true);
+    shell.modifier(Modifier::Shift, true);
     shell.button(true);
     shell.pointer(Point::new(510.0, 170.0));
-    let deadline = Instant::now() + WAIT;
-    while shell.helper(json!({"op": "grabbing"})) != true {
-        assert!(
-            Instant::now() < deadline,
-            "GNOME Shell never started moving the window"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    for step in 1..=30 {
-        shell.pointer(Point::new(
-            510.0 + 13.0 * f64::from(step),
-            170.0 + 11.0 * f64::from(step),
-        ));
-    }
+    shell.wait_until_moving();
+    shell.pointer_steps(Point::new(510.0, 170.0), (13.0, 11.0), 30);
     std::thread::sleep(Duration::from_millis(100));
     shell.button(false);
-    shell.key(50, false);
+    shell.modifier(Modifier::Shift, false);
     std::thread::sleep(Duration::from_millis(300));
     shell.platform.frame(snappy_platform::WindowId(id)).unwrap()
 }
@@ -882,4 +883,18 @@ fn with_the_drag_key_held_a_moved_window_follows_the_pointer_not_gnomes_edges() 
     shell.platform.set_drag_modifier(Modifier::Ctrl);
     let frame = shift_drag_past_an_edge(&mut shell, id);
     assert!(!near(frame), "GNOME snapped the window to an edge: {frame:?}");
+}
+
+/// The helper's request to press or release a key, named by its evdev keycode.
+fn key_request(keycode: u8, pressed: bool) -> Value {
+    json!({"op": "key", "keycode": keycode - key_codes::EVDEV_OFFSET, "pressed": pressed})
+}
+
+/// The helper's request to let go of the button and every modifier the tests press.
+fn release_all_request() -> Value {
+    let keycodes: Vec<u8> = MODIFIERS
+        .into_iter()
+        .map(|modifier| key_codes::modifier_keycode(modifier) - key_codes::EVDEV_OFFSET)
+        .collect();
+    json!({"op": "releaseAll", "keycodes": keycodes})
 }

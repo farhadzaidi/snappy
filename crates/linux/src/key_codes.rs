@@ -2,6 +2,8 @@
 //! key, which X servers and GNOME Shell both use, and the keysym a US layout gives it.
 //! Keysym 0 means no unambiguous US keysym.
 
+use snappy_core::keys::Modifier;
+
 /// `(code, evdev keycode, US keysym)`. Evdev keycodes are Linux input codes plus 8.
 const KEYS: &[(&str, u8, u32)] = &[
     ("Escape", 9, 0xff1b),
@@ -122,6 +124,19 @@ pub fn evdev_keycode(code: &str) -> Option<u8> {
         .find(|(name, ..)| *name == code)
         .map(|(_, keycode, _)| *keycode)
 }
+
+/// The evdev keycode of the modifier's left-hand key: Shift_L, Control_L, Alt_L, Super_L.
+pub fn modifier_keycode(modifier: Modifier) -> u8 {
+    match modifier {
+        Modifier::Shift => 50,
+        Modifier::Ctrl => 37,
+        Modifier::Alt => 64,
+        Modifier::Meta => 133,
+    }
+}
+
+/// Linux input codes are evdev keycodes minus this; virtual input devices take input codes.
+pub const EVDEV_OFFSET: u8 = 8;
 
 /// The keysym a US layout produces on the key, unshifted.
 pub fn us_keysym(code: &str) -> Option<u32> {

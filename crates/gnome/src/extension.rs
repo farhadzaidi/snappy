@@ -17,12 +17,10 @@ use crate::messages::{
 };
 use crate::protocol::{EXTENSION_UUID, PROTOCOL_VERSION};
 
-/// The extension's files, relative to its folder.
+/// The extension's files, relative to its folder. `metadata.json` comes last: whether an
+/// install is fresh is told by it, so an install cut short is finished, and turned on, next
+/// time.
 pub const FILES: &[(&str, &[u8])] = &[
-    (
-        "metadata.json",
-        include_bytes!("../../../apps/gnome-extension/metadata.json"),
-    ),
     (
         "extension.js",
         include_bytes!("../../../apps/gnome-extension/extension.js"),
@@ -59,6 +57,10 @@ pub const FILES: &[(&str, &[u8])] = &[
     (
         "icons/snappy-symbolic.svg",
         include_bytes!("../../../apps/gnome-extension/icons/snappy-symbolic.svg"),
+    ),
+    (
+        "metadata.json",
+        include_bytes!("../../../apps/gnome-extension/metadata.json"),
     ),
 ];
 
@@ -246,7 +248,10 @@ fn unavailable(
         None => EXTENSION_NOT_INSTALLED,
         // Running but not answering in this version: an older or newer copy is loaded.
         Some(state::ACTIVE) => return log_out(other_version(desktop)),
-        Some(state::ERROR) => return log_out(extension_error(error, desktop)),
+        Some(state::ERROR) => {
+            eprintln!("snappy: GNOME Shell couldn't start the extension: {error}");
+            return log_out(extension_error(desktop));
+        }
         Some(state::OUT_OF_DATE) => EXTENSION_UNSUPPORTED,
         Some(state::ACTIVATING) => EXTENSION_STARTING,
         // Inactive, initialized, or deactivating: turned off, by the user or for every extension.
@@ -293,6 +298,15 @@ pub fn notes(bus: &Bus) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn file(name: &str) -> &'static [u8] {
+        FILES.iter().find(|(path, _)| *path == name).unwrap().1
+    }
+
+    #[test]
+    fn metadata_is_written_last() {
+        assert_eq!(FILES.last().map(|(path, _)| *path), Some("metadata.json"));
+    }
+
     #[test]
     fn every_extension_file_is_built_in() {
         let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/gnome-extension");
@@ -316,7 +330,7 @@ mod tests {
 
     #[test]
     fn the_metadata_names_this_extension_and_the_supported_shells() {
-        let metadata: serde_json::Value = serde_json::from_slice(FILES[0].1).unwrap();
+        let metadata: serde_json::Value = serde_json::from_slice(file("metadata.json")).unwrap();
         assert_eq!(metadata["uuid"], EXTENSION_UUID);
         let versions: Vec<&str> = metadata["shell-version"]
             .as_array()
@@ -332,13 +346,16 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("snappy-extension-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
         assert_eq!(install(&folder).unwrap(), Installed::Fresh);
-        assert_eq!(std::fs::read(folder.join("service.js")).unwrap(), FILES[2].1);
+        assert_eq!(
+            std::fs::read(folder.join("service.js")).unwrap(),
+            file("service.js")
+        );
         assert!(folder.join("icons/snappy-symbolic.svg").exists());
         assert_eq!(install(&folder).unwrap(), Installed::Current);
 
         std::fs::write(folder.join("menu.js"), "// an older copy").unwrap();
         assert_eq!(install(&folder).unwrap(), Installed::Updated);
-        assert_eq!(std::fs::read(folder.join("menu.js")).unwrap(), FILES[8].1);
+        assert_eq!(std::fs::read(folder.join("menu.js")).unwrap(), file("menu.js"));
         let leftovers = std::fs::read_dir(&folder)
             .unwrap()
             .filter(|entry| {
@@ -401,10 +418,8 @@ mod tests {
         );
         assert_eq!(
             unavailable(Some(3), "TypeError: x is undefined.", true, Some(true), "Ubuntu").reason(),
-            Some(
-                "Snappy's GNOME extension couldn't start: TypeError: x is undefined. Log out of Ubuntu and \
-                 sign back in to try again."
-            )
+            Some("Snappy's GNOME extension couldn't start. Log out of Ubuntu and sign back in to try again."),
+            "GNOME Shell's error goes to the log, not the message"
         );
     }
 

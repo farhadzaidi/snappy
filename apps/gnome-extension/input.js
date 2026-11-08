@@ -4,9 +4,9 @@
 // sampled each frame; nothing is sampled otherwise, and no keystroke is ever reported.
 //
 // GNOME pulls a window moved with Shift held onto nearby screen and window edges, and with
-// Ctrl makes other windows' edges resist. While Snappy's drag key is held, the window is put
-// back under the pointer each time GNOME moves it, before the frame is drawn, so it follows
-// the pointer and Snappy's zones are the only guide.
+// Ctrl makes other windows' edges resist. While the modifiers the app names are held, the
+// window is put back under the pointer each time GNOME moves it, before the frame is drawn,
+// so it follows the pointer and Snappy's zones are the only guide.
 
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
@@ -40,18 +40,29 @@ function currentEventPointer() {
     return {x, y, mods: event.get_state() & ~BUTTON_MASK};
 }
 
+function isPointerGrab(window, op) {
+    return window !== null && !window.is_override_redirect() &&
+        op !== Meta.GrabOp.NONE && (op & KEYBOARD_GRAB) === 0;
+}
+
+function isMove(op) {
+    return (op & ~UNCONSTRAINED_GRAB) === Meta.GrabOp.MOVING;
+}
+
 export class Drags {
     constructor(emit) {
         this._emit = emit;
         this._press = false;
         this._drag = false;
-        /** The drag key's modifier mask; 0 leaves GNOME's moves alone. */
+        /** The modifier mask that keeps a moved window under the pointer; 0 for none. */
         this._follow = 0;
-        /** The dragged window's offset from the pointer, and its size when measured. */
-        this._anchor = null;
-        this._following = {};
-        this._correcting = false;
+        /** The window GNOME is moving or resizing for the pointer, while it does. */
         this._grabbed = null;
+        /** Owner of the connections on the grabbed window, so they go away together. */
+        this._grabConnections = {};
+        /** The moved window's offset from the pointer, and its size when measured. */
+        this._anchor = null;
+        this._correcting = false;
         this._sampler = 0;
         this._last = null;
         global.display.connectObject(
@@ -71,19 +82,47 @@ export class Drags {
         this._updateSampler();
     }
 
-    _isMove(op) {
-        return (op & ~UNCONSTRAINED_GRAB) === Meta.GrabOp.MOVING;
+    _begin(window, op) {
+        if (!isPointerGrab(window, op))
+            return;
+        // GNOME runs one grab at a time; one that never reported its end is over.
+        this._release();
+        this._grabbed = window;
+        this._last = pointer();
+        window.connectObject('unmanaged', () => this._release(), this._grabConnections);
+        if (isMove(op)) {
+            this._measure(window);
+            window.connectObject('position-changed', () => this._keepUnderPointer(window),
+                this._grabConnections);
+        }
+        if (this._press || this._drag) {
+            this._emit({
+                type: 'pointerDown', ...this._last,
+                window: window.get_stable_sequence(),
+            });
+        }
+        this._updateSampler();
     }
 
-    _startFollowing(window) {
-        this._anchor = null;
-        this._measure(window);
-        window.connectObject('position-changed', () => this._keepUnderPointer(window), this._following);
+    _end(window, op) {
+        const grabbed = this._grabbed;
+        this._release();
+        if (grabbed === null || window !== grabbed || !isPointerGrab(window, op))
+            return;
+        // The release itself says which modifiers were down when the button came up; asking
+        // the seat now could already see a modifier let go right after it.
+        const released = currentEventPointer() ?? pointer();
+        if (this._press || this._drag)
+            this._emit({type: 'pointerUp', ...released});
     }
 
-    _stopFollowing(window) {
-        window?.disconnectObject(this._following);
+    /** Forgets the grab and everything that followed it. */
+    _release() {
+        this._grabbed?.disconnectObject(this._grabConnections);
+        this._grabbed = null;
         this._anchor = null;
+        this._last = null;
+        this._updateSampler();
     }
 
     /** Where the window sits relative to the pointer, as GNOME placed it. */
@@ -94,7 +133,7 @@ export class Drags {
     }
 
     _keepUnderPointer(window) {
-        if (this._correcting || !this._press || this._follow === 0)
+        if (this._correcting || this._follow === 0 || this._anchor === null)
             return;
         const [x, y, mask] = global.get_pointer();
         if ((mask & this._follow) !== this._follow)
@@ -117,46 +156,15 @@ export class Drags {
         }
     }
 
-    _isPointerGrab(window, op) {
-        return window !== null && !window.is_override_redirect() &&
-            op !== Meta.GrabOp.NONE && (op & KEYBOARD_GRAB) === 0;
-    }
-
-    _begin(window, op) {
-        if (!this._isPointerGrab(window, op))
-            return;
-        this._grabbed = window;
-        this._last = pointer();
-        if (this._isMove(op))
-            this._startFollowing(window);
-        if (this._press || this._drag) {
-            this._emit({
-                type: 'pointerDown', ...this._last,
-                window: window.get_stable_sequence(),
-            });
-        }
-        this._updateSampler();
-    }
-
-    _end(window, op) {
-        if (this._grabbed === null || window !== this._grabbed || !this._isPointerGrab(window, op))
-            return;
-        this._grabbed = null;
-        this._stopFollowing(window);
-        this._updateSampler();
-        // The release itself says which modifiers were down when the button came up; asking
-        // the seat now could already see a modifier let go right after it.
-        const released = currentEventPointer() ?? pointer();
-        this._last = null;
-        if (this._press || this._drag)
-            this._emit({type: 'pointerUp', ...released});
-    }
-
     _updateSampler() {
         const wanted = this._drag && this._grabbed !== null;
         if (wanted && this._sampler === 0) {
-            this._sampler = GLib.timeout_add(GLib.PRIORITY_HIGH, SAMPLE_INTERVAL_MS, () => {
-                this._sample();
+            this._sampler = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SAMPLE_INTERVAL_MS, () => {
+                try {
+                    this._sample();
+                } catch (error) {
+                    logError(error, 'Snappy: sampling the pointer');
+                }
                 return GLib.SOURCE_CONTINUE;
             });
         } else if (!wanted && this._sampler !== 0) {
@@ -177,9 +185,7 @@ export class Drags {
 
     destroy() {
         global.display.disconnectObject(this);
-        this._stopFollowing(this._grabbed);
-        this._grabbed = null;
         this._drag = false;
-        this._updateSampler();
+        this._release();
     }
 }
