@@ -153,7 +153,9 @@ Apps that bring a parked window back on their own are parked again, at most once
 
 ### Other desktops and display changes
 
-Workspaces belong to the native desktop (Space, virtual desktop) that was current when they started (`DesktopGuard`). On any other desktop they pause without changing anything. When displays change, the engine waits 350 ms for the change to settle, re-places windows without revealing parked ones, and retries once.
+Workspaces belong to the native desktop (Space, virtual desktop) that was current when they started (`DesktopGuard`). On any other desktop they pause without changing anything.
+
+When live control is lost while workspaces run, as when GNOME's extension is turned off or restarts, they are suspended rather than stopped: the session is kept, nothing moves, and switches are refused. When live control comes back (`LiveControlChanged`), the engine binds the desktop again and hides the windows of inactive workspaces that the platform showed meanwhile (`Session::contain`), announcing any it couldn't. When displays change, the engine waits 350 ms for the change to settle, re-places windows without revealing parked ones, and retries once.
 
 ## Files
 

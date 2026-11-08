@@ -62,7 +62,8 @@ tools/live/linux/run.sh cargo clippy -p snappy-x11 -p snappy-live -p snappy --al
 - Keep the extension thin: it carries out requests and reports events, and every decision stays in Rust.
 - A request, reply, or event that changes shape bumps `PROTOCOL_VERSION` in both `service.js` and `crates/gnome/src/protocol.rs`; a test checks they match.
 - GNOME Shell's JavaScript API changes between releases. Calls that differ between GNOME 46 and 49 go through `compat.js`, and `tools/live/gnome/live.sh --gnome 46,47,48,49` runs every supported version.
-- `tools/check.sh` checks the extension's syntax with Node. Build output goes to the `snappy-linux-target` volume and the cargo registry to `snappy-cargo-registry`, so your own `target/` is untouched.
+- `tools/check.sh` checks the extension's syntax with Node.
+- `tools/live/gnome/live.sh` and `test.sh` build in a container whose output goes to the `snappy-gnome-target` volume and the cargo registry to `snappy-cargo-registry`, so your own `target/` is untouched apart from the binaries copied to `target/live/gnome/`.
 
 ## Running safely
 
