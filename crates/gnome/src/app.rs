@@ -26,6 +26,8 @@ enum Incoming {
     /// GNOME Shell reported a change to Snappy's extension, or Shell itself came or went.
     ExtensionChanged,
     MonitorsChanged,
+    /// Another tool that snaps windows was turned on or off.
+    NotesChanged,
     Stop,
 }
 
@@ -73,7 +75,16 @@ impl App {
             sender.clone(),
             |message| {
                 let (uuid, _): (String, ExtensionInfo) = message.body().deserialize().ok()?;
-                (uuid == EXTENSION_UUID).then_some(Incoming::ExtensionChanged)
+                if uuid == EXTENSION_UUID {
+                    Some(Incoming::ExtensionChanged)
+                } else if extension::COMPETING_EXTENSIONS
+                    .iter()
+                    .any(|(other, _)| *other == uuid)
+                {
+                    Some(Incoming::NotesChanged)
+                } else {
+                    None
+                }
             },
         )?;
         let shell_owner = MatchRule::builder()
@@ -125,6 +136,7 @@ impl App {
                 Incoming::Stop => break,
                 Incoming::ExtensionChanged => self.extension_changed(false, &mut windows),
                 Incoming::MonitorsChanged => self.emit(PlatformEvent::DisplaysChanged),
+                Incoming::NotesChanged => self.emit(PlatformEvent::LiveControlChanged),
                 Incoming::Event(Event::Ready) => self.extension_changed(true, &mut windows),
                 Incoming::Event(event) => self.event(event, &mut windows),
             }
@@ -134,6 +146,7 @@ impl App {
         let _ = bus.send(&Request::Monitoring {
             press: false,
             drag: false,
+            follow: 0,
         });
         let _ = bus.send(&Request::OverlayHide);
         Ok(())

@@ -290,7 +290,7 @@ impl Platform for X11Platform {
         if self.live {
             LiveControl::Available
         } else {
-            LiveControl::Unavailable(WAYLAND.to_owned())
+            LiveControl::unavailable(WAYLAND)
         }
     }
 

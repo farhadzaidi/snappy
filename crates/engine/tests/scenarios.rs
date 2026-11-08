@@ -13,7 +13,7 @@ use snappy_core::workspace::ParkingPolicy;
 use snappy_engine::{Engine, Input, Paths};
 use snappy_fake::{FakePlatform, FakeWindow, OverlayCall};
 use snappy_ipc::{AppState, Command, ToSettings};
-use snappy_platform::{Caption, LiveControl, OverlayScene, PlatformEvent, WindowId, WindowSystem};
+use snappy_platform::{Caption, LiveControl, OverlayScene, PlatformEvent, Remedy, WindowId, WindowSystem};
 
 const LEFT_ZONE: Rect = Rect::new(12.0, 37.0, 702.0, 851.0);
 const RIGHT_ZONE: Rect = Rect::new(726.0, 37.0, 702.0, 851.0);
@@ -653,7 +653,7 @@ fn revoking_permission_pauses_and_regranting_resumes() {
 fn unavailable_live_control_shows_the_platforms_reason_and_registers_nothing() {
     scenario(|| async {
         let fake = FakePlatform {
-            live_control: LiveControl::Unavailable("Log out and back in to finish setting up.".into()),
+            live_control: LiveControl::unavailable("Log out and back in to finish setting up."),
             ..FakePlatform::default()
         };
         let engine = live_engine("live-control-unavailable", fake);
@@ -671,7 +671,7 @@ fn unavailable_live_control_shows_the_platforms_reason_and_registers_nothing() {
 fn live_control_arriving_starts_snapping_and_leaving_pauses_it_with_the_reason() {
     scenario(|| async {
         let fake = FakePlatform {
-            live_control: LiveControl::Unavailable("The extension is off.".into()),
+            live_control: LiveControl::unavailable("The extension is off."),
             ..FakePlatform::default()
         };
         let engine = live_engine("live-control-changes", fake);
@@ -682,7 +682,7 @@ fn live_control_arriving_starts_snapping_and_leaving_pauses_it_with_the_reason()
         assert_eq!(status_text(&engine), "Snapping is on.");
         assert_eq!(app_state(&engine).snapping.unavailable_reason, None);
 
-        engine.with_platform(|p| p.live_control = LiveControl::Unavailable("The extension is off.".into()));
+        engine.with_platform(|p| p.live_control = LiveControl::unavailable("The extension is off."));
         event(&engine, PlatformEvent::LiveControlChanged);
         assert!(!engine.is_live());
         assert!(engine.with_platform(|p| p.registered.is_empty()));
@@ -694,7 +694,7 @@ fn live_control_arriving_starts_snapping_and_leaving_pauses_it_with_the_reason()
 fn live_control_arriving_reads_the_displays_again() {
     scenario(|| async {
         let fake = FakePlatform {
-            live_control: LiveControl::Unavailable("The extension is off.".into()),
+            live_control: LiveControl::unavailable("The extension is off."),
             ..FakePlatform::default()
         };
         let engine = started("live-control-displays", fake);
@@ -705,6 +705,64 @@ fn live_control_arriving_reads_the_displays_again() {
         });
         event(&engine, PlatformEvent::LiveControlChanged);
         assert_eq!(app_state(&engine).displays[0].work_area, moved_work_area);
+    });
+}
+
+#[test]
+fn the_platform_knows_the_drag_key_and_hears_when_it_changes() {
+    scenario(|| async {
+        let engine = live_engine("drag-key-reaches-platform", FakePlatform::default());
+        assert_eq!(engine.with_platform(|p| p.drag_modifier), Some(Modifier::Shift));
+        command(
+            &engine,
+            Command::SetDragModifier {
+                modifier: DragModifier::Ctrl,
+            },
+        );
+        assert_eq!(engine.with_platform(|p| p.drag_modifier), Some(Modifier::Ctrl));
+    });
+}
+
+#[test]
+fn a_remedy_the_platform_offers_is_published_and_applied_on_request() {
+    scenario(|| async {
+        let fake = FakePlatform {
+            live_control: LiveControl::Unavailable {
+                reason: "Log out and sign back in.".into(),
+                remedy: Some(Remedy::LogOut),
+            },
+            ..FakePlatform::default()
+        };
+        let engine = live_engine("remedy-offered", fake);
+        assert_eq!(
+            app_state(&engine).snapping.unavailable_remedy,
+            Some(Remedy::LogOut)
+        );
+        command(
+            &engine,
+            Command::ApplyRemedy {
+                remedy: Remedy::LogOut,
+            },
+        );
+        assert_eq!(engine.with_platform(|p| p.remedies.clone()), vec![Remedy::LogOut]);
+    });
+}
+
+#[test]
+fn platform_notes_are_published_and_read_again_when_live_control_changes() {
+    scenario(|| async {
+        let fake = FakePlatform {
+            notes: vec!["Another tool also snaps windows.".into()],
+            ..FakePlatform::default()
+        };
+        let engine = started("platform-notes", fake);
+        assert_eq!(
+            app_state(&engine).platform_notes,
+            vec!["Another tool also snaps windows.".to_owned()]
+        );
+        engine.with_platform(|p| p.notes.clear());
+        event(&engine, PlatformEvent::LiveControlChanged);
+        assert!(app_state(&engine).platform_notes.is_empty());
     });
 }
 

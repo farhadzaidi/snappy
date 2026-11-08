@@ -6,23 +6,24 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Platform as PlatformName};
+use snappy_core::keys::{Combo, Modifier, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_linux::login_item;
 use snappy_platform::{
     Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
-    Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Permissions, Platform, Remedy, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::bus::CallError;
 use crate::messages::{
-    NO_FOCUSED_WINDOW, NOT_STANDARD, ON_ALL_WORKSPACES, SHELL_UNREACHABLE, WINDOW_GONE, unavailable,
+    LOG_OUT_FAILED, NO_FOCUSED_WINDOW, NOT_STANDARD, ON_ALL_WORKSPACES, SHELL_UNREACHABLE, WINDOW_GONE,
+    unavailable,
 };
 use crate::protocol::{
     Accelerator, GONE, Monitor, PointerPosition, REFUSED_ALL_WORKSPACES, Request, WindowRecord,
 };
 use crate::shared::Shared;
-use crate::{displays, keys, menu, overlay, windows};
+use crate::{displays, extension, keys, menu, overlay, windows};
 
 /// How long showing a parked window waits for its saved position to apply before bringing it
 /// back, and how often it looks. Wayland apps confirm moves asynchronously.
@@ -127,11 +128,11 @@ impl GnomePlatform {
     }
 
     fn send_monitoring(&self) {
-        let (press, drag) = {
+        let (press, drag, follow) = {
             let state = self.shared.state();
-            (state.press_monitoring, state.drag_monitoring)
+            (state.press_monitoring, state.drag_monitoring, state.follow)
         };
-        let _ = self.shared.bus.send(&Request::Monitoring { press, drag });
+        let _ = self.shared.bus.send(&Request::Monitoring { press, drag, follow });
     }
 
     fn scale(&self, display: &str) -> f64 {
@@ -298,6 +299,22 @@ impl Input for GnomePlatform {
     fn set_drag_monitoring(&mut self, on: bool) {
         self.shared.state().drag_monitoring = on;
         self.send_monitoring();
+    }
+
+    /// GNOME pulls a window moved with Shift onto nearby edges, and with Ctrl makes other
+    /// windows' edges resist, so while the drag key is held the extension keeps the window
+    /// under the pointer and the zone overlay is the only guide.
+    fn set_drag_modifier(&mut self, modifier: Modifier) {
+        let follow = keys::mask(modifier);
+        let changed = {
+            let mut state = self.shared.state();
+            let changed = state.follow != follow;
+            state.follow = follow;
+            changed
+        };
+        if changed {
+            self.send_monitoring();
+        }
     }
 }
 
@@ -500,6 +517,16 @@ impl Platform for GnomePlatform {
             parking: ParkingPolicy::Desktop,
             needs_permission: false,
         }
+    }
+
+    fn apply_remedy(&mut self, remedy: Remedy) -> Result<(), String> {
+        match remedy {
+            Remedy::LogOut => self.shared.bus.log_out().map_err(|_| LOG_OUT_FAILED.to_owned()),
+        }
+    }
+
+    fn notes(&mut self) -> Vec<String> {
+        extension::notes(&self.shared.bus)
     }
 
     /// When the extension has started over, it is first told everything it was asked to keep.

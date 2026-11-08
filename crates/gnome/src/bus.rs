@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use zbus::blocking::Connection;
 use zbus::zvariant::OwnedValue;
 
-use crate::protocol::{EXTENSION_UUID, INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME};
+use crate::protocol::{INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME};
 
 /// How long a request may take before the engine gives up on it. GNOME Shell answers from
 /// its main loop, normally within a frame.
@@ -137,14 +137,15 @@ impl Bus {
         u32::try_from(self.property(SHELL_BUS_NAME, OBJECT_PATH, INTERFACE, "Version")?).ok()
     }
 
-    pub fn extension_info(&self) -> Option<ExtensionInfo> {
+    pub fn extension_info(&self, uuid: &str) -> Option<ExtensionInfo> {
+        let uuid = uuid.to_owned();
         let reply = self
             .call_method(
                 SHELL_BUS_NAME,
                 EXTENSIONS_PATH,
                 EXTENSIONS_INTERFACE,
                 "GetExtensionInfo",
-                (EXTENSION_UUID,),
+                (uuid,),
             )
             .ok()?;
         reply.body().deserialize::<ExtensionInfo>().ok()
@@ -159,6 +160,18 @@ impl Bus {
             "UserExtensionsEnabled",
         )?)
         .ok()
+    }
+
+    /// Ends the desktop session after GNOME's own confirmation, as its menu's Log Out does.
+    pub fn log_out(&self) -> Result<(), String> {
+        self.call_method(
+            "org.gnome.SessionManager",
+            "/org/gnome/SessionManager",
+            "org.gnome.SessionManager",
+            "Logout",
+            (0u32,),
+        )
+        .map(drop)
     }
 
     /// Mutter's `GetCurrentState`, or `None` when it can't be read.

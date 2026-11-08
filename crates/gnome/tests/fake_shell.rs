@@ -21,7 +21,7 @@ use snappy_gnome::protocol::{EXTENSION_UUID, INTERFACE, OBJECT_PATH, PROTOCOL_VE
 use snappy_gnome::{App, GnomePlatform, Stopper};
 use snappy_platform::{
     Caption, DesktopGuard, HotKeys, Input, LiveControl, Overlay, OverlayScene, OverlayZone, Platform,
-    PlatformEvent, Tray, TrayMenu, WindowId, WindowSystem,
+    PlatformEvent, Remedy, Tray, TrayMenu, WindowId, WindowSystem,
 };
 use zbus::blocking::{Connection, MessageIterator};
 use zbus::message::Type;
@@ -40,6 +40,10 @@ struct FakeState {
     /// Accelerators GNOME Shell already binds.
     taken: Vec<String>,
     park_refusal: Option<String>,
+    /// Other extensions running, by ID.
+    running: Vec<String>,
+    /// How many times the session manager was asked to log out.
+    log_outs: usize,
     requests: Vec<Value>,
 }
 
@@ -105,7 +109,11 @@ impl Fake {
         unsafe { std::env::set_var("DBUS_SESSION_BUS_ADDRESS", address.trim()) };
 
         let connection = Connection::session().unwrap();
-        for name in ["org.gnome.Shell", "org.gnome.Mutter.DisplayConfig"] {
+        for name in [
+            "org.gnome.Shell",
+            "org.gnome.Mutter.DisplayConfig",
+            "org.gnome.SessionManager",
+        ] {
             connection.request_name(name).unwrap();
         }
         let state = Arc::new(Mutex::new(FakeState::default()));
@@ -147,6 +155,10 @@ impl Fake {
     }
 
     fn extension_state_changed(&self) {
+        self.extension_changed(EXTENSION_UUID);
+    }
+
+    fn extension_changed(&self, uuid: &str) {
         let info: HashMap<String, OwnedValue> = HashMap::new();
         self.connection
             .emit_signal(
@@ -154,7 +166,7 @@ impl Fake {
                 "/org/gnome/Shell",
                 "org.gnome.Shell.Extensions",
                 "ExtensionStateChanged",
-                &(EXTENSION_UUID, info),
+                &(uuid, info),
             )
             .unwrap();
     }
@@ -204,12 +216,22 @@ fn serve(connection: Connection, state: Arc<Mutex<FakeState>>) {
                     ),
                 },
                 ("/org/gnome/Shell", "GetExtensionInfo") => {
+                    let (uuid,): (String,) = message.body().deserialize().unwrap();
+                    let extension_state = if uuid == EXTENSION_UUID {
+                        state.extension_state
+                    } else {
+                        state.running.contains(&uuid).then_some(1.0)
+                    };
                     let mut info: HashMap<String, OwnedValue> = HashMap::new();
-                    if let Some(extension_state) = state.extension_state {
+                    if let Some(extension_state) = extension_state {
                         info.insert("state".into(), owned(Variant::from(extension_state)));
                         info.insert("error".into(), owned(Variant::from("")));
                     }
                     connection.reply(&header, &info)
+                }
+                ("/org/gnome/SessionManager", "Logout") => {
+                    state.log_outs += 1;
+                    connection.reply(&header, &())
                 }
                 ("/org/gnome/Shell", "Get") => connection.reply(&header, &owned(Variant::from(true))),
                 ("/org/gnome/Mutter/DisplayConfig", "GetCurrentState") => {
@@ -346,15 +368,18 @@ fn an_installed_extension_gnome_hasnt_loaded_asks_to_log_in_again() {
     let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
     fake.reset(None, None);
     let mut adapter = Adapter::start();
-    let LiveControl::Unavailable(reason) = adapter.platform.live_control() else {
+    let LiveControl::Unavailable { reason, remedy } = adapter.platform.live_control() else {
         panic!("the extension isn't answering");
     };
-    assert!(reason.contains("Log out and back in"), "{reason}");
+    assert!(reason.starts_with("One last step: log out of "), "{reason}");
+    assert_eq!(remedy, Some(Remedy::LogOut));
+    adapter.platform.apply_remedy(Remedy::LogOut).unwrap();
+    assert_eq!(fake.state().log_outs, 1, "GNOME's log-out was asked for");
 
     fake.reset(None, Some(2.0));
     fake.extension_state_changed();
     assert_eq!(adapter.next(), PlatformEvent::LiveControlChanged);
-    let LiveControl::Unavailable(reason) = adapter.platform.live_control() else {
+    let LiveControl::Unavailable { reason, .. } = adapter.platform.live_control() else {
         panic!("the extension is off");
     };
     assert!(reason.contains("turned off"), "{reason}");
@@ -367,6 +392,7 @@ fn the_extension_starting_makes_snappy_live_and_gets_back_what_it_held() {
     fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
     let mut adapter = Adapter::start();
     assert_eq!(adapter.platform.live_control(), LiveControl::Available);
+    adapter.platform.set_drag_modifier(Modifier::Shift);
     adapter.platform.set_press_monitoring(true);
     assert!(
         adapter
@@ -382,6 +408,11 @@ fn the_extension_starting_makes_snappy_live_and_gets_back_what_it_held() {
     assert_eq!(adapter.platform.live_control(), LiveControl::Available);
     let monitoring = fake.requests("monitoring");
     assert_eq!(monitoring.last().unwrap()["press"], true);
+    assert_eq!(
+        monitoring.last().unwrap()["follow"],
+        1,
+        "Shift keeps dragged windows under the pointer"
+    );
     let registered = fake.requests("register");
     assert_eq!(
         registered.last().unwrap()["keys"],
@@ -392,10 +423,11 @@ fn the_extension_starting_makes_snappy_live_and_gets_back_what_it_held() {
     fake.reset(Some(PROTOCOL_VERSION + 1), Some(1.0));
     fake.extension_state_changed();
     assert_eq!(adapter.next(), PlatformEvent::LiveControlChanged);
-    let LiveControl::Unavailable(reason) = adapter.platform.live_control() else {
+    let LiveControl::Unavailable { reason, remedy } = adapter.platform.live_control() else {
         panic!("another version answers");
     };
-    assert!(reason.contains("another version"), "{reason}");
+    assert!(reason.starts_with("Snappy was updated."), "{reason}");
+    assert_eq!(remedy, Some(Remedy::LogOut));
 }
 
 #[test]
@@ -618,4 +650,39 @@ fn showing_a_parked_window_puts_it_back_in_place_before_it_returns() {
         vec!["setPosition", "unpark"],
         "moved while hidden, then shown"
     );
+}
+
+#[test]
+fn a_running_tiling_assistant_is_noted_and_its_changes_are_reported() {
+    let fake = fake!();
+    let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
+    fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
+    let mut adapter = Adapter::start();
+    assert!(adapter.platform.notes().is_empty());
+
+    fake.state().running = vec!["tiling-assistant@ubuntu.com".into()];
+    fake.extension_changed("tiling-assistant@ubuntu.com");
+    assert_eq!(adapter.next(), PlatformEvent::LiveControlChanged);
+    let notes = adapter.platform.notes();
+    assert_eq!(notes.len(), 1);
+    assert!(notes[0].contains("Enhanced Tiling"), "{notes:?}");
+
+    fake.extension_changed("someone-else@example.com");
+    assert!(adapter.drain().is_empty(), "other extensions don't matter");
+}
+
+#[test]
+fn changing_the_drag_key_tells_the_extension_once() {
+    let fake = fake!();
+    let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
+    fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
+    let mut adapter = Adapter::start();
+    adapter.platform.set_drag_modifier(Modifier::Ctrl);
+    adapter.platform.set_drag_modifier(Modifier::Ctrl);
+    let follows: Vec<Value> = fake
+        .requests("monitoring")
+        .iter()
+        .map(|request| request["follow"].clone())
+        .collect();
+    assert_eq!(follows, vec![json!(4)], "Ctrl's mask, sent once");
 }

@@ -6,11 +6,12 @@ use std::time::Duration;
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Platform as PlatformName};
+use snappy_core::keys::{Combo, Modifier, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
     Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
-    Permissions, Platform, RecoveryKey, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Permissions, Platform, RecoveryKey, Remedy, Tray, TrayMenu, WindowId, WindowInfo, WindowState,
+    WindowSystem,
 };
 
 /// A window with scriptable app behavior.
@@ -63,6 +64,12 @@ pub struct FakePlatform {
     pub needs_permission: bool,
     /// What `live_control` answers.
     pub live_control: LiveControl,
+    /// What `notes` answers.
+    pub notes: Vec<String>,
+    /// Remedies applied, in order.
+    pub remedies: Vec<Remedy>,
+    /// The drag key the engine last said it uses.
+    pub drag_modifier: Option<Modifier>,
     pub displays: Vec<Display>,
     pub windows: BTreeMap<WindowId, FakeWindow>,
     /// Front to back.
@@ -103,6 +110,9 @@ impl Default for FakePlatform {
             parking: ParkingPolicy::CornerSliver,
             needs_permission: true,
             live_control: LiveControl::Available,
+            notes: Vec::new(),
+            remedies: Vec::new(),
+            drag_modifier: None,
             displays: vec![Self::main_display()],
             windows: BTreeMap::new(),
             stacking: Vec::new(),
@@ -349,6 +359,10 @@ impl Input for FakePlatform {
     fn set_drag_monitoring(&mut self, on: bool) {
         self.drag_monitoring = on;
     }
+
+    fn set_drag_modifier(&mut self, modifier: Modifier) {
+        self.drag_modifier = Some(modifier);
+    }
 }
 
 impl HotKeys for FakePlatform {
@@ -451,6 +465,15 @@ impl Platform for FakePlatform {
 
     fn live_control(&mut self) -> LiveControl {
         self.live_control.clone()
+    }
+
+    fn apply_remedy(&mut self, remedy: Remedy) -> Result<(), String> {
+        self.remedies.push(remedy);
+        Ok(())
+    }
+
+    fn notes(&mut self) -> Vec<String> {
+        self.notes.clone()
     }
 
     fn now(&self) -> f64 {

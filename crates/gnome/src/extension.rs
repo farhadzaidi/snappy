@@ -8,12 +8,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use snappy_platform::LiveControl;
+use snappy_platform::{LiveControl, Remedy};
 
 use crate::bus::Bus;
 use crate::messages::{
-    EXTENSION_DISABLED, EXTENSION_NEEDS_LOGIN, EXTENSION_NOT_INSTALLED, EXTENSION_OTHER_VERSION,
-    EXTENSION_UNSUPPORTED, EXTENSIONS_OFF, SHELL_UNREACHABLE, extension_error,
+    ENHANCED_TILING, EXTENSION_DISABLED, EXTENSION_NOT_INSTALLED, EXTENSION_STARTING, EXTENSION_UNSUPPORTED,
+    EXTENSIONS_OFF, SHELL_UNREACHABLE, TILING_ASSISTANT, extension_error, needs_login, other_version,
 };
 use crate::protocol::{EXTENSION_UUID, PROTOCOL_VERSION};
 
@@ -69,8 +69,6 @@ mod state {
     pub const OUT_OF_DATE: i64 = 4;
     pub const ACTIVATING: i64 = 8;
 }
-
-const EXTENSION_STARTING: &str = "Snappy's GNOME Shell extension is starting.";
 
 /// `$XDG_DATA_HOME/gnome-shell/extensions/<uuid>`, defaulting to `~/.local/share`.
 pub fn install_folder() -> Option<PathBuf> {
@@ -197,42 +195,98 @@ fn format_list(items: &[String]) -> String {
 
 /// Whether the extension answers in this protocol version, and if not, why.
 pub fn live_control(bus: &Bus, installed: bool) -> LiveControl {
+    let desktop = desktop_name();
     match bus.extension_version() {
         Some(PROTOCOL_VERSION) => return LiveControl::Available,
-        Some(_) => return LiveControl::Unavailable(EXTENSION_OTHER_VERSION.to_owned()),
+        Some(_) => return log_out(other_version(&desktop)),
         None => {}
     }
-    let Some(info) = bus.extension_info() else {
-        return LiveControl::Unavailable(SHELL_UNREACHABLE.to_owned());
+    let Some(info) = bus.extension_info(EXTENSION_UUID) else {
+        return LiveControl::unavailable(SHELL_UNREACHABLE);
     };
-    // GNOME Shell reports the state as a double holding a whole number.
-    let state = info
-        .get("state")
-        .and_then(|value| f64::try_from(value).ok())
-        .filter(|state| state.is_finite())
-        .map(|state| state.round() as i64);
     let error = info
         .get("error")
         .and_then(|value| String::try_from(value.try_clone().ok()?).ok())
         .unwrap_or_default();
-    LiveControl::Unavailable(reason(state, &error, installed, bus.user_extensions_enabled()))
+    unavailable(
+        state_of(&info),
+        &error,
+        installed,
+        bus.user_extensions_enabled(),
+        &desktop,
+    )
+}
+
+/// Unavailable until the next login, which Snappy can start when asked.
+fn log_out(reason: String) -> LiveControl {
+    LiveControl::Unavailable {
+        reason,
+        remedy: Some(Remedy::LogOut),
+    }
+}
+
+/// GNOME Shell reports the state as a double holding a whole number.
+fn state_of(info: &crate::bus::ExtensionInfo) -> Option<i64> {
+    info.get("state")
+        .and_then(|value| f64::try_from(value).ok())
+        .filter(|state| state.is_finite())
+        .map(|state| state.round() as i64)
 }
 
 /// Why the extension isn't answering, from its state as GNOME Shell reports it.
-fn reason(state: Option<i64>, error: &str, installed: bool, extensions_on: Option<bool>) -> String {
+fn unavailable(
+    state: Option<i64>,
+    error: &str,
+    installed: bool,
+    extensions_on: Option<bool>,
+    desktop: &str,
+) -> LiveControl {
     let message = match state {
-        None if installed => EXTENSION_NEEDS_LOGIN,
+        None if installed => return log_out(needs_login(desktop)),
         None => EXTENSION_NOT_INSTALLED,
         // Running but not answering in this version: an older or newer copy is loaded.
-        Some(state::ACTIVE) => EXTENSION_OTHER_VERSION,
-        Some(state::ERROR) => return extension_error(error),
+        Some(state::ACTIVE) => return log_out(other_version(desktop)),
+        Some(state::ERROR) => return log_out(extension_error(error, desktop)),
         Some(state::OUT_OF_DATE) => EXTENSION_UNSUPPORTED,
         Some(state::ACTIVATING) => EXTENSION_STARTING,
         // Inactive, initialized, or deactivating: turned off, by the user or for every extension.
         Some(_) if extensions_on == Some(false) => EXTENSIONS_OFF,
         Some(_) => EXTENSION_DISABLED,
     };
-    message.to_owned()
+    LiveControl::unavailable(message)
+}
+
+/// The desktop's name for messages, such as "Ubuntu", from `/etc/os-release`.
+pub fn desktop_name() -> String {
+    std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|release| os_name(&release))
+        .unwrap_or_else(|| "your desktop".to_owned())
+}
+
+fn os_name(release: &str) -> Option<String> {
+    let value = release.lines().find_map(|line| line.strip_prefix("NAME="))?;
+    let name = value.trim().trim_matches(|quote| quote == '"' || quote == '\'');
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// Other tools that snap windows dragged to screen edges, which compete with Snappy's zones:
+/// Ubuntu's Enhanced Tiling and the upstream extension it comes from.
+pub const COMPETING_EXTENSIONS: &[(&str, &str)] = &[
+    ("tiling-assistant@ubuntu.com", ENHANCED_TILING),
+    ("tiling-assistant@leleat-on-github", TILING_ASSISTANT),
+];
+
+/// Notes about competing tools that are running.
+pub fn notes(bus: &Bus) -> Vec<String> {
+    COMPETING_EXTENSIONS
+        .iter()
+        .filter(|(uuid, _)| {
+            bus.extension_info(uuid)
+                .is_some_and(|info| state_of(&info) == Some(state::ACTIVE))
+        })
+        .map(|(_, note)| (*note).to_owned())
+        .collect()
 }
 
 #[cfg(test)]
@@ -315,17 +369,53 @@ mod tests {
 
     #[test]
     fn each_extension_state_says_what_to_do() {
-        assert_eq!(reason(None, "", true, Some(true)), EXTENSION_NEEDS_LOGIN);
-        assert_eq!(reason(None, "", false, Some(true)), EXTENSION_NOT_INSTALLED);
-        assert_eq!(reason(Some(1), "", true, Some(true)), EXTENSION_OTHER_VERSION);
-        assert_eq!(reason(Some(2), "", true, Some(true)), EXTENSION_DISABLED);
-        assert_eq!(reason(Some(6), "", true, Some(false)), EXTENSIONS_OFF);
-        assert_eq!(reason(Some(4), "", true, Some(true)), EXTENSION_UNSUPPORTED);
-        assert_eq!(reason(Some(8), "", true, Some(true)), EXTENSION_STARTING);
+        let reason =
+            |state, installed, extensions_on| unavailable(state, "", installed, extensions_on, "Ubuntu");
+        let needs_login = reason(None, true, Some(true));
         assert_eq!(
-            reason(Some(3), "TypeError: x is undefined.", true, Some(true)),
-            "Snappy's GNOME Shell extension couldn't start: TypeError: x is undefined. Log out and back \
-             in to try again."
+            needs_login.reason(),
+            Some("One last step: log out of Ubuntu and sign back in to finish setting up Snappy.")
         );
+        assert_eq!(needs_login.remedy(), Some(Remedy::LogOut));
+        assert_eq!(
+            reason(None, false, Some(true)).reason(),
+            Some(EXTENSION_NOT_INSTALLED)
+        );
+        assert_eq!(reason(None, false, Some(true)).remedy(), None);
+        let other = reason(Some(1), true, Some(true));
+        assert!(other.reason().unwrap().starts_with("Snappy was updated."));
+        assert_eq!(other.remedy(), Some(Remedy::LogOut));
+        assert_eq!(
+            reason(Some(2), true, Some(true)).reason(),
+            Some(EXTENSION_DISABLED)
+        );
+        assert_eq!(reason(Some(2), true, Some(true)).remedy(), None);
+        assert_eq!(reason(Some(6), true, Some(false)).reason(), Some(EXTENSIONS_OFF));
+        assert_eq!(
+            reason(Some(4), true, Some(true)).reason(),
+            Some(EXTENSION_UNSUPPORTED)
+        );
+        assert_eq!(
+            reason(Some(8), true, Some(true)).reason(),
+            Some(EXTENSION_STARTING)
+        );
+        assert_eq!(
+            unavailable(Some(3), "TypeError: x is undefined.", true, Some(true), "Ubuntu").reason(),
+            Some(
+                "Snappy's GNOME extension couldn't start: TypeError: x is undefined. Log out of Ubuntu and \
+                 sign back in to try again."
+            )
+        );
+    }
+
+    #[test]
+    fn the_desktop_is_named_as_the_system_names_itself() {
+        assert_eq!(
+            os_name("PRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\n").as_deref(),
+            Some("Ubuntu")
+        );
+        assert_eq!(os_name("NAME=Fedora Linux\n").as_deref(), Some("Fedora Linux"));
+        assert_eq!(os_name("ID=arch\n"), None);
+        assert_eq!(os_name("NAME=\"\"\n"), None);
     }
 }

@@ -102,6 +102,7 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
     case "beginRecording":
     case "endRecording":
     case "openPermissionSettings":
+    case "applyRemedy":
       return done(state);
   }
 }

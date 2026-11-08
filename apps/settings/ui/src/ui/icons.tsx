@@ -178,6 +178,13 @@ export const AlertIcon = () => (
   </Icon>
 );
 
+export const InfoIcon = () => (
+  <Icon>
+    <circle cx="8" cy="8" r="6.5" />
+    <path d="M8 7.2v4M8 4.9v.1" />
+  </Icon>
+);
+
 export const EmptyLayoutsIcon = () => (
   <svg
     width={34}

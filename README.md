@@ -72,7 +72,7 @@ install -Dm755 target/release/snappy target/release/snappy-settings -t ~/.local/
 ~/.local/bin/snappy
 ```
 
-On GNOME on Wayland, the first launch installs Snappy's GNOME Shell extension into `~/.local/share/gnome-shell/extensions/` and turns it on. GNOME loads new extensions only at login, so log out and back in once; Snappy starts snapping then, and the settings window says what it is waiting for until it does. Later updates replace the extension's files the same way and take effect at the next login. On X11 there is nothing more to do. Other Wayland desktops aren't supported yet.
+On GNOME on Wayland, the first launch installs Snappy's GNOME Shell extension into `~/.local/share/gnome-shell/extensions/` and turns it on. GNOME loads new extensions only when you log in, so the settings window asks you to log out of your desktop and sign back in once, with a **Log out now** button; Snappy starts snapping after that. Updates that change the extension ask the same way. On X11 there is nothing more to do. Other Wayland desktops aren't supported yet.
 
 Turn on "Open at login" in Snappy's settings to start it automatically.
 

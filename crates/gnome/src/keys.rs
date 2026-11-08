@@ -33,6 +33,16 @@ pub fn accelerator(combo: &Combo) -> Option<String> {
     Some(accelerator)
 }
 
+/// The mask bits a held `modifier` sets.
+pub fn mask(modifier: Modifier) -> u32 {
+    match modifier {
+        Modifier::Shift => SHIFT,
+        Modifier::Ctrl => CONTROL,
+        Modifier::Alt => MOD1,
+        Modifier::Meta => MOD4,
+    }
+}
+
 pub fn mods(mask: u32) -> Mods {
     let mut mods = Mods::NONE;
     for (bits, modifier) in [
@@ -72,6 +82,13 @@ mod tests {
             mods: Mods::from_iter([Modifier::Ctrl]),
         };
         assert_eq!(accelerator(&combo), None);
+    }
+
+    #[test]
+    fn each_modifier_has_the_bit_it_sets() {
+        for modifier in [Modifier::Shift, Modifier::Ctrl, Modifier::Alt, Modifier::Meta] {
+            assert_eq!(mods(mask(modifier)), Mods::from_iter([modifier]));
+        }
     }
 
     #[test]

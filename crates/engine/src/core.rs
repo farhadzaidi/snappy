@@ -48,6 +48,8 @@ pub(crate) struct Core<P> {
     pub capabilities: Capabilities,
     /// What the platform last said about live control.
     pub live_control: LiveControl,
+    /// What the platform last said about the desktop.
+    pub platform_notes: Vec<String>,
     pub paths: Paths,
     pub store: SettingsStore,
     pub settings: Settings,
@@ -80,6 +82,7 @@ impl<P: Platform> Core<P> {
     pub fn new(mut platform: P, paths: Paths) -> Self {
         let capabilities = platform.capabilities();
         let live_control = platform.live_control();
+        let platform_notes = platform.notes();
         let store = SettingsStore::new(paths.settings.clone(), capabilities.platform);
         let settings = Settings::defaults(capabilities.platform);
         let diagnostics = Diagnostics::new(paths.log_dir.clone());
@@ -88,6 +91,7 @@ impl<P: Platform> Core<P> {
             platform,
             capabilities,
             live_control,
+            platform_notes,
             paths,
             store,
             settings,
@@ -187,6 +191,8 @@ impl<P: Platform> Core<P> {
                 self.announce(&message, false, true);
             }
         }
+        self.platform
+            .set_drag_modifier(self.settings.snapping.drag_modifier.modifier());
         self.platform.set_press_monitoring(self.live);
         self.configure_hotkeys();
         self.prepare_overlays();
@@ -445,7 +451,9 @@ impl<P: Platform> Core<P> {
                 needs_permission: self.capabilities.needs_permission,
                 preview_visible: self.preview.is_some(),
                 unavailable_reason: self.live_control.reason().map(str::to_owned),
+                unavailable_remedy: self.live_control.remedy(),
             },
+            platform_notes: self.platform_notes.clone(),
             workspaces: WorkspacesState {
                 running: self.workspaces.is_running(),
                 pause_message: self.workspaces.pause_message(self.capabilities.platform),

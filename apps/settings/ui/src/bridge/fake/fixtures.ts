@@ -35,7 +35,9 @@ export function initialState(platform: PlatformName): AppState {
       needsPermission: platform === "macos",
       previewVisible: false,
       unavailableReason: null,
+      unavailableRemedy: null,
     },
+    platformNotes: [],
     workspaces: {
       running: false,
       pauseMessage: null,

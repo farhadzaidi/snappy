@@ -810,7 +810,7 @@ fn turning_the_extension_off_and_on_reports_why_and_restores_what_it_held() {
     });
     let reason = shell.platform.live_control();
     assert!(
-        matches!(&reason, LiveControl::Unavailable(message) if message.contains("turned off")),
+        matches!(&reason, LiveControl::Unavailable { reason: message, .. } if message.contains("turned off")),
         "{reason:?}"
     );
 
@@ -825,4 +825,61 @@ fn turning_the_extension_off_and_on_reports_why_and_restores_what_it_held() {
     shell.wait_for("the shortcut, grabbed again", |event| {
         *event == PlatformEvent::HotKey(9)
     });
+}
+
+/// Drags `id`'s title bar from `(500, 164)` by 390 × 330 with Shift held, past another window's
+/// edges, and returns where it ends.
+fn shift_drag_past_an_edge(shell: &mut Shell, id: u64) -> Rect {
+    shell.helper(json!({"op": "placeWindow", "title": "Fixture follower", "x": 200, "y": 150}));
+    std::thread::sleep(Duration::from_millis(300));
+    shell.pointer(Point::new(500.0, 164.0));
+    std::thread::sleep(Duration::from_millis(100));
+    shell.key(50, true);
+    shell.button(true);
+    shell.pointer(Point::new(510.0, 170.0));
+    let deadline = Instant::now() + WAIT;
+    while shell.helper(json!({"op": "grabbing"})) != true {
+        assert!(
+            Instant::now() < deadline,
+            "GNOME Shell never started moving the window"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    for step in 1..=30 {
+        shell.pointer(Point::new(
+            510.0 + 13.0 * f64::from(step),
+            170.0 + 11.0 * f64::from(step),
+        ));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    shell.button(false);
+    shell.key(50, false);
+    std::thread::sleep(Duration::from_millis(300));
+    shell.platform.frame(snappy_platform::WindowId(id)).unwrap()
+}
+
+#[test]
+fn with_the_drag_key_held_a_moved_window_follows_the_pointer_not_gnomes_edges() {
+    let mut shell = shell!();
+    shell.open("edges", Rect::new(1000.0, 500.0, 600.0, 400.0));
+    let id = shell.open("follower", Rect::new(200.0, 150.0, 600.0, 400.0));
+    shell.platform.set_press_monitoring(true);
+
+    // Where the pointer takes the window: it started moving with the pointer at (510, 170)
+    // and the pointer ends at (900, 500).
+    let followed = Point::new(200.0 + 390.0, 150.0 + 330.0);
+    let near = |frame: Rect| (frame.x - followed.x).abs() <= 12.0 && (frame.y - followed.y).abs() <= 12.0;
+
+    shell.platform.set_drag_modifier(Modifier::Shift);
+    let frame = shift_drag_past_an_edge(&mut shell, id);
+    assert!(
+        near(frame),
+        "the window followed the pointer to about {followed:?}, not {frame:?}"
+    );
+
+    // With another drag key, GNOME's own Shift-snapping is left alone and pulls the window onto
+    // the other window's edges, so the drag above really did undo it.
+    shell.platform.set_drag_modifier(Modifier::Ctrl);
+    let frame = shift_drag_past_an_edge(&mut shell, id);
+    assert!(!near(frame), "GNOME snapped the window to an edge: {frame:?}");
 }

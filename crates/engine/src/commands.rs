@@ -62,6 +62,7 @@ fn run<P: Platform + 'static>(shared: &Rc<Shared<P>>, command: Command) -> Resul
                     | Command::ProbeShortcut { .. }
                     | Command::SetLoginItem { .. }
                     | Command::OpenPermissionSettings
+                    | Command::ApplyRemedy { .. }
                     | Command::DismissStatus
                     | Command::ExportSettings { .. }
             );
@@ -127,6 +128,7 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
             core.platform.open_settings_page();
             Ok(())
         }
+        Command::ApplyRemedy { remedy } => core.platform.apply_remedy(remedy),
         Command::ImportSettings { path } => import(core, Path::new(&path)),
         Command::ExportSettings { path } => {
             SettingsStore::write_file(Path::new(&path), &core.settings).map_err(|e| e.to_string())?;

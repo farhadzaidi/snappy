@@ -47,7 +47,8 @@ grep -q "'state': <1.0>" <<<"$info" || fail "the extension isn't running"
 version="$(gdbus call --session --dest org.gnome.Shell --object-path /io/github/farhadzaidi/Snappy/Shell \
     --method org.freedesktop.DBus.Properties.Get io.github.farhadzaidi.Snappy.Shell Version)"
 echo "Protocol: $version" >>"$out/install.txt"
-grep -q "uint32 1" <<<"$version" || fail "the extension speaks another protocol version"
+expected="$(grep -o 'PROTOCOL_VERSION = [0-9]*' "$(dirname "$0")/../../../apps/gnome-extension/service.js" | grep -o '[0-9]*$')"
+grep -q "uint32 $expected" <<<"$version" || fail "the extension speaks another protocol version than $expected"
 
 # GNOME's session manager would hand apps Xwayland's display and authorization; here they
 # come from the running GNOME Shell, which made new ones when it started again.

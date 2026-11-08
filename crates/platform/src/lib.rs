@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Mods, Platform as PlatformName};
+use snappy_core::keys::{Combo, Modifier, Mods, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 
 pub use snappy_core::window::WindowId;
@@ -106,6 +106,10 @@ pub trait Input {
     fn set_press_monitoring(&mut self, on: bool);
     /// Drags and modifier changes; on only during drags.
     fn set_drag_monitoring(&mut self, on: bool);
+    /// The key that makes a drag a Snappy drag. A window manager that reacts to that key
+    /// during its own moves, as GNOME pulls windows onto nearby edges while Shift is held,
+    /// keeps the window under the pointer instead.
+    fn set_drag_modifier(&mut self, _modifier: Modifier) {}
 }
 
 /// Global shortcuts. Each arrives as a `Combo`: the key and the concrete modifiers to
@@ -225,12 +229,32 @@ pub struct Capabilities {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveControl {
     Available,
-    /// Why not, as a sentence for the user that says what to do, such as logging in with
-    /// another kind of session.
-    Unavailable(String),
+    Unavailable {
+        /// Why not, as a sentence for the user that says what to do, such as logging in
+        /// with another kind of session.
+        reason: String,
+        /// Something Snappy can do about it when the user asks.
+        remedy: Option<Remedy>,
+    },
+}
+
+/// What Snappy can do, when asked, to make live control available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Remedy {
+    /// End the desktop session, after the desktop's own confirmation, so it starts again
+    /// with what Snappy installed.
+    LogOut,
 }
 
 impl LiveControl {
+    pub fn unavailable(reason: impl Into<String>) -> LiveControl {
+        LiveControl::Unavailable {
+            reason: reason.into(),
+            remedy: None,
+        }
+    }
+
     pub fn is_available(&self) -> bool {
         matches!(self, LiveControl::Available)
     }
@@ -238,7 +262,14 @@ impl LiveControl {
     pub fn reason(&self) -> Option<&str> {
         match self {
             LiveControl::Available => None,
-            LiveControl::Unavailable(reason) => Some(reason),
+            LiveControl::Unavailable { reason, .. } => Some(reason),
+        }
+    }
+
+    pub fn remedy(&self) -> Option<Remedy> {
+        match self {
+            LiveControl::Available => None,
+            LiveControl::Unavailable { remedy, .. } => *remedy,
         }
     }
 }
@@ -250,6 +281,15 @@ pub trait Platform:
     /// Whether live control can run now. Adapters where this changes while Snappy runs
     /// report `LiveControlChanged`.
     fn live_control(&mut self) -> LiveControl;
+    /// Carry out a remedy `live_control` offered. Errors are sentences for the user.
+    fn apply_remedy(&mut self, _remedy: Remedy) -> Result<(), String> {
+        Err("Snappy can't do that on this system.".to_owned())
+    }
+    /// Short notes about the desktop that affect Snappy, such as another tool that also
+    /// snaps windows. Read when live control is, and announced the same way.
+    fn notes(&mut self) -> Vec<String> {
+        Vec::new()
+    }
     /// Monotonic seconds.
     fn now(&self) -> f64;
 }
@@ -296,7 +336,7 @@ pub enum PlatformEvent {
     DisplaysChanged,
     NativeDesktopChanged,
     PermissionChanged,
-    /// What `Platform::live_control` answers changed.
+    /// What `Platform::live_control` or `Platform::notes` answers changed.
     LiveControlChanged,
     WillSleep,
     /// A second launch, a reopen, or the menu's "Open Snappy…".

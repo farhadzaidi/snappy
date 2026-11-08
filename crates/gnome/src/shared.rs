@@ -24,6 +24,8 @@ pub struct State {
     pub replay_needed: bool,
     pub press_monitoring: bool,
     pub drag_monitoring: bool,
+    /// The drag key's mask, which keeps a dragged window under the pointer while held.
+    pub follow: u32,
     pub registered: Vec<Accelerator>,
     pub menu: Option<(String, Vec<MenuEntry>)>,
     /// What each numbered menu choice stands for.
@@ -60,6 +62,7 @@ impl Shared {
             let mut requests = vec![Request::Monitoring {
                 press: state.press_monitoring,
                 drag: state.drag_monitoring,
+                follow: state.follow,
             }];
             if !state.registered.is_empty() {
                 requests.push(Request::Register {

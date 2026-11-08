@@ -16,7 +16,7 @@ import {Shortcuts} from './shortcuts.js';
 import * as Windows from './windows.js';
 
 /** Changes whenever a request, reply, or event changes shape. The app checks it. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 const OBJECT_PATH = '/io/github/farhadzaidi/Snappy/Shell';
 const INTERFACE = `
@@ -100,7 +100,7 @@ export class Service {
     _appGone() {
         this._unwatchApp();
         this._shortcuts.unregisterAll();
-        this._drags.setMonitoring(false, false);
+        this._drags.setMonitoring(false, false, 0);
         this._overlays.destroy();
         this._menu.remove();
     }
@@ -151,7 +151,7 @@ export class Service {
         case 'monitors':
             return this._monitors();
         case 'monitoring':
-            this._drags.setMonitoring(request.press, request.drag);
+            this._drags.setMonitoring(request.press, request.drag, request.follow ?? 0);
             return null;
         case 'register':
             return this._shortcuts.register(request.keys);

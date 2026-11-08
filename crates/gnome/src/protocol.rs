@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use snappy_core::geometry::Rect;
 
 /// Matches `PROTOCOL_VERSION` in the extension's `service.js`.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 pub const EXTENSION_UUID: &str = "snappy@farhadzaidi.github.io";
 /// GNOME Shell owns this name; the extension exports its object on Shell's connection.
@@ -50,9 +50,11 @@ pub enum Request {
     ClearFocus,
     Pointer,
     Monitors,
+    /// `follow`: the modifier mask that keeps a dragged window under the pointer while held.
     Monitoring {
         press: bool,
         drag: bool,
+        follow: u32,
     },
     Register {
         keys: Vec<Accelerator>,
@@ -286,9 +288,13 @@ mod tests {
         let json = serde_json::to_string(&Request::Monitoring {
             press: true,
             drag: false,
+            follow: 1,
         })
         .unwrap();
-        assert_eq!(json, r#"{"op":"monitoring","press":true,"drag":false}"#);
+        assert_eq!(
+            json,
+            r#"{"op":"monitoring","press":true,"drag":false,"follow":1}"#
+        );
     }
 
     #[test]

@@ -134,6 +134,7 @@ impl<P: Platform + 'static> Engine<P> {
             PlatformEvent::LiveControlChanged => {
                 let mut core = shared.core.borrow_mut();
                 core.live_control = core.platform.live_control();
+                core.platform_notes = core.platform.notes();
                 // Work areas may only now be known, so displays are read before anything
                 // that places windows starts.
                 core.displays = core.platform.displays();

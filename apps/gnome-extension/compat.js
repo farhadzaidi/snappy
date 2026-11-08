@@ -27,3 +27,6 @@ export function unmaximize(window) {
 
 /** The flag grab operations driven from the keyboard carry, such as Alt+F7's move. */
 export const KEYBOARD_GRAB = Meta.GrabOp.KEYBOARD_MOVING & ~Meta.GrabOp.MOVING;
+
+/** The flag a move that ignores GNOME's placement constraints carries. */
+export const UNCONSTRAINED_GRAB = (Meta.GrabOp.MOVING_UNCONSTRAINED ?? Meta.GrabOp.MOVING) & ~Meta.GrabOp.MOVING;

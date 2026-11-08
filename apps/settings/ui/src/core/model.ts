@@ -113,7 +113,12 @@ export interface SnappingState {
   needsPermission: boolean;
   previewVisible: boolean;
   unavailableReason: string | null;
+  /** What Snappy can do about it when asked. */
+  unavailableRemedy: Remedy | null;
 }
+
+/** Something the platform can do to make live control available. */
+export type Remedy = "logOut";
 
 export interface WorkspacesState {
   running: boolean;
@@ -135,6 +140,8 @@ export interface AppState {
   platform: PlatformName;
   snapping: SnappingState;
   workspaces: WorkspacesState;
+  /** Notes about the desktop, such as another tool that also snaps windows. */
+  platformNotes: string[];
   loginItemEnabled: boolean;
   debugLogPath: string;
   status: Status | null;
@@ -176,6 +183,7 @@ export type Command =
   | { kind: "setLoginItem"; enabled: boolean }
   | { kind: "setDebugLog"; enabled: boolean }
   | { kind: "openPermissionSettings" }
+  | { kind: "applyRemedy"; remedy: Remedy }
   | { kind: "importSettings"; path: string }
   | { kind: "exportSettings"; path: string }
   | { kind: "dismissStatus" };

@@ -14,27 +14,45 @@ pub const ON_ALL_WORKSPACES: &str = "GNOME shows this window on every workspace,
      displays other than the primary one do this when \"Workspaces on primary display only\" is on in Settings, \
      Multitasking.";
 
-pub const EXTENSION_NEEDS_LOGIN: &str = "Log out and back in to finish setting up Snappy's GNOME Shell extension. Snappy will start snapping then.";
-pub const EXTENSION_OTHER_VERSION: &str = "Snappy's GNOME Shell extension is from another version of Snappy. Log \
-     out and back in to load the one that matches.";
-pub const EXTENSION_DISABLED: &str = "Snappy's GNOME Shell extension is turned off. Turn on Snappy in the \
-     Extensions app so Snappy can control windows.";
-pub const EXTENSIONS_OFF: &str = "GNOME has extensions turned off. Turn on \"Use Extensions\" in the Extensions \
-     app so Snappy can control windows.";
-pub const EXTENSION_UNSUPPORTED: &str =
-    "This version of GNOME Shell isn't supported by Snappy's extension. Snappy needs GNOME 46 or newer.";
-pub const EXTENSION_NOT_INSTALLED: &str = "Snappy couldn't install its GNOME Shell extension, so it can't \
-     control windows. Check that your home folder is writable, then quit and reopen Snappy.";
+/// GNOME loads a new extension only when the desktop session starts.
+pub fn needs_login(desktop: &str) -> String {
+    format!("One last step: log out of {desktop} and sign back in to finish setting up Snappy.")
+}
+
+/// A different copy of the extension is loaded; the new one loads with the next session.
+pub fn other_version(desktop: &str) -> String {
+    format!("Snappy was updated. Log out of {desktop} and sign back in to finish the update.")
+}
+
+pub const EXTENSION_DISABLED: &str =
+    "Snappy's GNOME extension is turned off. Turn it on in the Extensions app.";
+pub const EXTENSIONS_OFF: &str =
+    "GNOME extensions are turned off. Turn on \"Use Extensions\" in the Extensions app.";
+pub const EXTENSION_UNSUPPORTED: &str = "Snappy needs GNOME 46 or newer.";
+pub const EXTENSION_NOT_INSTALLED: &str = "Snappy couldn't install its GNOME extension. Check that your home folder \
+     is writable, then quit and reopen Snappy.";
+pub const EXTENSION_STARTING: &str = "Snappy's GNOME extension is starting.";
 
 /// The extension failed to start, with GNOME Shell's own explanation.
-pub fn extension_error(detail: &str) -> String {
+pub fn extension_error(detail: &str, desktop: &str) -> String {
     let detail = detail.trim().trim_end_matches('.');
     if detail.is_empty() {
-        "Snappy's GNOME Shell extension couldn't start. Log out and back in to try again.".to_owned()
+        format!(
+            "Snappy's GNOME extension couldn't start. Log out of {desktop} and sign back in to try again."
+        )
     } else {
-        format!("Snappy's GNOME Shell extension couldn't start: {detail}. Log out and back in to try again.")
+        format!(
+            "Snappy's GNOME extension couldn't start: {detail}. Log out of {desktop} and sign back in to try again."
+        )
     }
 }
+
+pub const ENHANCED_TILING: &str = "Ubuntu's Enhanced Tiling also snaps windows you drag to screen edges. Turn it \
+     off in Settings → Ubuntu Desktop so Snappy's zones work alone.";
+pub const TILING_ASSISTANT: &str = "The Tiling Assistant extension also snaps windows you drag to screen edges. \
+     Turn it off in the Extensions app so Snappy's zones work alone.";
+pub const LOG_OUT_FAILED: &str = "Snappy couldn't ask GNOME to log out. Log out from the menu at the top right of \
+     the screen instead.";
 
 pub fn unavailable(message: &str) -> WindowError {
     WindowError::unavailable(message)

@@ -12,7 +12,7 @@ use snappy_core::layout::Layout;
 use snappy_core::navigate::Direction;
 use snappy_core::settings::{DragModifier, HistoryStep, LayoutOptions, Settings, Workspace, WorkspaceStep};
 use snappy_core::swap::{SwapModifier, WhenTaken};
-use snappy_platform::Display;
+use snappy_platform::{Display, Remedy};
 use thiserror::Error;
 
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -130,6 +130,10 @@ pub enum Command {
         enabled: bool,
     },
     OpenPermissionSettings,
+    /// Do what the platform offered to make live control available, such as logging out.
+    ApplyRemedy {
+        remedy: Remedy,
+    },
     ImportSettings {
         path: String,
     },
@@ -149,6 +153,9 @@ pub struct AppState {
     pub platform: String,
     pub snapping: SnappingState,
     pub workspaces: WorkspacesState,
+    /// Notes from the platform about the desktop, such as another tool that also snaps.
+    #[serde(default)]
+    pub platform_notes: Vec<String>,
     pub login_item_enabled: bool,
     /// Where the debug log is written while it's on.
     pub debug_log_path: String,
@@ -167,6 +174,9 @@ pub struct SnappingState {
     pub preview_visible: bool,
     /// Why live control can't run at all, for example in a Wayland session.
     pub unavailable_reason: Option<String>,
+    /// What Snappy can do about it when asked (`ApplyRemedy`).
+    #[serde(default)]
+    pub unavailable_remedy: Option<Remedy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

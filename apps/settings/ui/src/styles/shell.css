@@ -66,6 +66,19 @@
   color: var(--warning);
 }
 
+.unavailable-notice-text {
+  flex: 1;
+}
+
+.platform-note {
+  color: var(--muted);
+}
+
+.platform-note-icon {
+  display: grid;
+  color: var(--muted);
+}
+
 .header-actions {
   display: flex;
   align-items: center;
