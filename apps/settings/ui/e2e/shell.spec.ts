@@ -16,14 +16,14 @@ const setUnavailableReason = (page: Page, unavailableReason: string | null) =>
 
 test("why snapping can't run shows under the header until it can", async ({ page }) => {
   await openApp(page, "linux");
-  await expect(page.locator(".unavailable-notice")).toHaveCount(0);
+  await expect(page.locator(".shell-notice")).toHaveCount(0);
 
   await setUnavailableReason(page, reason);
   await expect(page.getByRole("status").filter({ hasText: reason })).toBeVisible();
   await expect(page.locator(".snapping-button")).toBeDisabled();
 
   await setUnavailableReason(page, null);
-  await expect(page.locator(".unavailable-notice")).toHaveCount(0);
+  await expect(page.locator(".shell-notice")).toHaveCount(0);
   await expect(page.locator(".snapping-button")).toBeEnabled();
 });
 

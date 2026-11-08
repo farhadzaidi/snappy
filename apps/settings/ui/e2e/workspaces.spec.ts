@@ -148,6 +148,6 @@ test("when Snappy can't control windows, the page says why instead of asking for
       })),
     reason,
   );
-  await expect(page.locator(".workspace-detail, .page").getByText(reason).last()).toBeVisible();
+  await expect(page.locator(".workspace-detail").getByText(reason, { exact: true })).toBeVisible();
   await expect(page.getByText("Waiting for Accessibility access.")).toHaveCount(0);
 });

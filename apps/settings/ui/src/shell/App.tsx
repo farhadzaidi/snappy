@@ -9,7 +9,7 @@ import { useAppState, useServices, useSession } from "../state/services";
 import { WorkspacesPage } from "../workspaces/WorkspacesPage";
 import { Header } from "./Header";
 import { Toast } from "./Toast";
-import { UnavailableNotice } from "./UnavailableNotice";
+import { ShellNotices } from "./ShellNotices";
 
 /**
  * The window: header, why snapping can't run when it can't, the current page, and the toast. Pages
@@ -23,7 +23,7 @@ export function App() {
   return (
     <div className="app">
       <Header />
-      {connected && <UnavailableNotice />}
+      {connected && <ShellNotices />}
       <main className="page" data-page={page}>
         {connected && (
           <>

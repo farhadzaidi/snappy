@@ -11,18 +11,18 @@ const REMEDY_LABELS: Record<Remedy, string> = {
  * Why Snappy can't control windows here, with a button when Snappy can fix it, and notes
  * about the desktop, such as another tool that also snaps windows.
  */
-export function UnavailableNotice() {
+export function ShellNotices() {
   const { snapping, platformNotes } = useAppState();
   const send = useSend();
   const remedy = snapping.unavailableRemedy;
   return (
     <>
       {snapping.unavailableReason !== null && (
-        <div className="unavailable-notice" role="status">
-          <span className="unavailable-notice-icon">
+        <div className="shell-notice" role="status">
+          <span className="shell-notice-icon">
             <AlertIcon />
           </span>
-          <span className="unavailable-notice-text">{snapping.unavailableReason}</span>
+          <span className="shell-notice-text">{snapping.unavailableReason}</span>
           {remedy !== null && (
             <Button variant="primary" onClick={() => void send({ kind: "applyRemedy", remedy })}>
               {REMEDY_LABELS[remedy]}
@@ -31,11 +31,11 @@ export function UnavailableNotice() {
         </div>
       )}
       {platformNotes.map((note) => (
-        <div key={note} className="unavailable-notice platform-note" role="note">
+        <div key={note} className="shell-notice platform-note" role="note">
           <span className="platform-note-icon">
             <InfoIcon />
           </span>
-          <span className="unavailable-notice-text">{note}</span>
+          <span className="shell-notice-text">{note}</span>
         </div>
       ))}
     </>
