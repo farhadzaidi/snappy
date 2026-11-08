@@ -1,11 +1,15 @@
-//! The settings window: its Edit menu, display, and focus.
+//! The settings window: its Edit menu on macOS, display, and focus.
 
+#[cfg(target_os = "macos")]
+use tauri::Wry;
+#[cfg(target_os = "macos")]
 use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Manager};
 
 pub const MAIN_WINDOW: &str = "main";
 
-/// The menu the web view's text fields need for the standard editing shortcuts.
+/// The menu the web view's text fields need for the standard editing shortcuts on macOS.
+#[cfg(target_os = "macos")]
 pub fn menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let edit = Submenu::with_items(
         app,
@@ -22,12 +26,7 @@ pub fn menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ],
     )?;
     // macOS turns the first submenu into the application menu.
-    let application = Submenu::with_items(
-        app,
-        "Snappy Settings",
-        true,
-        &[&PredefinedMenuItem::quit(app, None)?],
-    )?;
+    let application = Submenu::with_items(app, "Snappy", true, &[&PredefinedMenuItem::quit(app, None)?])?;
     Menu::with_items(app, &[&application, &edit])
 }
 
@@ -80,6 +79,10 @@ mod tests {
     fn the_window_has_its_size_minimum_and_dark_transparent_title_bar() {
         let window = window_config();
         assert_eq!(window["label"], super::MAIN_WINDOW);
+        assert_eq!(
+            window["title"], "Snappy",
+            "the window is Snappy's, not a separate settings app"
+        );
         assert_eq!(
             (window["width"].as_f64(), window["height"].as_f64()),
             (Some(1080.0), Some(760.0))

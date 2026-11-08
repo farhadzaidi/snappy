@@ -1,5 +1,5 @@
 {
-  "productName": "Snappy Settings",
+  "productName": "Snappy",
   "identifier": "local.snappy.settings",
   "build": {
     "frontendDist": "../ui/dist"
@@ -9,7 +9,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Snappy Settings",
+        "title": "Snappy",
         "width": 1080,
         "height": 760,
         "minWidth": 940,
