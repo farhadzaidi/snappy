@@ -183,12 +183,15 @@ impl<P: Platform> Core<P> {
                 self.end_drag();
             }
             if announce {
-                let message = match (should_run, self.live_control.reason()) {
-                    (true, _) => "Snapping is on.".to_owned(),
-                    (false, Some(reason)) => reason.to_owned(),
-                    (false, None) => "Accessibility access is off. Snapping is paused.".to_owned(),
-                };
-                self.announce(&message, false, true);
+                let reason = self.live_control.reason().map(str::to_owned);
+                match (should_run, reason) {
+                    (true, _) => self.announce("Snapping is on.", false, true),
+                    // The settings window already shows the reason where it stays.
+                    (false, Some(reason)) => self.announce_quietly(&reason),
+                    (false, None) => {
+                        self.announce("Accessibility access is off. Snapping is paused.", false, true)
+                    }
+                }
             }
         }
         self.platform

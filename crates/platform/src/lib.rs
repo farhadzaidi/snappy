@@ -286,7 +286,7 @@ pub trait Platform:
         Err("Snappy can't do that on this system.".to_owned())
     }
     /// Short notes about the desktop that affect Snappy, such as another tool that also
-    /// snaps windows. Read when live control is, and announced the same way.
+    /// snaps windows. Read at start and on `NotesChanged`, and shown in the settings window.
     fn notes(&mut self) -> Vec<String> {
         Vec::new()
     }
@@ -336,8 +336,11 @@ pub enum PlatformEvent {
     DisplaysChanged,
     NativeDesktopChanged,
     PermissionChanged,
-    /// What `Platform::live_control` or `Platform::notes` answers changed.
+    /// What `Platform::live_control` answers changed, or the platform's own helper started
+    /// over and lost what it held.
     LiveControlChanged,
+    /// What `Platform::notes` answers changed.
+    NotesChanged,
     WillSleep,
     /// A second launch, a reopen, or the menu's "Open Snappy…".
     OpenSettingsRequested,

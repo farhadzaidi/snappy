@@ -128,7 +128,11 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
             core.platform.open_settings_page();
             Ok(())
         }
-        Command::ApplyRemedy { remedy } => core.platform.apply_remedy(remedy),
+        // Only what the platform offers now: a stale window must not log anyone out.
+        Command::ApplyRemedy { remedy } if core.live_control.remedy() == Some(remedy) => {
+            core.platform.apply_remedy(remedy)
+        }
+        Command::ApplyRemedy { .. } => Ok(()),
         Command::ImportSettings { path } => import(core, Path::new(&path)),
         Command::ExportSettings { path } => {
             SettingsStore::write_file(Path::new(&path), &core.settings).map_err(|e| e.to_string())?;

@@ -47,6 +47,8 @@ pub(crate) struct WorkspaceController {
     pub session: Option<Session>,
     /// On another native desktop.
     pub paused: bool,
+    /// Live control went away; nothing moves until it returns (`resume`).
+    pub suspended: bool,
     pub focus: FocusPolicy,
     pub keys: BTreeMap<WindowId, RecoveryKey>,
     pub remembered: Vec<SavedWindow>,
@@ -61,7 +63,7 @@ pub(crate) struct WorkspaceController {
 
 impl WorkspaceController {
     pub fn is_running(&self) -> bool {
-        self.session.is_some() && !self.paused
+        self.session.is_some() && !self.paused && !self.suspended
     }
 
     pub fn window_count(&self, workspace: &str) -> usize {
@@ -175,8 +177,11 @@ fn unavailable_journal() -> WindowError {
 pub(crate) fn configure<P: Platform>(core: &mut Core<P>) {
     let wanted =
         core.settings.workspaces.enabled && core.permission_granted && core.live_control.is_available();
+    let lost_control =
+        core.settings.workspaces.enabled && core.permission_granted && !core.live_control.is_available();
     match (wanted, core.workspaces.session.is_some()) {
         (true, false) => start(core),
+        (false, true) if lost_control => suspend(core),
         (false, true) => {
             stop(core);
         }
@@ -185,9 +190,64 @@ pub(crate) fn configure<P: Platform>(core: &mut Core<P>) {
     core.update_tray();
 }
 
+/// Live control went away. The session stays as it was and nothing is moved: the platform
+/// may already have shown the hidden windows, and `resume` hides them again.
+fn suspend<P: Platform>(core: &mut Core<P>) {
+    if std::mem::replace(&mut core.workspaces.suspended, true) {
+        return;
+    }
+    core.trace("workspacesSuspended", || serde_json::json!({}));
+    core.publish_state();
+}
+
+/// Live control is back, or the platform started over: bind to the desktop in use again, and
+/// hide again any window of an inactive workspace that was shown meanwhile.
+pub(crate) fn resume<P: Platform>(core: &mut Core<P>) {
+    let Some(mut session) = core.workspaces.session.take() else {
+        return;
+    };
+    core.workspaces.suspended = false;
+    let displays = core.displays.clone();
+    core.platform.bind(&displays);
+    core.workspaces.paused = !core.platform.on_managed_desktop();
+
+    let frames = core.display_frames();
+    let inactive: Vec<WindowId> = session
+        .members()
+        .keys()
+        .copied()
+        .filter(|window| session.is_inactive(*window))
+        .collect();
+    let (hidden_again, failed) = {
+        let mut io = CoreIo::new(&mut *core);
+        inactive.iter().fold((0, 0), |(hidden, failed), window| {
+            match session.contain(*window, &frames, &mut io) {
+                Ok(true) => (hidden + 1, failed),
+                Ok(false) => (hidden, failed),
+                Err(_) => (hidden, failed + 1),
+            }
+        })
+    };
+    let active = session.active().to_owned();
+    core.workspaces.session = Some(session);
+    core.trace(
+        "workspacesResumed",
+        || serde_json::json!({ "active": active, "hiddenAgain": hidden_again, "failed": failed }),
+    );
+    if failed > 0 {
+        core.announce_error("Some windows from other workspaces couldn't be hidden again.");
+    }
+    core.publish_state();
+}
+
 fn start<P: Platform>(core: &mut Core<P>) {
     if !recover(core) {
-        core.announce_error("Some hidden windows could not be restored. Check Accessibility, then quit and reopen Snappy to retry.");
+        let message = if core.capabilities.needs_permission {
+            "Some hidden windows could not be restored. Check Accessibility, then quit and reopen Snappy to retry."
+        } else {
+            "Some hidden windows could not be restored. Quit and reopen Snappy to retry."
+        };
+        core.announce_error(message);
         return;
     }
     let displays = core.displays.clone();
@@ -877,6 +937,9 @@ pub(crate) fn app_terminated<P: Platform>(core: &mut Core<P>, pid: u32) {
 
 pub(crate) fn native_desktop_changed<P: Platform>(core: &mut Core<P>) {
     if core.workspaces.session.is_none() {
+        return;
+    }
+    if core.workspaces.suspended {
         return;
     }
     let was_paused = core.workspaces.paused;

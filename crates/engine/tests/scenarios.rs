@@ -749,7 +749,7 @@ fn a_remedy_the_platform_offers_is_published_and_applied_on_request() {
 }
 
 #[test]
-fn platform_notes_are_published_and_read_again_when_live_control_changes() {
+fn platform_notes_are_published_and_read_again_when_they_change() {
     scenario(|| async {
         let fake = FakePlatform {
             notes: vec!["Another tool also snaps windows.".into()],
@@ -761,7 +761,7 @@ fn platform_notes_are_published_and_read_again_when_live_control_changes() {
             vec!["Another tool also snaps windows.".to_owned()]
         );
         engine.with_platform(|p| p.notes.clear());
-        event(&engine, PlatformEvent::LiveControlChanged);
+        event(&engine, PlatformEvent::NotesChanged);
         assert!(app_state(&engine).platform_notes.is_empty());
     });
 }
@@ -3684,5 +3684,75 @@ fn the_nearest_empty_zone_shortcut_can_be_changed_or_cleared() {
         command(&engine, Command::SetNearestEmptyShortcut { chord: None });
         assert_eq!(engine.settings().navigation.nearest_empty, None);
         assert!(!registered(&engine, &snappy("KeyE")));
+    });
+}
+
+/// The platform loses control, and while it is gone shows window 1 again, as GNOME's
+/// extension does when it is turned off.
+async fn control_lost_with_window_one_shown(name: &str) -> Engine<FakePlatform> {
+    let engine = window_one_on_the_parking_desktop(name).await;
+    engine.with_platform(|p| p.live_control = LiveControl::unavailable("The extension is off."));
+    event(&engine, PlatformEvent::LiveControlChanged);
+    settle(&engine).await;
+    engine.with_platform(|p| {
+        p.windows.get_mut(&WindowId(1)).unwrap().state.on_parking_desktop = false;
+    });
+    engine
+}
+
+#[test]
+fn losing_live_control_keeps_workspaces_as_they_were_and_moves_nothing() {
+    scenario(|| async {
+        let engine = window_one_on_the_parking_desktop("control-lost-keeps").await;
+        let writes = engine.with_platform(|p| p.writes.len());
+        engine.with_platform(|p| p.live_control = LiveControl::unavailable("The extension is off."));
+        event(&engine, PlatformEvent::LiveControlChanged);
+        settle(&engine).await;
+        assert_eq!(engine.with_platform(|p| p.writes.len()), writes, "nothing moved");
+        assert_eq!(status_text(&engine), "The extension is off.");
+        assert!(!app_state(&engine).workspaces.running);
+        assert_eq!(window_counts(&engine)["workspace-2"], 1, "membership is kept");
+    });
+}
+
+#[test]
+fn regaining_live_control_hides_again_what_the_platform_showed_meanwhile() {
+    scenario(|| async {
+        let engine = control_lost_with_window_one_shown("control-regained").await;
+        engine.with_platform(|p| p.live_control = LiveControl::Available);
+        event(&engine, PlatformEvent::LiveControlChanged);
+        settle(&engine).await;
+        assert!(on_parking_desktop(&engine, 1), "window 1 belongs to workspace 2");
+        assert!(!on_parking_desktop(&engine, 2));
+        assert!(app_state(&engine).workspaces.running);
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+    });
+}
+
+#[test]
+fn the_platform_starting_over_hides_shown_windows_again() {
+    scenario(|| async {
+        let engine = window_one_on_the_parking_desktop("platform-restarted").await;
+        engine.with_platform(|p| {
+            p.windows.get_mut(&WindowId(1)).unwrap().state.on_parking_desktop = false;
+        });
+        event(&engine, PlatformEvent::LiveControlChanged);
+        settle(&engine).await;
+        assert!(on_parking_desktop(&engine, 1));
+        assert!(app_state(&engine).workspaces.running);
+    });
+}
+
+#[test]
+fn a_remedy_the_platform_no_longer_offers_is_not_applied() {
+    scenario(|| async {
+        let engine = live_engine("remedy-stale", FakePlatform::default());
+        command(
+            &engine,
+            Command::ApplyRemedy {
+                remedy: Remedy::LogOut,
+            },
+        );
+        assert!(engine.with_platform(|p| p.remedies.is_empty()));
     });
 }

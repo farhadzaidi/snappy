@@ -134,12 +134,21 @@ impl<P: Platform + 'static> Engine<P> {
             PlatformEvent::LiveControlChanged => {
                 let mut core = shared.core.borrow_mut();
                 core.live_control = core.platform.live_control();
-                core.platform_notes = core.platform.notes();
                 // Work areas may only now be known, so displays are read before anything
                 // that places windows starts.
                 core.displays = core.platform.displays();
                 core.refresh_live(true);
                 workspaces::configure(&mut core);
+                // Control came back, or the platform started over and may have shown hidden
+                // windows: running workspaces bind again and hide them again.
+                if core.live_control.is_available() {
+                    workspaces::resume(&mut core);
+                }
+                core.publish_state();
+            }
+            PlatformEvent::NotesChanged => {
+                let mut core = shared.core.borrow_mut();
+                core.platform_notes = core.platform.notes();
                 core.publish_state();
             }
             PlatformEvent::WillSleep => {
