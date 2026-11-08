@@ -80,6 +80,7 @@ impl Fixture {
     }
 
     /// The fixture's windows are titled after their IDs.
+    #[cfg(target_os = "linux")]
     fn title(id: &str) -> String {
         format!("Fixture {id}")
     }
