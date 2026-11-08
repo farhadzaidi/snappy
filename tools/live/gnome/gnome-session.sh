@@ -18,6 +18,14 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 user=snappy
 
+# This starts a second GNOME Shell and rewrites the user's GNOME settings; on a real desktop
+# it would take over the session. Docker marks its containers with /.dockerenv, Podman with
+# $container.
+if [[ ! -f /.dockerenv && -z "${container:-}" ]]; then
+    echo "gnome-session.sh runs only inside the GNOME test container (see live.sh)." >&2
+    exit 2
+fi
+
 if [[ "$(id -u)" == 0 ]]; then
     mkdir -p /tmp/.X11-unix /run/dbus
     chmod 1777 /tmp/.X11-unix

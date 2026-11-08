@@ -9,8 +9,7 @@
 # and the test helper loaded.
 set -euo pipefail
 
-here="$(cd "$(dirname "$0")" && pwd)"
-root="$(cd "$here/../../.." && pwd)"
+source "$(dirname "$0")/common.sh"
 versions="46"
 filter=""
 while [[ $# -gt 0 ]]; do
@@ -19,40 +18,30 @@ while [[ $# -gt 0 ]]; do
         *) filter="$1"; shift ;;
     esac
 done
-declare -A bases=([46]=ubuntu:24.04 [47]=fedora:41 [48]=fedora:42 [49]=fedora:43)
 
 echo "Building the tests…"
-docker build --quiet --tag snappy-gnome-build -f "$here/Dockerfile.build" "$here" >/dev/null
-docker run --rm --init \
-    --volume "$root:/work" \
-    --volume snappy-cargo-registry:/usr/local/cargo/registry \
-    --volume snappy-cargo-git:/usr/local/cargo/git \
-    --volume snappy-gnome-target:/target \
-    --workdir /work snappy-gnome-build bash -c '
-        set -euo pipefail
-        cargo build --release -p snappy-live --bin snappy-fixture
-        tests="$(cargo test --release -p snappy-gnome --no-run --message-format=json 2>/dev/null \
-            | grep -o "\"executable\":\"[^\"]*\"" | cut -d\" -f4)"
-        mkdir -p /work/target/live/gnome/tests
-        rm -f /work/target/live/gnome/tests/*
-        cp $tests /target/release/snappy-fixture /work/target/live/gnome/tests/
-        chown -R "$(stat -c %u:%g /work)" /work/target/live'
+build_in_container '
+    cargo build --release -p snappy-live --bin snappy-fixture
+    # Compiler messages go to stderr and stay visible; the JSON on stdout names the binaries.
+    mapfile -t tests < <(cargo test --release -p snappy-gnome --no-run --message-format=json \
+        | grep -o "\"executable\":\"[^\"]*\"" | cut -d\" -f4)
+    mkdir -p /work/target/live/gnome/tests
+    rm -f /work/target/live/gnome/tests/*
+    cp "${tests[@]}" /target/release/snappy-fixture /work/target/live/gnome/tests/'
 
 status=0
 IFS=, read -ra wanted <<<"$versions"
 for version in "${wanted[@]}"; do
-    base="${bases[$version]:-}"
-    [[ -n "$base" ]] || { echo "No image for GNOME $version; choose from ${!bases[*]}." >&2; exit 2; }
+    image="$(gnome_image "$version")" || exit 2
     echo "GNOME $version:"
-    docker build --quiet --tag "snappy-gnome:$version" --build-arg "BASE=$base" "$here" >/dev/null
     docker run --rm --init --volume "$root:/work:ro" --env SNAPPY_GNOME_PREINSTALL=1 \
-        "snappy-gnome:$version" /work/tools/live/gnome/gnome-session.sh bash -c '
+        "$image" /work/tools/live/gnome/gnome-session.sh bash -c '
             export SNAPPY_GNOME_TEST=1 SNAPPY_GNOME_FIXTURE=/work/target/live/gnome/tests/snappy-fixture
             status=0
             for test in /work/target/live/gnome/tests/*; do
                 [[ "$(basename "$test")" == snappy-fixture ]] && continue
-                "$test" --test-threads=1 '"${filter:+"$filter"}"' || status=1
+                "$test" --test-threads=1 ${1:+"$1"} || status=1
             done
-            exit $status' || status=$?
+            exit $status' _ "$filter" || status=$?
 done
 exit "$status"

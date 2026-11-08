@@ -11,8 +11,7 @@
 # Xwayland ones. Results land in target/live/gnome/<version>/.
 set -euo pipefail
 
-here="$(cd "$(dirname "$0")" && pwd)"
-root="$(cd "$here/../../.." && pwd)"
+source "$(dirname "$0")/common.sh"
 versions="46"
 dynamic=true
 only=""
@@ -24,40 +23,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-declare -A bases=([46]=ubuntu:24.04 [47]=fedora:41 [48]=fedora:42 [49]=fedora:43)
-
 echo "Building the binaries…"
-docker build --quiet --tag snappy-gnome-build -f "$here/Dockerfile.build" "$here" >/dev/null
-docker run --rm --init \
-    --volume "$root:/work" \
-    --volume snappy-cargo-registry:/usr/local/cargo/registry \
-    --volume snappy-cargo-git:/usr/local/cargo/git \
-    --volume snappy-gnome-target:/target \
-    --workdir /work snappy-gnome-build bash -c '
-        set -euo pipefail
-        cargo build --release -p snappy -p snappy-live
-        mkdir -p /work/target/live/gnome/bin
-        cp /target/release/snappy /target/release/snappy-live /target/release/snappy-fixture \
-            /work/target/live/gnome/bin/
-        chown -R "$(stat -c %u:%g /work)" /work/target/live'
+build_in_container '
+    cargo build --release -p snappy -p snappy-live
+    mkdir -p /work/target/live/gnome/bin
+    cp /target/release/snappy /target/release/snappy-live /target/release/snappy-fixture \
+        /work/target/live/gnome/bin/'
 
 status=0
 IFS=, read -ra wanted <<<"$versions"
 for version in "${wanted[@]}"; do
-    base="${bases[$version]:-}"
-    if [[ -z "$base" ]]; then
-        echo "No image for GNOME $version; choose from ${!bases[*]}." >&2
-        exit 2
-    fi
+    image="$(gnome_image "$version")" || exit 2
     echo "GNOME $version:"
-    docker build --quiet --tag "snappy-gnome:$version" --build-arg "BASE=$base" "$here" >/dev/null
     out="target/live/gnome/$version"
     rm -rf "${root:?}/$out"
     mkdir -p "$root/$out"
     docker run --rm --init \
         --volume "$root:/work" \
         --env "SNAPPY_GNOME_DYNAMIC_WORKSPACES=$dynamic" \
-        "snappy-gnome:$version" /work/tools/live/gnome/in-container.sh "/work/$out" "$only" \
+        "$image" /work/tools/live/gnome/in-container.sh "/work/$out" "$only" \
         || status=$?
     echo "Results: $root/$out"
 done

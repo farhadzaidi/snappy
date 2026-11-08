@@ -22,7 +22,7 @@ const FRAME_TOLERANCE: f64 = 2.0;
 /// How long a move may take before a scenario fails.
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Where a title bar can be grabbed, below the window's top edge.
-const TITLE_BAR_GRIP: f64 = 14.0;
+pub const TITLE_BAR_GRIP: f64 = 14.0;
 /// A snap that needs no settle waits finishes well within this, inside Snappy.
 const UNWAITED_SNAP_MS: f64 = 50.0;
 /// The layout the run's settings make the default.

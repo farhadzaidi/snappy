@@ -27,8 +27,6 @@ const FIRST_STEP: f64 = 12.0;
 const HOVER_MS: u64 = 100;
 /// How long a drag waits for GNOME Shell to start moving the window.
 const MOVE_START_TIMEOUT: Duration = Duration::from_secs(1);
-/// X keycodes are Linux input codes plus 8; Clutter's virtual keyboard takes input codes.
-const XKB_OFFSET: u8 = 8;
 
 /// Whether the suite runs in a GNOME on Wayland session.
 pub fn is_session() -> bool {
@@ -92,20 +90,31 @@ pub fn place_window(title: &str, origin: Point) -> Result<Rect, String> {
     .ok_or_else(|| format!("no window {title}"))
 }
 
+/// How long focusing a window may take.
+const FOCUS_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Activates the window, then clicks in its middle at a hand's pace, as a person would:
 /// GNOME 49 lets a window that was only activated ignore drags on its title bar until it has
 /// been clicked.
 pub fn focus_window(title: &str) -> Result<(), String> {
     let frame = frame(call(json!({"op": "focusWindow", "title": title}))?)?
         .ok_or_else(|| format!("no window {title}"))?;
-    pause(100);
     let center = frame.center();
     call(json!({"op": "pointerMove", "x": center.x, "y": center.y}))?;
-    pause(100);
+    pause(HOVER_MS);
     call(json!({"op": "button", "pressed": true}))?;
     pause(50);
     call(json!({"op": "button", "pressed": false}))?;
-    pause(150);
+    let started = std::time::Instant::now();
+    while !call(json!({"op": "focused", "title": title}))?
+        .as_bool()
+        .unwrap_or(false)
+    {
+        if started.elapsed() > FOCUS_TIMEOUT {
+            return Err(format!("{title} never got focus"));
+        }
+        pause(10);
+    }
     Ok(())
 }
 
@@ -144,7 +153,21 @@ pub fn on_screen_windows(daemon: Option<i32>) -> Result<Vec<ScreenWindow>, Strin
 
 /// Lets go of the button and every modifier, so a failed scenario leaves nothing held.
 pub fn release_all() {
-    let _ = call(json!({"op": "releaseAll"}));
+    let _ = call(release_all_request());
+}
+
+/// The request that lets go of the button and every modifier key the tests press.
+fn release_all_request() -> Value {
+    let keycodes: Vec<u8> = MODIFIER_ORDER
+        .into_iter()
+        .map(|modifier| key_codes::modifier_keycode(modifier) - key_codes::EVDEV_OFFSET)
+        .collect();
+    json!({"op": "releaseAll", "keycodes": keycodes})
+}
+
+/// The point `t` of the way from `from` to `to`.
+fn along(from: Point, to: Point, t: f64) -> Point {
+    Point::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
 }
 
 pub fn screenshot(path: &std::path::Path) {
@@ -163,19 +186,9 @@ impl GnomeInput {
 
     fn key_event(&self, keycode: u8, pressed: bool) -> Result<(), String> {
         let code = keycode
-            .checked_sub(XKB_OFFSET)
+            .checked_sub(key_codes::EVDEV_OFFSET)
             .ok_or_else(|| format!("keycode {keycode} has no input code"))?;
         call(json!({"op": "key", "keycode": code, "pressed": pressed})).map(drop)
-    }
-
-    fn modifier_keycode(modifier: Modifier) -> u8 {
-        // The left-hand keys on an evdev keyboard.
-        match modifier {
-            Modifier::Shift => 50,
-            Modifier::Ctrl => 37,
-            Modifier::Alt => 64,
-            Modifier::Meta => 133,
-        }
     }
 
     fn pointer_to(&self, at: Point) -> Result<(), String> {
@@ -194,7 +207,7 @@ impl Input for GnomeInput {
             pressed.reverse();
         }
         for modifier in pressed {
-            self.key_event(Self::modifier_keycode(modifier), down)?;
+            self.key_event(key_codes::modifier_keycode(modifier), down)?;
             pause(10);
         }
         Ok(())
@@ -221,32 +234,32 @@ impl Input for GnomeInput {
     /// Xwayland windows with GTK, which starts a move once the pointer passes its drag threshold
     /// while still on the title bar; a first step that jumps far past it starts nothing. So the
     /// drag begins with one such step before covering the distance as other platforms' drags do.
+    ///
+    /// Every drag here moves a window, so one GNOME Shell never starts moving is an error.
     fn drag(&mut self, from: Point, to: Point, mods: Mods, steps: u32) -> Result<(), String> {
         self.modifiers(mods, true)?;
         self.pointer_down(from, mods)?;
         pause(30);
         let distance = ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt();
         if distance > FIRST_STEP {
-            let t = FIRST_STEP / distance;
-            self.pointer_drag(
-                Point::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t),
-                mods,
-            )?;
+            self.pointer_drag(along(from, to, FIRST_STEP / distance), mods)?;
             pause(16);
         }
         // A hand follows the window: the rest of the way waits until GNOME Shell moves it.
         let started = std::time::Instant::now();
-        while !call(json!({"op": "grabbing"}))?.as_bool().unwrap_or(false)
-            && started.elapsed() < MOVE_START_TIMEOUT
-        {
+        while !call(json!({"op": "grabbing"}))?.as_bool().unwrap_or(false) {
+            if started.elapsed() > MOVE_START_TIMEOUT {
+                self.pointer_up(from, mods)?;
+                self.modifiers(mods, false)?;
+                return Err(format!(
+                    "GNOME Shell didn't start moving the window pressed at {from:?}"
+                ));
+            }
             pause(10);
         }
-        for step in 1..=steps.max(1) {
-            let t = f64::from(step) / f64::from(steps.max(1));
-            self.pointer_drag(
-                Point::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t),
-                mods,
-            )?;
+        let steps = steps.max(1);
+        for step in 1..=steps {
+            self.pointer_drag(along(from, to, f64::from(step) / f64::from(steps)), mods)?;
             pause(16);
         }
         self.pointer_up(to, mods)?;

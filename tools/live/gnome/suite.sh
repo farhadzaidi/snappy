@@ -58,6 +58,7 @@ xwayland_environment() {
     export DISPLAY="${line##* }"
     XAUTHORITY="$(ls -t "$XDG_RUNTIME_DIR"/.mutter-Xwaylandauth.* 2>/dev/null | head -1)"
     export XAUTHORITY
+    [[ -n "${line}" && -n "$XAUTHORITY" ]] || fail "couldn't find Xwayland's display and authorization"
 }
 
 status=0

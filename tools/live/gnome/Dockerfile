@@ -21,8 +21,8 @@ RUN if command -v apt-get >/dev/null; then \
         && dnf clean all; \
     fi
 
-# GNOME Shell takes /run/systemd/seats as a sign that logind runs; it doesn't here.
-RUN rm -rf /run/systemd/seats && useradd --create-home --uid 1000 snappy 2>/dev/null \
-    || useradd --create-home snappy
+# The session runs as this user (gnome-session.sh); results are handed back to the
+# repository's owner, so its user ID doesn't matter.
+RUN useradd --create-home snappy
 
 WORKDIR /work

@@ -189,9 +189,13 @@ fn warm_up(
     )?;
     fixture.focus("warm-up")?;
     pause(500);
-    let grip = snappy_core::geometry::Point::new(frame.mid_x(), frame.y + 14.0);
+    let grip =
+        snappy_core::geometry::Point::new(frame.mid_x(), frame.y + snappy_live::scenarios::TITLE_BAR_GRIP);
     let to = snappy_core::geometry::Point::new(grip.x + 150.0, grip.y + 100.0);
-    input.drag(grip, to, snappy_core::keys::Mods::NONE, 6)?;
+    // The drag that wakes the session may be the one GNOME ignores, so it needn't move.
+    if let Err(error) = input.drag(grip, to, snappy_core::keys::Mods::NONE, 6) {
+        eprintln!("warm-up: {error}");
+    }
     pause(300);
     fixture.close("warm-up")?;
     pause(300);

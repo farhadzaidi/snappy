@@ -12,6 +12,11 @@ import Shell from 'gi://Shell';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+/** Snappy's top bar item: STATUS_AREA_ROLE in apps/gnome-extension/menu.js. */
+const SNAPPY_ITEM = 'snappy';
+/** The name Snappy's extension gives its overlay actors, in apps/gnome-extension/overlay.js. */
+const SNAPPY_OVERLAY = 'snappy-overlay';
+
 const INTERFACE = `
 <node>
   <interface name="io.github.farhadzaidi.SnappyTest">
@@ -124,15 +129,20 @@ export default class SnappyTestExtension extends Extension {
             Main.activateWindow(window);
             return frameOf(window);
         }
+        case 'focused': {
+            const window = global.display.get_focus_window();
+            return window !== null && window.get_title() === request.title;
+        }
         case 'releaseAll':
+            // The tests name the keys they may have pressed.
             this._pointer.notify_button(now(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
-            for (const keycode of [42, 29, 56, 125])
+            for (const keycode of request.keycodes)
                 this._keyboard.notify_key(now(), keycode, Clutter.KeyState.RELEASED);
             return null;
         case 'screenWindows':
             return this._screenWindows();
         case 'indicator': {
-            const item = Main.panel.statusArea['snappy'];
+            const item = Main.panel.statusArea[SNAPPY_ITEM];
             return Boolean(item && item.visible && item.get_parent()?.visible);
         }
         case 'activeWorkspace':
@@ -174,7 +184,7 @@ export default class SnappyTestExtension extends Extension {
 
     /** Chooses the item titled `title` in Snappy's top bar menu, submenus included. */
     _activateMenuItem(title) {
-        const button = Main.panel.statusArea['snappy'];
+        const button = Main.panel.statusArea[SNAPPY_ITEM];
         if (!button)
             throw new Error('no Snappy item in the top bar');
         const pending = [button.menu];
@@ -196,7 +206,7 @@ export default class SnappyTestExtension extends Extension {
     _screenWindows() {
         const result = [];
         for (const actor of Main.layoutManager.uiGroup.get_children().reverse()) {
-            if (actor.name !== 'snappy-overlay' || !actor.visible || actor.get_n_children() === 0)
+            if (actor.name !== SNAPPY_OVERLAY || !actor.visible || actor.get_n_children() === 0)
                 continue;
             const [x, y] = actor.get_transformed_position();
             const [width, height] = actor.get_transformed_size();
