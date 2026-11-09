@@ -3947,6 +3947,7 @@ dependencies = [
  "snappy-engine",
  "snappy-gnome",
  "snappy-ipc",
+ "snappy-kwin",
  "snappy-linux",
  "snappy-macos",
  "snappy-platform",
@@ -4012,11 +4013,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "snappy-kwin"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "snappy-core",
+ "snappy-linux",
+ "snappy-platform",
+ "thiserror 2.0.21",
+ "zbus",
+]
+
+[[package]]
 name = "snappy-linux"
 version = "0.0.0"
 dependencies = [
+ "ksni",
+ "serde",
  "snappy-core",
  "snappy-platform",
+ "tiny-skia 0.12.0",
 ]
 
 [[package]]
@@ -4104,7 +4121,6 @@ dependencies = [
 name = "snappy-x11"
 version = "0.0.0"
 dependencies = [
- "ksni",
  "snappy-core",
  "snappy-linux",
  "snappy-platform",

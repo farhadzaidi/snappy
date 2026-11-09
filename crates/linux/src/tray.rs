@@ -1,5 +1,5 @@
-//! The tray icon: a StatusNotifierItem on the session bus. GNOME shows it only
-//! with the AppIndicator extension.
+//! The tray icon: a StatusNotifierItem on the session bus, which KDE Plasma and most X11
+//! desktops show. GNOME shows it only with the AppIndicator extension.
 
 use std::sync::mpsc::Sender;
 
@@ -9,7 +9,7 @@ use ksni::{Icon, MenuItem, ToolTip, Tray};
 use snappy_platform::{PlatformEvent, TrayMenu};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
-use snappy_linux::menu::{MenuEntry, build};
+use crate::menu::{MenuEntry, build};
 
 const ICON_SIZES: [u32; 2] = [22, 44];
 
@@ -57,17 +57,11 @@ fn item(entry: MenuEntry) -> MenuItem<SnappyTray> {
         MenuEntry::Separator => MenuItem::Separator,
         MenuEntry::Item {
             title,
-            key,
             checked,
             enabled,
             event,
         } => {
             let label = escape(&title);
-            let shortcut = if key.is_empty() {
-                Vec::new()
-            } else {
-                vec![vec!["Control".to_owned(), key.to_owned()]]
-            };
             let activate = Box::new(move |tray: &mut SnappyTray| {
                 let _ = tray.events.send(event.clone());
             });
@@ -76,7 +70,6 @@ fn item(entry: MenuEntry) -> MenuItem<SnappyTray> {
                     label,
                     enabled,
                     checked,
-                    shortcut,
                     activate,
                     ..CheckmarkItem::default()
                 }
@@ -84,7 +77,6 @@ fn item(entry: MenuEntry) -> MenuItem<SnappyTray> {
                 None => StandardItem {
                     label,
                     enabled,
-                    shortcut,
                     activate,
                     ..StandardItem::default()
                 }
@@ -180,6 +172,23 @@ mod tests {
         assert_eq!(&icon.data[offset..offset + 4], &[255, 255, 255, 255]);
         // The corner is clear.
         assert_eq!(&icon.data[0..4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn menu_items_show_no_shortcut_hints() {
+        let (events, _) = std::sync::mpsc::channel();
+        let tray = SnappyTray {
+            menu: TrayMenu::default(),
+            events,
+            icons: Vec::new(),
+        };
+        let items = tray.menu();
+        assert!(!items.is_empty());
+        for item in items {
+            if let MenuItem::Standard(item) = item {
+                assert!(item.shortcut.is_empty(), "{} shows a shortcut", item.label);
+            }
+        }
     }
 
     #[test]

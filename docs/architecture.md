@@ -37,8 +37,8 @@ After every command the daemon replies, then sends a new `State`, which is what 
 ```
 core ◄── platform ◄── engine ◄── apps/snappy
  ▲          ▲           ▲             │
- │          ├── macos / windows / x11 / gnome ◄┘
- │          │           linux ◄── x11, gnome
+ │          ├── macos / windows / x11 / gnome / kwin ◄┘
+ │          │           linux ◄── x11, gnome, kwin
  │          ├── fake (engine tests)
  │          └── live (live tests)
  ├── ipc ◄── engine, apps/settings/src-tauri
@@ -51,8 +51,8 @@ core ◄── platform ◄── engine ◄── apps/snappy
 | `platform` | core | The `Platform` trait family (`WindowSystem`, `Input`, `HotKeys`, `Overlay`, `Permissions`, `DesktopGuard`, `Tray`, `LoginItem`) and `PlatformEvent`. |
 | `engine` | core, platform, ipc, tokio | Runtime state, event handling, the operation queue, stores, diagnostics. |
 | `ipc` | core, platform | `ToSettings`, `ToDaemon`, `Command`, `AppState`, and framing. |
-| `macos`, `windows`, `x11`, `gnome` | core, platform, OS bindings | One adapter each; `gnome` drives GNOME Shell on Wayland through the extension in `apps/gnome-extension`. Every dependency is behind a `cfg(target_os)` table, so each crate is empty elsewhere. |
-| `linux` | core, platform | What the X11 and GNOME adapters share: the single-instance lock and signals, the autostart entry, `/proc` facts, the session kind, physical key codes, the menu's structure, the overlay's look, and display IDs. Empty elsewhere. |
+| `macos`, `windows`, `x11`, `gnome`, `kwin` | core, platform, OS bindings | One adapter each; `gnome` drives GNOME Shell on Wayland through the extension in `apps/gnome-extension`, and `kwin` drives KWin on Wayland through the script in `apps/kwin-script`. Every dependency is behind a `cfg(target_os)` table, so each crate is empty elsewhere. |
+| `linux` | core, platform | What the Linux adapters share: the single-instance lock and signals, the autostart entry, `/proc` facts, the session kind, physical key codes, the menu's structure, the overlay's look, its drawing, and the finished overlay scenes desktop shells draw, display IDs, the tray icon, warnings for the journal, and a minimal Wayland client. Empty elsewhere. |
 | `wasm` | core, wasm-bindgen | A JSON API over `core` for the settings UI. |
 | `fake`, `live` | core, platform; `live` also the adapter for its OS | Test support; never linked into the shipped daemon. |
 
@@ -141,7 +141,7 @@ How a window is hidden depends on the platform (`core::workspace::ParkingPolicy`
 |---|---|---|
 | `CornerSliver` | macOS | macOS pulls fully off-screen windows back, so the window is moved to an exposed lower corner with a 1-point sliver left on screen. |
 | `OffScreen` | Windows | The window is moved entirely outside every display: left of the leftmost one with 64 pixels to spare, level with the top of the highest. |
-| `Desktop` | X11, GNOME on Wayland | The window is moved to a native desktop of Snappy's own, named "Snappy" on X11, and its frame is left alone. |
+| `Desktop` | X11, GNOME and KDE Plasma on Wayland | The window is moved to a native desktop of Snappy's own, named "Snappy" on X11 and KDE Plasma, and its frame is left alone. |
 
 Apps that bring a parked window back on their own are parked again, at most once a second (containment, `workspaces::window_moved`).
 
@@ -155,7 +155,7 @@ Apps that bring a parked window back on their own are parked again, at most once
 
 Workspaces belong to the native desktop (Space, virtual desktop) that was current when they started (`DesktopGuard`). On any other desktop they pause without changing anything.
 
-When live control is lost while workspaces run, as when GNOME's extension is turned off or restarts, they are suspended rather than stopped: the session is kept, nothing moves, and switches are refused. When live control comes back (`LiveControlChanged`), the engine binds the desktop again and hides the windows of inactive workspaces that the platform showed meanwhile (`Session::contain`), announcing any it couldn't. When displays change, the engine waits 350 ms for the change to settle, re-places windows without revealing parked ones, and retries once.
+When live control is lost while workspaces run, as when GNOME's extension is turned off or restarts or KWin starts over, they are suspended rather than stopped: the session is kept, nothing moves, and switches are refused. When live control comes back (`LiveControlChanged`), the engine binds the desktop again and hides the windows of inactive workspaces that the platform showed meanwhile (`Session::contain`), announcing any it couldn't. When displays change, the engine waits 350 ms for the change to settle, re-places windows without revealing parked ones, and retries once.
 
 ## Files
 

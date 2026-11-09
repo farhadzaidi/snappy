@@ -82,8 +82,9 @@ mod platform {
 
     use crate::runtime::{forward_events, run_engine};
 
-    /// GNOME on Wayland goes through GNOME Shell's extension; every other session through
-    /// the X server, which in other Wayland sessions reports that it can't control windows.
+    /// GNOME on Wayland goes through GNOME Shell's extension, KDE Plasma on Wayland through
+    /// KWin's script; every other session through the X server, which in other Wayland
+    /// sessions reports that it can't control windows.
     /// A second launch signals the running daemon to open the settings window, then exits.
     pub fn run(paths: Paths, open_settings: bool) -> std::io::Result<()> {
         let Claim::Primary(mut instance) = snappy_linux::claim(&snappy_linux::lock_path(&paths.state_dir))?
@@ -95,6 +96,19 @@ mod platform {
         match snappy_linux::session::current() {
             Session::GnomeWayland => {
                 let app = snappy_gnome::App::new(events.clone()).map_err(std::io::Error::other)?;
+                let (platform, stopper) = (app.platform(), app.stopper());
+                drive(
+                    paths,
+                    open_settings,
+                    events,
+                    platform_events,
+                    platform,
+                    move || stopper.stop(),
+                    || app.run().map_err(std::io::Error::other),
+                )
+            }
+            Session::KdeWayland => {
+                let app = snappy_kwin::App::new(events.clone()).map_err(std::io::Error::other)?;
                 let (platform, stopper) = (app.platform(), app.stopper());
                 drive(
                     paths,

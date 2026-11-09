@@ -17,8 +17,8 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::wrapper::ConnectionExt as _;
 
-use super::render::{self, outline, pixel_size, to_argb};
 use crate::shared::Shared;
+use snappy_linux::overlay_image::{self as render, outline, pixel_size, to_argb};
 
 const CLASS: &[u8] = b"snappy-overlay\0Snappy\0";
 /// Bytes per pixel in a 24- or 32-bit Z-format image.

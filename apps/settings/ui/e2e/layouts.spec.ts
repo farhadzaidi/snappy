@@ -1,6 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { lastCommandOf, openApp, saveCustomCopy, sentCommands, showPage, toast } from "./support";
+import {
+  lastCommandOf,
+  layoutAction,
+  openApp,
+  saveCustomCopy,
+  sentCommands,
+  showPage,
+  toast,
+} from "./support";
 
 test.beforeEach(async ({ page }) => openApp(page));
 
@@ -110,7 +118,7 @@ test("escape, switching pages, and changing the display hide the preview", async
 
 test("the action bar disables and enables a layout", async ({ page }) => {
   await page.getByRole("button", { name: "Two rows", exact: true }).click();
-  await actions(page).getByRole("button", { name: "Disable", exact: true }).click();
+  await layoutAction(page, "Disable");
   await expect(toast(page)).toContainText("Two rows disabled.");
   await expect(preview(page).getByText("Inactive")).toBeVisible();
   await expect(page.getByRole("button", { name: "Two rows", exact: true })).toHaveAttribute(
@@ -125,13 +133,13 @@ test("the action bar disables and enables a layout", async ({ page }) => {
 
 test("duplicate opens an unsaved copy in the editor", async ({ page }) => {
   await page.getByRole("button", { name: "Four corners", exact: true }).click();
-  await actions(page).getByRole("button", { name: "Duplicate" }).click();
+  await layoutAction(page, "Duplicate");
   await expect(page.getByRole("textbox", { name: "Layout name" })).toHaveValue("Four corners copy");
   await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
 });
 
 test("presets open read-only with their shortcuts", async ({ page }) => {
-  await actions(page).getByRole("button", { name: "Shortcuts", exact: true }).click();
+  await layoutAction(page, "Shortcuts");
   await expect(page.getByRole("heading", { name: "Center stage" })).toBeVisible();
   await expect(page.getByTitle("Preset shapes cannot be edited. Duplicate to customize.")).toBeVisible();
   await expect(page.getByRole("toolbar", { name: "Editing tools" })).toHaveCount(0);
@@ -145,19 +153,56 @@ test("deleting a custom layout asks first", async ({ page }) => {
   await expect(page.getByRole("tab", { name: "My layouts" })).toHaveAttribute("aria-selected", "true");
   await expect(preview(page).getByRole("heading")).toHaveText("Halves copy");
 
-  await actions(page).getByRole("button", { name: "Delete", exact: true }).click();
+  await layoutAction(page, "Delete");
   const confirm = page.getByRole("dialog", { name: "Delete layout" });
   await expect(confirm.getByText("Delete Halves copy?")).toBeVisible();
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(confirm).toHaveCount(0);
 
-  await actions(page).getByRole("button", { name: "Delete", exact: true }).click();
+  await layoutAction(page, "Delete");
   await page
     .getByRole("dialog", { name: "Delete layout" })
     .getByRole("button", { name: "Delete", exact: true })
     .click();
   await expect(toast(page)).toContainText("Custom layout deleted.");
   await expect(page.getByText("No custom layouts yet")).toBeVisible();
+});
+
+test("the action bar stays on one row and moves what doesn't fit into a menu", async ({ page }) => {
+  const bar = actions(page);
+  const more = bar.getByRole("button", { name: "More actions" });
+  await saveCustomCopy(page, "Halves");
+  await showPage(page, "Layouts");
+
+  await page.setViewportSize({ width: 1700, height: 760 });
+  await expect(more).toHaveCount(0);
+  for (const name of ["Show on screen", "Edit", "Duplicate", "Disable", "Delete"]) {
+    await expect(bar.getByRole("button", { name, exact: true })).toBeVisible();
+  }
+  await expect(bar.locator(".action-divider")).toHaveCount(1);
+
+  await page.setViewportSize({ width: 760, height: 760 });
+  await expect(more).toBeVisible();
+  const rowTops = await bar
+    .locator(":scope > *")
+    .evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)));
+  expect(new Set(rowTops).size).toBe(1);
+  await expect(bar.locator(".action-divider")).toHaveCount(0);
+  const heights = await bar
+    .getByRole("button")
+    .evaluateAll((buttons) => buttons.map((button) => Math.round(button.getBoundingClientRect().height)));
+  expect(new Set(heights)).toEqual(new Set([32]));
+
+  // The actions in line, then those in the menu, keep their order; the last move first.
+  const inline = (await bar.locator(".tool-button").allTextContents()).map((text) => text.trim());
+  await more.click();
+  const menu = page.getByRole("menu", { name: "More actions" });
+  const overflow = (await menu.getByRole("menuitem").allTextContents()).map((text) => text.trim());
+  expect(overflow.length).toBeGreaterThan(0);
+  expect([...inline, ...overflow]).toEqual(["Show on screen", "Edit", "Duplicate", "Disable", "Delete"]);
+  await menu.getByRole("menuitem", { name: "Delete" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Delete layout" })).toContainText("Delete Halves copy?");
 });
 
 test("new layout opens an empty editor", async ({ page }) => {

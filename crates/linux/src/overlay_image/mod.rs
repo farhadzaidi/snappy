@@ -1,12 +1,14 @@
-//! Drawing an overlay scene into a premultiplied ARGB image, and the outline shapes used
+//! Drawing an overlay scene into a premultiplied ARGB image, for adapters that draw their
+//! own overlays (X11, and KDE Plasma's layer-shell surfaces), and the outline shapes used
 //! when no compositor can show transparency.
 
 use snappy_core::geometry::{Point, Rect};
 use snappy_platform::{OverlayScene, OverlayZone};
 use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, Stroke, Transform};
 
-use super::glyphs;
-use snappy_linux::overlay_style::{self as style, BLACK, Placement, Rgb, WHITE, place, zone_style};
+use crate::overlay_style::{self as style, BLACK, Placement, Rgb, WHITE, place, zone_style};
+
+pub mod glyphs;
 
 /// Rows drawn beyond each side of a band and then dropped, so curves are anti-aliased
 /// away from the band's clip edges, exactly as in a whole image.

@@ -90,12 +90,24 @@ export function zone(page: Page, number: number): Locator {
 }
 
 /** Duplicate a preset and save it as a custom layout named "<preset> copy". */
+/**
+ * Clicks a layout action, in the action bar or, when the bar is too narrow for it, in its
+ * "More actions" menu.
+ */
+export async function layoutAction(page: Page, name: string): Promise<void> {
+  const bar = page.getByRole("toolbar", { name: "Layout actions" });
+  const inline = bar.getByRole("button", { name, exact: true });
+  if (await inline.isVisible()) {
+    await inline.click();
+    return;
+  }
+  await bar.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menu", { name: "More actions" }).getByRole("menuitem", { name, exact: true }).click();
+}
+
 export async function saveCustomCopy(page: Page, preset: string): Promise<void> {
   await page.getByRole("button", { name: preset, exact: true }).click();
-  await page
-    .getByRole("toolbar", { name: "Layout actions" })
-    .getByRole("button", { name: "Duplicate" })
-    .click();
+  await layoutAction(page, "Duplicate");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(toast(page)).toContainText(`${preset} copy saved.`);
 }

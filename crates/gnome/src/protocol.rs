@@ -3,7 +3,9 @@
 //! events arrive in order on its `Event` signal, one JSON object each.
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use snappy_core::geometry::Rect;
+pub use snappy_linux::scene::{Frame, OverlayScene, OverlayText, OverlayZone};
 
 /// Matches `PROTOCOL_VERSION` in the extension's `service.js`.
 pub const PROTOCOL_VERSION: u32 = 3;
@@ -98,32 +100,6 @@ pub struct Accelerator {
     pub accelerator: String,
 }
 
-/// A frame in stage coordinates, as GNOME Shell reports it.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub struct Frame {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-impl From<Frame> for Rect {
-    fn from(frame: Frame) -> Rect {
-        Rect::new(frame.x, frame.y, frame.width, frame.height)
-    }
-}
-
-impl From<Rect> for Frame {
-    fn from(rect: Rect) -> Frame {
-        Frame {
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height,
-        }
-    }
-}
-
 /// The facts the extension reports about a managed window.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -161,40 +137,6 @@ pub struct Monitor {
 pub struct PointerPosition {
     pub x: f64,
     pub y: f64,
-}
-
-/// One display's overlay, every length in stage pixels and relative to the work area.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OverlayScene {
-    pub work_area: Frame,
-    pub zones: Vec<OverlayZone>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OverlayZone {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-    pub radius: f64,
-    /// Red, green, and blue from 0 to 255, then opacity from 0 to 1.
-    pub fill: [f64; 4],
-    pub border: [f64; 4],
-    pub border_width: f64,
-    pub number: OverlayText,
-    pub caption: Option<OverlayText>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OverlayText {
-    pub text: String,
-    pub center_y: f64,
-    pub size: f64,
-    pub shadow_blur: f64,
-    pub shadow_opacity: f64,
 }
 
 /// A menu entry as the extension draws it.

@@ -10,6 +10,7 @@ import {
   showPage,
   toast,
   zone,
+  layoutAction,
 } from "./support";
 
 const save = (page: Page) => page.getByRole("button", { name: "Save", exact: true });
@@ -49,10 +50,7 @@ test("save enables only after a change", async ({ page }) => {
 
 test("undoing back to the saved content disables save", async ({ page }) => {
   await showPage(page, "Layouts");
-  await page
-    .getByRole("toolbar", { name: "Layout actions" })
-    .getByRole("button", { name: "Shortcuts", exact: true })
-    .click();
+  await layoutAction(page, "Shortcuts");
   await expect(save(page)).toBeDisabled();
   await page.getByRole("switch", { name: "Layout active" }).click();
   await expect(save(page)).toBeEnabled();
@@ -252,10 +250,7 @@ test("a conflict shows in the sidebar and blocks saving", async ({ page }) => {
   );
   await showPage(page, "Layouts");
   await page.getByRole("tab", { name: "My layouts" }).click();
-  await page
-    .getByRole("toolbar", { name: "Layout actions" })
-    .getByRole("button", { name: "Edit", exact: true })
-    .click();
+  await layoutAction(page, "Edit");
   await page.getByRole("switch", { name: "Layout active" }).click();
   await expect(page.locator(".editor-sidebar").getByRole("alert")).toContainText(
     "Snappy + ← is already assigned to Move window left.",
@@ -283,10 +278,7 @@ test("the toolbar offers three tools and history, and opening a layout resets th
   await expect(tool(page, "Horizontal cut")).toHaveAttribute("aria-pressed", "true");
 
   await showPage(page, "Layouts");
-  await page
-    .getByRole("toolbar", { name: "Layout actions" })
-    .getByRole("button", { name: "Edit", exact: true })
-    .click();
+  await layoutAction(page, "Edit");
   await expect(tool(page, "Select")).toHaveAttribute("aria-pressed", "true");
   await expect(zone(page, 1)).toHaveAttribute("data-selected", "true");
   await expect(zone(page, 2)).toHaveAttribute("data-selected", "false");

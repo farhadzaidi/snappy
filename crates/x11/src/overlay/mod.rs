@@ -1,18 +1,16 @@
 //! The overlay thread: draws and shows overlays on the event connection, and hands menu
 //! updates to the tray, so the engine thread never waits for either.
 
-pub mod glyphs;
-pub mod render;
 mod surface;
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
+use snappy_linux::tray::TrayIcon;
 use snappy_platform::{OverlayScene, PlatformEvent, TrayMenu};
 
 use crate::shared::Shared;
-use crate::tray::TrayIcon;
 use surface::Overlays;
 
 pub use surface::negotiate;

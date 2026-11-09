@@ -7,7 +7,7 @@ interface PopoverProps {
   anchor: RefObject<HTMLElement | null>;
   align?: "start" | "end";
   placement?: "below" | "above";
-  role?: "dialog" | "listbox";
+  role?: "dialog" | "listbox" | "menu";
   className?: string;
   children: ReactNode;
 }

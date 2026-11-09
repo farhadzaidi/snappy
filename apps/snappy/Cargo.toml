@@ -17,6 +17,7 @@ snappy-macos = { path = "../../crates/macos" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 snappy-gnome = { path = "../../crates/gnome" }
+snappy-kwin = { path = "../../crates/kwin" }
 snappy-linux = { path = "../../crates/linux" }
 snappy-x11 = { path = "../../crates/x11" }
 

@@ -1,6 +1,6 @@
 //! Recognizing the session, which decides how Snappy reaches other apps' windows: through
-//! the X server, through GNOME Shell on Wayland, or not at all on other Wayland desktops,
-//! where X11 clients see only XWayland.
+//! the X server, through GNOME Shell or KWin on Wayland, or not at all on other Wayland
+//! desktops, where X11 clients see only XWayland.
 
 /// The kind of session Snappy runs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,6 +8,8 @@ pub enum Session {
     X11,
     /// GNOME Shell on Wayland, which moves windows for Snappy through its extension.
     GnomeWayland,
+    /// KDE Plasma on Wayland, where KWin moves windows for Snappy through its script.
+    KdeWayland,
     /// Any other Wayland desktop, where Snappy can't control windows.
     OtherWayland,
 }
@@ -23,12 +25,21 @@ pub fn is_wayland(session_type: Option<&str>, wayland_display: Option<&str>) -> 
 }
 
 /// `XDG_CURRENT_DESKTOP` is a colon-separated list, such as `ubuntu:GNOME`.
-pub fn is_gnome(current_desktop: Option<&str>) -> bool {
+fn names_desktop(current_desktop: Option<&str>, name: &str) -> bool {
     current_desktop.is_some_and(|desktops| {
         desktops
             .split(':')
-            .any(|desktop| desktop.trim().eq_ignore_ascii_case("GNOME"))
+            .any(|desktop| desktop.trim().eq_ignore_ascii_case(name))
     })
+}
+
+pub fn is_gnome(current_desktop: Option<&str>) -> bool {
+    names_desktop(current_desktop, "GNOME")
+}
+
+/// Plasma sets `KDE`.
+pub fn is_kde(current_desktop: Option<&str>) -> bool {
+    names_desktop(current_desktop, "KDE")
 }
 
 pub fn classify(
@@ -40,6 +51,8 @@ pub fn classify(
         Session::X11
     } else if is_gnome(current_desktop) {
         Session::GnomeWayland
+    } else if is_kde(current_desktop) {
+        Session::KdeWayland
     } else {
         Session::OtherWayland
     }
@@ -95,6 +108,13 @@ mod tests {
     }
 
     #[test]
+    fn kde_is_found_in_the_desktop_list() {
+        assert!(is_kde(Some("KDE")));
+        assert!(!is_kde(Some("GNOME")));
+        assert!(!is_kde(None));
+    }
+
+    #[test]
     fn the_session_picks_the_adapter() {
         assert_eq!(classify(Some("x11"), None, Some("ubuntu:GNOME")), Session::X11);
         assert_eq!(
@@ -103,6 +123,11 @@ mod tests {
         );
         assert_eq!(
             classify(Some("wayland"), Some("wayland-0"), Some("KDE")),
+            Session::KdeWayland
+        );
+        assert_eq!(classify(Some("x11"), None, Some("KDE")), Session::X11);
+        assert_eq!(
+            classify(Some("wayland"), Some("wayland-0"), Some("sway")),
             Session::OtherWayland
         );
         assert_eq!(classify(None, None, None), Session::X11);

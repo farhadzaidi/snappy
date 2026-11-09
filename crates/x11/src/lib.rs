@@ -20,7 +20,6 @@ mod overlay;
 mod platform;
 pub mod reference;
 mod shared;
-mod tray;
 mod windows;
 mod x;
 

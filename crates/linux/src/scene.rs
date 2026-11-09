@@ -1,10 +1,72 @@
-//! The engine's overlay scenes as finished shapes for the extension, placed and colored by
-//! the style every Linux overlay shares.
+//! The engine's overlay scenes as finished shapes, placed and colored by the style every
+//! Linux overlay shares, for desktop shells that draw overlays themselves: GNOME Shell's
+//! extension and KWin's script.
 
-use snappy_linux::overlay_style::{Paint, SHADOW_BLUR, SHADOW_OPACITY, place, zone_style};
-use snappy_platform::OverlayScene;
+use serde::{Deserialize, Serialize};
+use snappy_core::geometry::Rect;
+use snappy_platform::OverlayScene as EngineScene;
 
-use crate::protocol::{self, Frame, OverlayText, OverlayZone};
+use crate::overlay_style::{Paint, SHADOW_BLUR, SHADOW_OPACITY, place, zone_style};
+
+/// A frame in the desktop shell's coordinates, as its script reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct Frame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl From<Frame> for Rect {
+    fn from(frame: Frame) -> Rect {
+        Rect::new(frame.x, frame.y, frame.width, frame.height)
+    }
+}
+
+impl From<Rect> for Frame {
+    fn from(rect: Rect) -> Frame {
+        Frame {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+        }
+    }
+}
+
+/// One display's overlay, every length in the shell's pixels and relative to the work area.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayScene {
+    pub work_area: Frame,
+    pub zones: Vec<OverlayZone>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayZone {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub radius: f64,
+    /// Red, green, and blue from 0 to 255, then opacity from 0 to 1.
+    pub fill: [f64; 4],
+    pub border: [f64; 4],
+    pub border_width: f64,
+    pub number: OverlayText,
+    pub caption: Option<OverlayText>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayText {
+    pub text: String,
+    pub center_y: f64,
+    pub size: f64,
+    pub shadow_blur: f64,
+    pub shadow_opacity: f64,
+}
 
 fn rgba(paint: Paint) -> [f64; 4] {
     let color = paint.color;
@@ -17,7 +79,7 @@ fn rgba(paint: Paint) -> [f64; 4] {
 }
 
 /// `scale` is the display's window units per point.
-pub fn scene(scene: &OverlayScene, scale: f64) -> protocol::OverlayScene {
+pub fn scene(scene: &EngineScene, scale: f64) -> OverlayScene {
     let text = |text: String, center_y: f64, size: f64| OverlayText {
         text,
         center_y,
@@ -25,7 +87,7 @@ pub fn scene(scene: &OverlayScene, scale: f64) -> protocol::OverlayScene {
         shadow_blur: SHADOW_BLUR * scale,
         shadow_opacity: SHADOW_OPACITY,
     };
-    protocol::OverlayScene {
+    OverlayScene {
         work_area: Frame::from(scene.work_area),
         zones: scene
             .zones
@@ -59,13 +121,12 @@ pub fn scene(scene: &OverlayScene, scale: f64) -> protocol::OverlayScene {
 
 #[cfg(test)]
 mod tests {
-    use snappy_core::geometry::Rect;
     use snappy_platform::{Caption, OverlayZone as EngineZone};
 
     use super::*;
 
-    fn engine_scene() -> OverlayScene {
-        OverlayScene {
+    fn engine_scene() -> EngineScene {
+        EngineScene {
             work_area: Rect::new(100.0, 32.0, 1000.0, 800.0),
             zones: vec![
                 EngineZone {

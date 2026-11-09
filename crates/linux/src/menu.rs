@@ -1,5 +1,7 @@
 //! The menu's structure, built from the engine's `TrayMenu` as plain data, so the tray
-//! icon on X11 and the top bar item on GNOME only have to materialize it.
+//! icon on X11 and KDE Plasma and the top bar item on GNOME only have to materialize it.
+//! Items carry no shortcut hints: in a tray or top bar menu they would be hints only, and no
+//! key does what they say.
 
 use snappy_platform::{PlatformEvent, TrayCommand, TrayDisplay, TrayItem, TrayMenu};
 
@@ -10,8 +12,6 @@ pub enum MenuEntry {
     Separator,
     Item {
         title: String,
-        /// Ctrl plus this key, shown beside the title, or empty.
-        key: &'static str,
         /// `None` for a plain item, `Some(checked)` for a checkable one.
         checked: Option<bool>,
         enabled: bool,
@@ -32,7 +32,7 @@ pub fn build(menu: &TrayMenu) -> Vec<MenuEntry> {
     let mut entries = vec![
         MenuEntry::Label(heading.to_owned()),
         MenuEntry::Separator,
-        command("Open Snappy…", ",", PlatformEvent::OpenSettingsRequested),
+        command("Open Snappy…", PlatformEvent::OpenSettingsRequested),
         MenuEntry::Separator,
         MenuEntry::Label("Layouts".to_owned()),
     ];
@@ -40,14 +40,13 @@ pub fn build(menu: &TrayMenu) -> Vec<MenuEntry> {
     entries.push(MenuEntry::Separator);
     entries.push(workspaces_submenu(&menu.workspaces));
     entries.push(MenuEntry::Separator);
-    entries.push(command("Quit Snappy", "q", PlatformEvent::QuitRequested));
+    entries.push(command("Quit Snappy", PlatformEvent::QuitRequested));
     entries
 }
 
-fn command(title: &str, key: &'static str, event: PlatformEvent) -> MenuEntry {
+fn command(title: &str, event: PlatformEvent) -> MenuEntry {
     MenuEntry::Item {
         title: title.to_owned(),
-        key,
         checked: None,
         enabled: true,
         event,
@@ -57,7 +56,6 @@ fn command(title: &str, key: &'static str, event: PlatformEvent) -> MenuEntry {
 fn choice(item: &TrayItem, command: TrayCommand) -> MenuEntry {
     MenuEntry::Item {
         title: item.title.clone(),
-        key: "",
         checked: Some(item.checked),
         enabled: item.enabled,
         event: PlatformEvent::Tray(command),
@@ -91,7 +89,6 @@ fn workspaces_submenu(workspaces: &[TrayItem]) -> MenuEntry {
     let mut entries = vec![
         command(
             "Manage workspaces…",
-            "",
             PlatformEvent::Tray(TrayCommand::ManageWorkspaces),
         ),
         MenuEntry::Separator,

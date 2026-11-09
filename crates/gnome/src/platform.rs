@@ -7,7 +7,7 @@ use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Modifier, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
-use snappy_linux::login_item;
+use snappy_linux::{login_item, scene};
 use snappy_platform::{
     Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
     Permissions, Platform, Remedy, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
@@ -22,7 +22,7 @@ use crate::protocol::{
     Accelerator, GONE, Monitor, PointerPosition, REFUSED_ALL_WORKSPACES, Request, WindowRecord,
 };
 use crate::shared::Shared;
-use crate::{displays, extension, keys, menu, overlay, windows};
+use crate::{displays, extension, keys, menu, windows};
 
 /// How long showing a parked window waits for its saved position to apply before bringing it
 /// back, and how often it looks. Wayland apps confirm moves asynchronously.
@@ -384,7 +384,7 @@ impl HotKeys for GnomePlatform {
 
 impl Overlay for GnomePlatform {
     fn prepare(&mut self, display: &str, scene: &OverlayScene) {
-        let scene = overlay::scene(scene, self.scale(display));
+        let scene = scene::scene(scene, self.scale(display));
         if self.shared.state().overlay_prepared.get(display) == Some(&scene) {
             return;
         }
@@ -402,7 +402,7 @@ impl Overlay for GnomePlatform {
 
     /// The engine shows the overlay on every pointer move; only changes cross the bus.
     fn show(&mut self, display: &str, scene: &OverlayScene) {
-        let scene = overlay::scene(scene, self.scale(display));
+        let scene = scene::scene(scene, self.scale(display));
         let shown = Some((display.to_owned(), scene.clone()));
         if self.shared.state().overlay_shown == shown {
             return;

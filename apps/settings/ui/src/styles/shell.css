@@ -183,24 +183,34 @@
   pointer-events: none;
 }
 
+/* The icon and the dismiss button line up with the first line, should a message wrap. */
 .toast {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
-  max-width: 720px;
-  padding: 12px 10px 12px 14px;
+  max-width: min(520px, calc(100vw - 40px));
+  padding: 10px 8px 10px 14px;
   border-radius: var(--radius-panel);
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 20px;
   pointer-events: auto;
   animation: toast-in 160ms ease-out;
 }
 
 .toast-icon {
   display: grid;
+  height: 24px;
+  place-items: center;
   color: var(--mint);
+}
+
+.toast-message {
+  flex: 1;
+  padding: 2px 0;
+  text-wrap: pretty;
 }
 
 .toast[data-error="true"] .toast-icon {

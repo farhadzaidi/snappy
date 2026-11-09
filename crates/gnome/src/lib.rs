@@ -17,7 +17,6 @@ pub mod extension;
 mod keys;
 mod menu;
 mod messages;
-mod overlay;
 mod platform;
 pub mod protocol;
 pub mod reference;

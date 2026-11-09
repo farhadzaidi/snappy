@@ -3264,7 +3264,7 @@ fn shortcuts_are_registered_again_only_when_the_set_changes_or_failed() {
         let status = engine.status().unwrap();
         assert_eq!(
             (status.message.as_str(), status.is_error),
-            ("Shortcuts already used by another app: Snappy + 3.", true)
+            ("Another app is using Snappy + 3.", true)
         );
 
         command(

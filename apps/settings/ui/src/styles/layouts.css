@@ -75,9 +75,31 @@
   white-space: nowrap;
 }
 
+/* The frame spans the column and measures it; the bar inside keeps to one row. */
+.action-bar-frame {
+  position: relative;
+  min-width: 0;
+}
+
+.action-bar-anchor {
+  position: relative;
+  width: fit-content;
+}
+
+/* Every way of fitting the bar, laid out unseen to be measured. */
+.action-bar-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .action-bar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   align-self: flex-start;
@@ -87,14 +109,49 @@
   background: rgb(26 31 37 / 60%);
 }
 
+/* As tall as the tool buttons beside it, so the row shares one centre line. */
 .action-primary {
-  padding: 7px 14px;
+  height: 32px;
+  padding: 0 14px;
 }
 
 .action-group {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.action-menu {
+  min-width: 200px;
+}
+
+.action-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-small);
+  color: var(--text);
+  font-weight: 500;
+  text-align: left;
+}
+
+.action-menu-item svg {
+  color: var(--muted);
+}
+
+.action-menu-item:hover:not(:disabled) {
+  background: rgb(255 255 255 / 6%);
+}
+
+.action-menu-item:disabled {
+  opacity: 0.4;
+}
+
+.action-menu-item-destructive,
+.action-menu-item-destructive svg {
+  color: var(--destructive);
 }
 
 .action-divider {

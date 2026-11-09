@@ -65,6 +65,15 @@ tools/live/linux/run.sh cargo clippy -p snappy-x11 -p snappy-live -p snappy --al
 - `tools/check.sh` checks the extension's syntax with Node.
 - `tools/live/gnome/live.sh` and `test.sh` build in a container whose output goes to the `snappy-gnome-target` volume and the cargo registry to `snappy-cargo-registry`, so your own `target/` is untouched apart from the binaries copied to `target/live/gnome/`.
 
+### KDE Plasma on Wayland
+
+`crates/kwin` builds on any Linux machine with `cargo build`. Its script, `apps/kwin-script`, is QML and JavaScript in KWin's declarative script format, built into the daemon (`crates/kwin/src/script.rs` lists every file, and a test checks that everything the files import is listed). The daemon writes it to the session's runtime folder and loads it into KWin at every start ([platforms.md](platforms.md#linux-kde-plasma-on-wayland)).
+
+- Keep the script thin: it carries out requests and reports events, and every decision stays in Rust.
+- A request, answer, or event that changes shape bumps `PROTOCOL_VERSION` in both `service.js` and `crates/kwin/src/protocol.rs`; a test checks they match.
+- QML's `Timer` doesn't run in a KWin that isn't compositing, as in the sandbox, and its JavaScript is QML's dialect (`.pragma library`, `.import`), which Node can't check. `tools/live/kwin/test.sh` loads the script into a real KWin, so syntax errors and API mismatches fail there; KWin's messages, the script's included, are in `target/live/kwin/out/kwin.log`.
+- `test.sh` builds with your own cargo into your own `target/`; it needs Bubblewrap, a KWin 6, and Xwayland installed, and no image.
+
 ## Running safely
 
 The daemon moves other apps' windows, registers global shortcuts, and on macOS asks for Accessibility. **Never run a development or test build of it on the desktop you work at**, and never run `snappy-live` or `snappy-fixture` there either. This is about the builds you are working on; an installed copy is meant to run on your own machine. Use one of these instead:
@@ -72,6 +81,7 @@ The daemon moves other apps' windows, registers global shortcuts, and on macOS a
 - **The settings UI in a browser.** `pnpm -C apps/settings/ui dev` serves the UI at `http://localhost:5179` against the in-memory fake daemon. Add `?platform=windows` or `?platform=linux` to see another platform's modifier names and controls. In the browser console, `window.snappyFake` is the fake daemon, for inspecting sent commands or patching its state.
 - **The Linux container.** `tools/live/linux/run.sh tools/live/linux/x11-session.sh <command>` runs any command against a headless two-monitor X desktop, and `tools/live/linux/live.sh` runs the real daemon against real windows there.
 - **The GNOME containers.** `tools/live/gnome/gnome-session.sh <command>` inside a `snappy-gnome` container runs any command in a headless two-monitor GNOME Shell on Wayland; `tools/live/gnome/live.sh` and `tools/live/gnome/test.sh` run the live suite and the adapter's integration tests there. Never install a development build's extension into your own GNOME session: it replaces the installed copy's, and GNOME loads it at your next login.
+- **The KWin sandbox.** `tools/live/kwin/kwin-session.sh <command>` runs any command against a headless two-output KWin on Wayland, sealed off from your desktop with Bubblewrap; `tools/live/kwin/test.sh` runs the KWin adapter's integration tests and the daemon there. Never load a development build's KWin script into your own session.
 - **The test VMs.** `tools/live/macos/run.sh` and `tools/live/windows/live.sh` run the daemon inside VMs that nothing on your screen depends on. [testing.md](testing.md#live-tests) describes them.
 
 ## The debug log
@@ -89,7 +99,7 @@ The debug log records what Snappy saw, what it decided, and what happened: recei
 |---|---|
 | A rule: geometry, snapping, swaps, navigation, settings validation, shortcut conflicts, workspace bookkeeping | `crates/core`, with unit tests beside it |
 | When something happens, or what state changes as a result | `crates/engine` |
-| How an OS does something | the adapter, `crates/macos`, `crates/windows`, `crates/x11`, or `crates/gnome` with its extension in `apps/gnome-extension`; what both Linux adapters need goes in `crates/linux` |
+| How an OS does something | the adapter, `crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome` with its extension in `apps/gnome-extension`, or `crates/kwin` with its script in `apps/kwin-script`; what more than one Linux adapter needs goes in `crates/linux` |
 | A new capability every adapter must provide | a trait method in `crates/platform`, implemented in each adapter and in `crates/fake` |
 | Something the settings app can ask for | a `Command` in `crates/ipc`, handled in `crates/engine/src/commands.rs` |
 | A rule the settings UI needs too | `crates/core`, exported through `crates/wasm/src/api.rs` and `apps/settings/ui/src/core/snappyCore.ts` |

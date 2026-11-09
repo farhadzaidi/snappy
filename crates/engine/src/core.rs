@@ -238,11 +238,9 @@ impl<P: Platform> Core<P> {
                 .iter()
                 .map(|id| wanted[*id as usize].chord.long_label(self.platform_name()))
                 .collect();
-            self.announce(
-                &format!("Shortcuts already used by another app: {}.", labels.join(", ")),
-                true,
-                true,
-            );
+            let all = labels.clone();
+            self.trace("shortcutsTaken", || serde_json::json!({ "shortcuts": all }));
+            self.announce(&taken_message(&labels), true, true);
         }
         self.registered = wanted;
     }
@@ -467,5 +465,45 @@ impl<P: Platform> Core<P> {
             status: self.status.clone(),
             added_workspace: self.added_workspace.take(),
         }
+    }
+}
+
+/// Most chords a message about taken shortcuts names; past that it counts them, and the
+/// debug log has the list.
+const TAKEN_LISTED: usize = 3;
+
+/// What the user is told when another app holds some of Snappy's shortcuts, short enough
+/// to read at a glance.
+fn taken_message(labels: &[String]) -> String {
+    match labels {
+        [one] => format!("Another app is using {one}."),
+        [first, second] => format!("Another app is using {first} and {second}."),
+        [rest @ .., last] if labels.len() <= TAKEN_LISTED => {
+            format!("Another app is using {}, and {last}.", rest.join(", "))
+        }
+        _ => format!("Another app is using {} of Snappy's shortcuts.", labels.len()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn taken_shortcuts_are_named_when_few_and_counted_when_many() {
+        let labels = |count: usize| -> Vec<String> { (1..=count).map(|n| format!("Snappy + {n}")).collect() };
+        assert_eq!(taken_message(&labels(1)), "Another app is using Snappy + 1.");
+        assert_eq!(
+            taken_message(&labels(2)),
+            "Another app is using Snappy + 1 and Snappy + 2."
+        );
+        assert_eq!(
+            taken_message(&labels(3)),
+            "Another app is using Snappy + 1, Snappy + 2, and Snappy + 3."
+        );
+        assert_eq!(
+            taken_message(&labels(10)),
+            "Another app is using 10 of Snappy's shortcuts."
+        );
     }
 }

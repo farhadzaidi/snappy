@@ -1,6 +1,6 @@
 # Snappy
 
-Snappy arranges windows into zones on macOS, Windows, and Linux (X11, and GNOME on Wayland). A layout divides each display into zones, and Snappy moves windows into them when you drag with a modifier held or press a shortcut.
+Snappy arranges windows into zones on macOS, Windows, and Linux (X11, and GNOME or KDE Plasma on Wayland). A layout divides each display into zones, and Snappy moves windows into them when you drag with a modifier held or press a shortcut.
 
 It runs as a small background program with a menu bar item (a notification-area or tray icon on Windows and Linux). The settings window opens on demand to pick and design layouts, set shortcuts, and manage workspaces. Snappy never reads window titles or contents, and never touches the network.
 
@@ -21,7 +21,8 @@ It runs as a small background program with a menu bar item (a notification-area 
 | macOS 14 or later | Needs Accessibility permission. |
 | Windows 11 | Tested on ARM64. Windows of apps running as administrator can't be moved. |
 | Linux, X11 | EWMH window managers such as GNOME on Xorg, KDE Plasma on X11, Xfce, and Cinnamon. |
-| Linux, GNOME on Wayland | GNOME 46 to 49, through a GNOME Shell extension Snappy installs itself. Other Wayland desktops are recognized and live control stays off. |
+| Linux, GNOME on Wayland | GNOME 46 to 49, through a GNOME Shell extension Snappy installs itself. |
+| Linux, KDE Plasma on Wayland | Plasma 6.8, through a KWin script Snappy loads at every start. Other Wayland desktops are recognized and live control stays off. |
 
 ## Install from source
 
@@ -72,7 +73,7 @@ install -Dm755 target/release/snappy target/release/snappy-settings -t ~/.local/
 ~/.local/bin/snappy
 ```
 
-On GNOME on Wayland, the first launch installs Snappy's GNOME Shell extension into `~/.local/share/gnome-shell/extensions/` and turns it on. GNOME loads new extensions only when you log in, so the settings window asks you to log out of your desktop and sign back in once, with a **Log out now** button; Snappy starts snapping after that. Updates that change the extension ask the same way. On X11 there is nothing more to do. Other Wayland desktops aren't supported yet.
+On GNOME on Wayland, the first launch installs Snappy's GNOME Shell extension into `~/.local/share/gnome-shell/extensions/` and turns it on. GNOME loads new extensions only when you log in, so the settings window asks you to log out of your desktop and sign back in once, with a **Log out now** button; Snappy starts snapping after that. Updates that change the extension ask the same way. On KDE Plasma on Wayland, Snappy loads its KWin script when it starts and snapping works straight away; KWin's own tiling still runs alongside it, so see [platforms.md](docs/platforms.md#linux-kde-plasma-on-wayland) for the KDE settings that fight it. On X11 there is nothing more to do. Other Wayland desktops aren't supported yet.
 
 Turn on "Open at login" in Snappy's settings to start it automatically.
 
@@ -114,11 +115,13 @@ git pull
 | `crates/gnome` | GNOME on Wayland adapter: talks to the extension over D-Bus (zbus). |
 | `crates/linux` | What the Linux adapters share: single instance, login item, session, key codes, menu, overlay style. |
 | `apps/gnome-extension` | The GNOME Shell extension that carries out the GNOME adapter's requests. |
+| `crates/kwin` | KDE Plasma on Wayland adapter: talks to its KWin script and KDE's shortcut service over D-Bus (zbus). |
+| `apps/kwin-script` | The KWin script that carries out the KWin adapter's requests. |
 | `crates/wasm` | `core`'s editor and shortcut rules compiled to WebAssembly for the settings app. |
 | `crates/live` | Live tests: a runner and a fixture app that drive the real daemon in a sandbox. |
 | `apps/snappy` | The daemon binary. |
 | `apps/settings` | The settings app: `src-tauri` (Tauri shell) and `ui` (React and TypeScript). |
-| `tools` | The full check, macOS bundling and signing, and the Linux (X11 and GNOME), macOS, and Windows sandboxes. |
+| `tools` | The full check, macOS bundling and signing, and the Linux (X11, GNOME, and KWin), macOS, and Windows sandboxes. |
 
 Package names keep the `snappy-` prefix: `crates/core` is `snappy-core`, and so on.
 
@@ -132,6 +135,7 @@ pnpm -C apps/settings/ui e2e            # settings UI end-to-end tests in a head
 pnpm -C apps/settings/ui dev            # the settings UI in a browser, against a fake daemon
 tools/live/linux/live.sh                # the real daemon against real windows, in a Linux container
 tools/live/gnome/live.sh                # the same on GNOME Shell under Wayland, in containers
+tools/live/kwin/test.sh                 # the KWin adapter and the daemon against a sealed-off headless KWin
 ```
 
 While developing, never run a development or test build of the daemon on the desktop you work at: it moves windows and registers global shortcuts, and a broken build does that badly. Run it in the Linux container or in one of the test VMs ([docs/testing.md](docs/testing.md#live-tests)). Installing Snappy from source to use it day to day is what it's for.

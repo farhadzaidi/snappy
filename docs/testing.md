@@ -8,7 +8,7 @@
 | Engine scenarios | `crates/engine/tests/scenarios.rs`, plus unit tests in `crates/engine/src` | anywhere, `cargo test` |
 | WebAssembly API | `crates/wasm/src/lib.rs`, `crates/wasm/src/gestures.rs` | anywhere, `cargo test` |
 | Adapter unit tests | `mod tests` in each adapter module | on the adapter's OS |
-| Adapter integration tests | `crates/x11/tests/x11.rs`, `crates/gnome/tests/gnome.rs`, `crates/windows/tests/windows.rs` | the Linux container, the GNOME containers, the Windows VM |
+| Adapter integration tests | `crates/x11/tests/x11.rs`, `crates/gnome/tests/gnome.rs`, `crates/kwin/tests/kwin.rs`, `crates/windows/tests/windows.rs` | the Linux container, the GNOME containers, the KWin sandbox, the Windows VM |
 | Daemon checks | `apps/snappy/tests/bundle.rs` (bundle and permissions), `apps/snappy/tests/privacy.rs` (no network, no window content) | anywhere, `cargo test` |
 | Settings UI unit tests | `apps/settings/ui/src/**/*.test.ts`, Vitest | anywhere, `pnpm -C apps/settings/ui test` |
 | Settings UI end to end | `apps/settings/ui/e2e/*.spec.ts`, Playwright | anywhere, `pnpm -C apps/settings/ui e2e` |
@@ -56,6 +56,7 @@ The integration tests drive a real window system and real input, and skip themse
 
 - `crates/x11/tests/x11.rs` runs when `SNAPPY_X11_TEST_DISPLAY` names a display, which `tools/live/linux/x11-session.sh` sets: `tools/live/linux/run.sh tools/live/linux/x11-session.sh`. `SNAPPY_X11_COMPOSITOR=off` runs the window manager without its compositor.
 - `crates/gnome/tests/gnome.rs` runs when `SNAPPY_GNOME_TEST=1`, which `tools/live/gnome/test.sh` sets inside a throwaway GNOME Shell with Snappy's extension and the test helper loaded: `tools/live/gnome/test.sh [--gnome 46,47,48,49]`.
+- `crates/kwin/tests/kwin.rs` runs when `SNAPPY_KWIN_TEST=1`, which `tools/live/kwin/test.sh` sets inside a sealed-off headless KWin: `tools/live/kwin/test.sh [test name filter]`. Its last test runs the real daemon there, adds a top and a bottom panel, drags a window with the drag key into a zone while checking the overlay covers the new work area, sends it to another zone by shortcut, and checks where KWin says it went and that the daemon logged no overlay trouble. See [KDE Plasma on Wayland](#kde-plasma-on-wayland).
 - `crates/windows/tests/windows.rs` runs when `SNAPPY_WINDOWS_TEST=1`, which `tools/live/windows/desktop.sh` sets: `tools/live/windows/test.sh [test name filter]`.
 
 They run one test at a time, since the tests share one screen, pointer, and keyboard. Each probes every default shortcut (`the_default_shortcuts_are_free` and `the_windows_default_shortcuts_are_free`), so a default the window manager or Windows itself holds fails the suite.
@@ -113,6 +114,22 @@ Needs Docker. It builds the daemon, runner, and fixture in an Ubuntu 24.04 conta
 - `gnome-session.sh` refuses to run outside a container: it starts a GNOME Shell and rewrites GNOME settings.
 - To look around by hand, run a shell in the session: `docker run --rm -it --init -v "$PWD:/work" snappy-gnome:46 /work/tools/live/gnome/gnome-session.sh bash`.
 
+### KDE Plasma on Wayland
+
+```sh
+tools/live/kwin/test.sh [test name filter]
+```
+
+Needs Bubblewrap, KWin 6, and Xwayland on the machine, and no container image: the KWin under test is the machine's own. `kwin-session.sh` starts it inside a Bubblewrap sandbox with private `/tmp`, `/run`, and `/var`, its own network namespace, only `/usr`, `/etc`, and the repository visible (read-only, apart from `target/live/kwin/out/`), no GPU nodes, and an empty environment; it refuses to start if anything of the desktop's session is visible. Inside, a D-Bus session of its own runs `kwin_wayland --virtual` with two side-by-side 1920×1080 outputs and animations off.
+
+- **Nothing reaches a screen.** Without GPU nodes KWin runs without compositing. It still manages, moves, and drags windows, maps layer-shell surfaces, and runs scripts, so the tests read frames from KWin and never pixels. The overlay is checked by asking KWin, through a throwaway script that reports back over D-Bus, which on-screen display surfaces each process has and where.
+- **Panels** are layer-shell surfaces with the `dock` namespace and an exclusive zone, as Plasma's are, made by the tests themselves; one test changes only the reserved space, which KWin tells scripts nothing about.
+- **Input** goes through KWin's `org_kde_kwin_fake_input` protocol, which KWin handles like a device. The device is created once, before any fixture window opens: when it appears the seat gains a pointer, and a winit app that is already running trips over that.
+- **Frames** in the end-to-end test come from KWin itself: its runner interface finds the fixture window by title, and `getWindowInfo` reads its frame, so the check doesn't go through Snappy.
+- KWin's log, with the scripts' messages, is `target/live/kwin/out/kwin.log`; the end-to-end daemon's settings, output, and logs are in `target/live/kwin/out/daemon/`.
+
+The full live suite (`crates/live`) doesn't run on KWin yet.
+
 ### macOS
 
 ```sh
@@ -148,4 +165,4 @@ pnpm -C apps/settings/ui e2e
 
 `tools/check.sh` runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, and the settings UI's `check` script (WebAssembly build, type check, ESLint, Prettier, Vitest, and a production build). Both must pass.
 
-When you change an adapter, also lint and test it where it compiles. The GNOME adapter compiles on any Linux machine, and `tools/live/gnome/test.sh` runs its integration tests against real GNOME Shells: `tools/live/linux/run.sh cargo clippy -p snappy-x11 --all-targets -- -D warnings` and `tools/live/linux/run.sh tools/live/linux/x11-session.sh` for X11, `cargo xwin clippy --target aarch64-pc-windows-msvc -p snappy-windows --all-targets -- -D warnings` and `tools/live/windows/test.sh` for Windows. Run the live suite for the platform when a change affects how windows really move.
+When you change an adapter, also lint and test it where it compiles. The GNOME adapter compiles on any Linux machine, and `tools/live/gnome/test.sh` runs its integration tests against real GNOME Shells: `tools/live/linux/run.sh cargo clippy -p snappy-x11 --all-targets -- -D warnings` and `tools/live/linux/run.sh tools/live/linux/x11-session.sh` for X11, `tools/live/kwin/test.sh` for KWin, `cargo xwin clippy --target aarch64-pc-windows-msvc -p snappy-windows --all-targets -- -D warnings` and `tools/live/windows/test.sh` for Windows. Run the live suite for the platform when a change affects how windows really move.

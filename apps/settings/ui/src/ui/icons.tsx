@@ -126,6 +126,12 @@ export const PowerIcon = () => (
   </Icon>
 );
 
+export const MoreIcon = () => (
+  <Icon>
+    <path d="M3.5 8h.01M8 8h.01M12.5 8h.01" strokeWidth={2.4} />
+  </Icon>
+);
+
 export const TrashIcon = () => (
   <Icon>
     <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.7 6.5v4.5M9.3 6.5v4.5" />
