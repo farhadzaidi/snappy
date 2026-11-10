@@ -394,3 +394,69 @@ fn desktop_parking_restore_all_shows_every_hidden_window() {
     assert_eq!(io.origin(2), Point::new(200.0, 150.0));
     assert!(session.journal().is_empty());
 }
+
+fn three_windows() -> FakeIo {
+    FakeIo::with(&[
+        (1, Rect::new(100.0, 100.0, 600.0, 400.0)),
+        (2, Rect::new(200.0, 150.0, 500.0, 300.0)),
+        (3, Rect::new(300.0, 200.0, 400.0, 300.0)),
+    ])
+}
+
+#[test]
+fn carried_windows_join_the_target_where_they_are_and_the_last_one_gets_focus() {
+    let mut io = three_windows();
+    let mut session = session_with(&mut io, &[(1, "one"), (2, "one"), (3, "one")]);
+    session.note_focus(WindowId(1));
+    io.moves.clear();
+
+    let carried = [WindowId(3), WindowId(2)];
+    let focused = session
+        .switch_carrying("two", &carried, &[DISPLAY], true, &mut io)
+        .unwrap();
+    assert!(focused);
+    assert_eq!(session.active(), "two");
+    assert_eq!(io.moves, [WindowId(1)], "only the window left behind moves");
+    assert!(io.origin(1).x > 1400.0);
+    assert_eq!(io.origin(2), Point::new(200.0, 150.0));
+    assert_eq!(io.origin(3), Point::new(300.0, 200.0));
+    assert_eq!(session.member(WindowId(3)).unwrap().workspace, "two");
+    assert_eq!(io.focused, Some(WindowId(2)), "the last one picked up");
+    assert!(session.journal().iter().all(|entry| entry.window == WindowId(1)));
+
+    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    assert!(io.origin(2).x > 1400.0 && io.origin(3).x > 1400.0);
+    assert_eq!(io.origin(1), Point::new(100.0, 100.0));
+}
+
+#[test]
+fn carrying_skips_windows_of_other_workspaces() {
+    let mut io = three_windows();
+    let mut session = session_with(&mut io, &[(1, "one"), (2, "one"), (3, "one")]);
+    session.send(WindowId(3), "three", &[DISPLAY], &mut io).unwrap();
+
+    session
+        .switch_carrying("two", &[WindowId(3)], &[DISPLAY], true, &mut io)
+        .unwrap();
+    assert_eq!(session.member(WindowId(3)).unwrap().workspace, "three");
+    assert!(io.origin(3).x > 1400.0);
+    assert_eq!(io.focused, None, "workspace two has no windows of its own");
+}
+
+#[test]
+fn focus_after_a_send_goes_to_the_most_recently_focused_window_left() {
+    let mut io = three_windows();
+    let mut session = session_with(&mut io, &[(1, "one"), (2, "one"), (3, "one")]);
+    for id in [2, 1, 3] {
+        session.note_focus(WindowId(id));
+    }
+
+    session.send(WindowId(3), "two", &[DISPLAY], &mut io).unwrap();
+    assert_eq!(session.focus_recent(&mut io), Some(WindowId(1)));
+    session.send(WindowId(1), "two", &[DISPLAY], &mut io).unwrap();
+    assert_eq!(session.focus_recent(&mut io), Some(WindowId(2)));
+    session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
+    io.focused = None;
+    assert_eq!(session.focus_recent(&mut io), None);
+    assert_eq!(io.focused, None);
+}

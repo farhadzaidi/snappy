@@ -51,6 +51,8 @@ pub struct Session {
     active: String,
     members: BTreeMap<WindowId, Member>,
     last_focused: BTreeMap<String, WindowId>,
+    /// Member windows in the order they were focused, the most recent last.
+    recent: Vec<WindowId>,
     policy: ParkingPolicy,
     /// Work areas after a display change; incoming windows are kept reachable inside them.
     work_areas: Option<Vec<Rect>>,
@@ -64,6 +66,7 @@ impl Session {
             active: active.into(),
             members: Members::new(),
             last_focused: BTreeMap::new(),
+            recent: Vec::new(),
             policy,
             work_areas: None,
         }
@@ -103,12 +106,36 @@ impl Session {
     pub fn discard(&mut self, window: WindowId) {
         self.members.remove(&window);
         self.last_focused.retain(|_, focused| *focused != window);
+        self.recent.retain(|focused| *focused != window);
     }
 
     pub fn note_focus(&mut self, window: WindowId) {
         if let Some(member) = self.members.get(&window) {
             self.last_focused.insert(member.workspace.clone(), window);
+            self.recent.retain(|focused| *focused != window);
+            self.recent.push(window);
         }
+    }
+
+    /// Focus the active workspace's most recently focused window that can take focus,
+    /// which is its frontmost, else its first one that can. Returns the window focused, or
+    /// `None` when the workspace has none left.
+    pub fn focus_recent(&mut self, io: &mut impl WorkspaceIo) -> Option<WindowId> {
+        let recent = self
+            .recent
+            .iter()
+            .rev()
+            .copied()
+            .find(|window| self.can_focus(*window, io));
+        let window = recent.or_else(|| {
+            self.members
+                .keys()
+                .copied()
+                .find(|window| self.can_focus(*window, io))
+        })?;
+        io.focus(window);
+        self.note_focus(window);
+        Some(window)
     }
 
     /// Refresh the saved frames of visible windows in the active workspace.
@@ -137,12 +164,31 @@ impl Session {
         focus_incoming: bool,
         io: &mut impl WorkspaceIo,
     ) -> Result<bool, WindowError> {
+        self.switch_carrying(target, &[], displays, focus_incoming, io)
+    }
+
+    /// Like `switch_to`, except that the active workspace's visible `carried` windows join
+    /// `target` where they are instead of being parked, and the last of them that can take
+    /// focus gets it.
+    pub fn switch_carrying(
+        &mut self,
+        target: &str,
+        carried: &[WindowId],
+        displays: &[Rect],
+        focus_incoming: bool,
+        io: &mut impl WorkspaceIo,
+    ) -> Result<bool, WindowError> {
         if target == self.active {
             return Ok(true);
         }
         let mut next = self.members.clone();
+        let mut arriving = Vec::new();
         for (window, member) in next.iter_mut() {
-            if member.workspace == self.active {
+            if member.workspace == self.active && member.parked.is_none() && carried.contains(window) {
+                member.workspace = target.to_owned();
+                member.frame = io.frame(*window)?;
+                arriving.push(*window);
+            } else if member.workspace == self.active {
                 if !io.is_movable(*window) {
                     return Err(WindowError::unavailable(
                         "Close the window's dialog or leave full screen before switching workspaces.",
@@ -167,8 +213,30 @@ impl Session {
         }
 
         self.transition(next, &BTreeSet::new(), io)?;
-        self.active = target.to_owned();
-        Ok(!focus_incoming || self.focus_active(io))
+        let previous = std::mem::replace(&mut self.active, target.to_owned());
+        if self
+            .last_focused
+            .get(&previous)
+            .is_some_and(|window| arriving.contains(window))
+        {
+            self.last_focused.remove(&previous);
+        }
+        if !focus_incoming {
+            return Ok(true);
+        }
+        let last_carried = carried
+            .iter()
+            .rev()
+            .copied()
+            .find(|window| arriving.contains(window) && self.can_focus(*window, io));
+        match last_carried {
+            Some(window) => {
+                io.focus(window);
+                self.note_focus(window);
+                Ok(true)
+            }
+            None => Ok(self.focus_active(io)),
+        }
     }
 
     /// Move a window to another workspace without switching.
