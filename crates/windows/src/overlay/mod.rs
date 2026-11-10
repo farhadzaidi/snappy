@@ -2,7 +2,8 @@
 //! its work area. Scenes are drawn in software into a DIB and handed to the window with
 //! `UpdateLayeredWindow`; DWM keeps the result, so the pixels are freed right after and an
 //! idle overlay costs Snappy no memory beyond its window. A surface redraws only when its
-//! scene changes.
+//! scene changes. Marked windows' outlines go on a second popup per display of the same
+//! kind, so they stay while the zones show and hide.
 
 mod canvas;
 mod dib;
@@ -12,7 +13,8 @@ mod text;
 
 use std::collections::HashMap;
 
-use snappy_platform::OverlayScene;
+use snappy_core::geometry::Rect;
+use snappy_platform::{OverlayMarks, OverlayScene};
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, SIZE};
 use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
 use windows::Win32::Graphics::Gdi::{AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION};
@@ -27,7 +29,7 @@ use crate::class;
 
 pub use self::canvas::{Canvas, Color};
 pub use self::dib::Dib;
-use self::paint::paint;
+use self::paint::{paint, paint_marks};
 use self::style::DEFAULT_ACCENT;
 use self::text::GdiGlyphs;
 use crate::frames::{extent, pixel};
@@ -39,9 +41,15 @@ struct Surface {
     drawn: Option<OverlayScene>,
 }
 
+struct MarkSurface {
+    window: HWND,
+    drawn: Option<OverlayMarks>,
+}
+
 #[derive(Default)]
 pub struct Overlays {
     surfaces: HashMap<String, Surface>,
+    marks: HashMap<String, MarkSurface>,
     glyphs: GdiGlyphs,
     class_registered: bool,
 }
@@ -65,7 +73,20 @@ fn create_window() -> Option<HWND> {
 
 /// Draws `scene` and hands it to the layered window.
 fn present(window: HWND, scene: &OverlayScene, scale: f64, glyphs: &mut GdiGlyphs) -> bool {
-    let area = scene.work_area;
+    present_drawn(window, scene.work_area, |canvas| {
+        paint(canvas, scene, scale, accent(), glyphs)
+    })
+}
+
+/// Draws the outlines of `marks` and hands them to the layered window.
+fn present_marks(window: HWND, marks: &OverlayMarks, scale: f64) -> bool {
+    present_drawn(window, marks.work_area, |canvas| {
+        paint_marks(canvas, marks, scale)
+    })
+}
+
+/// Draws an image covering `area` with `draw` and hands it to the layered window.
+fn present_drawn(window: HWND, area: Rect, draw: impl FnOnce(&mut Canvas)) -> bool {
     let (Some(x), Some(y), Some(width), Some(height)) = (
         pixel(area.x),
         pixel(area.y),
@@ -78,7 +99,7 @@ fn present(window: HWND, scene: &OverlayScene, scale: f64, glyphs: &mut GdiGlyph
         return false;
     };
     let mut canvas = Canvas::new(dib.width, dib.height, dib.pixels());
-    paint(&mut canvas, scene, scale, accent(), glyphs);
+    draw(&mut canvas);
     let blend = BLENDFUNCTION {
         BlendOp: AC_SRC_OVER as u8,
         BlendFlags: 0,
@@ -110,18 +131,72 @@ fn hide_window(window: HWND) {
     let _ = unsafe { ShowWindow(window, SW_HIDE) };
 }
 
+/// Shows a window above the others without activating it.
+fn show_topmost(window: HWND) {
+    // SAFETY: a window this thread owns; it is shown without activation.
+    let _ = unsafe {
+        SetWindowPos(
+            window,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+    };
+}
+
+fn destroy_window(window: HWND) {
+    // SAFETY: a window this thread owns, destroyed once.
+    let _ = unsafe { DestroyWindow(window) };
+}
+
 impl Overlays {
+    /// A new hidden overlay window, registering the class the first time.
+    fn new_window(&mut self) -> Option<HWND> {
+        if !self.class_registered {
+            class::register(CLASS, Some(class::default_procedure));
+            self.class_registered = true;
+        }
+        create_window()
+    }
+
     fn surface(&mut self, display: &str) -> Option<&mut Surface> {
         if !self.surfaces.contains_key(display) {
-            if !self.class_registered {
-                class::register(CLASS, Some(class::default_procedure));
-                self.class_registered = true;
-            }
-            let window = create_window()?;
+            let window = self.new_window()?;
             self.surfaces
                 .insert(display.to_owned(), Surface { window, drawn: None });
         }
         self.surfaces.get_mut(display)
+    }
+
+    /// Outlines `marks` on `display` above every window, or hides the outlines when there
+    /// are none.
+    pub fn mark(&mut self, display: &str, marks: &OverlayMarks, scale: f64) {
+        if marks.frames.is_empty() {
+            if let Some(surface) = self.marks.get_mut(display) {
+                hide_window(surface.window);
+                surface.drawn = None;
+            }
+            return;
+        }
+        if !self.marks.contains_key(display) {
+            let Some(window) = self.new_window() else {
+                return;
+            };
+            self.marks
+                .insert(display.to_owned(), MarkSurface { window, drawn: None });
+        }
+        let Some(surface) = self.marks.get_mut(display) else {
+            return;
+        };
+        if surface.drawn.as_ref() != Some(marks) {
+            surface.drawn = present_marks(surface.window, marks, scale).then(|| marks.clone());
+        }
+        if surface.drawn.is_some() {
+            show_topmost(surface.window);
+        }
     }
 
     /// Draws `scene` for `display` ahead of time, so showing it later costs nothing.
@@ -145,18 +220,7 @@ impl Overlays {
             }
         }
         if let Some(window) = self.prepare(display, scene, scale) {
-            // SAFETY: a window this thread owns; it is shown without activation.
-            let _ = unsafe {
-                SetWindowPos(
-                    window,
-                    Some(HWND_TOPMOST),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                )
-            };
+            show_topmost(window);
         }
     }
 
@@ -171,8 +235,14 @@ impl Overlays {
         self.surfaces.retain(|id, surface| {
             let keep = displays.contains(id);
             if !keep {
-                // SAFETY: a window this thread owns, destroyed once.
-                let _ = unsafe { DestroyWindow(surface.window) };
+                destroy_window(surface.window);
+            }
+            keep
+        });
+        self.marks.retain(|id, surface| {
+            let keep = displays.contains(id);
+            if !keep {
+                destroy_window(surface.window);
             }
             keep
         });

@@ -1,13 +1,15 @@
-//! Overlay windows: one override-redirect window per display over
-//! its work area, 32-bit ARGB when the server offers it, click-through through an empty
-//! XFixes input region. Each drawing becomes the window's background pixmap, so the
-//! server repaints exposures without a round trip to Snappy.
+//! Overlay windows: per display, one override-redirect window over its work area for the
+//! zones and another for the marked windows' outlines, so the outlines stay while zones
+//! come and go. Both are 32-bit ARGB when the server offers it and click-through through
+//! an empty XFixes input region. Each drawing becomes the window's background pixmap, so
+//! the server repaints exposures without a round trip to Snappy.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use snappy_core::geometry::Rect;
-use snappy_platform::OverlayScene;
+use snappy_platform::{OverlayMarks, OverlayScene};
+use tiny_skia::Pixmap;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::shape::{self, ConnectionExt as _};
 use x11rb::protocol::xfixes::ConnectionExt as _;
@@ -18,7 +20,7 @@ use x11rb::protocol::xproto::{
 use x11rb::wrapper::ConnectionExt as _;
 
 use crate::shared::Shared;
-use snappy_linux::overlay_image::{self as render, outline, pixel_size, to_argb};
+use snappy_linux::overlay_image::{self as render, mark_outline, outline, pixel_size, to_argb};
 
 const CLASS: &[u8] = b"snappy-overlay\0Snappy\0";
 /// Bytes per pixel in a 24- or 32-bit Z-format image.
@@ -28,11 +30,49 @@ const REQUEST_HEADER: usize = 64;
 /// Rows rendered and sent at a time; a 4K-wide band is about 1 MB.
 const BAND_ROWS: u32 = 64;
 
+/// What an overlay window shows.
+#[derive(Clone, PartialEq)]
+enum Content {
+    Zones(OverlayScene),
+    Marks(OverlayMarks),
+}
+
+impl Content {
+    fn work_area(&self) -> Rect {
+        match self {
+            Content::Zones(scene) => scene.work_area,
+            Content::Marks(marks) => marks.work_area,
+        }
+    }
+
+    fn render_rows(&self, scale: f64, top: u32, rows: u32) -> Option<Pixmap> {
+        match self {
+            Content::Zones(scene) => render::render_rows(scene, scale, top, rows),
+            Content::Marks(marks) => render::render_mark_rows(marks, scale, top, rows),
+        }
+    }
+
+    /// The parts that show without a compositor.
+    fn outline(&self, scale: f64) -> Vec<Rect> {
+        match self {
+            Content::Zones(scene) => outline(scene, scale),
+            Content::Marks(marks) => mark_outline(marks, scale),
+        }
+    }
+}
+
+/// Which of a display's two overlay windows.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Layer {
+    Zones,
+    Marks,
+}
+
 struct Surface {
     window: Window,
     area: Rect,
-    /// The scene the background shows, and whether it was cut to outlines.
-    drawn: Option<(OverlayScene, bool)>,
+    /// What the background shows, and whether it was cut to outlines.
+    drawn: Option<(Content, bool)>,
 }
 
 pub struct Overlays {
@@ -40,8 +80,11 @@ pub struct Overlays {
     /// Depth and colormap of the ARGB visual, when there is one.
     argb: Option<(u8, u32)>,
     compositor_atom: Option<u32>,
-    surfaces: HashMap<String, Surface>,
+    surfaces: HashMap<(String, Layer), Surface>,
+    /// The display whose zones show.
     visible: Option<String>,
+    /// The displays whose marks show.
+    marked: Vec<String>,
 }
 
 impl Overlays {
@@ -69,36 +112,118 @@ impl Overlays {
             compositor_atom,
             surfaces: HashMap::new(),
             visible: None,
+            marked: Vec::new(),
         }
     }
 
     /// Readies a display's surface so the first drag never waits for it.
     pub fn prepare(&mut self, display: &str, scene: &OverlayScene) {
-        let outlines = !self.has_compositor();
-        let Some(window) = self.surface(display, scene.work_area) else {
-            return;
-        };
-        let up_to_date = self
-            .surfaces
-            .get(display)
-            .and_then(|surface| surface.drawn.as_ref())
-            .is_some_and(|(drawn, cut)| drawn == scene && *cut == outlines);
-        if !up_to_date
-            && self.draw(window, display, scene, outlines)
-            && let Some(surface) = self.surfaces.get_mut(display)
-        {
-            surface.drawn = Some((scene.clone(), outlines));
-        }
+        self.draw_layer(display, Layer::Zones, Content::Zones(scene.clone()));
         let _ = self.shared.conn.flush();
     }
 
-    /// Shows one display's overlay above every window and hides the others.
+    /// Shows one display's zones above every window and hides the others'.
     pub fn show(&mut self, display: &str, scene: &OverlayScene) {
         self.prepare(display, scene);
         if self.visible.as_deref() != Some(display) {
             self.hide();
         }
-        let Some(surface) = self.surfaces.get(display) else {
+        self.raise(display, Layer::Zones);
+        let _ = self.shared.conn.flush();
+        self.visible = Some(display.to_owned());
+    }
+
+    pub fn hide(&mut self) {
+        let Some(display) = self.visible.take() else {
+            return;
+        };
+        self.unmap(&display, Layer::Zones);
+        let _ = self.shared.conn.flush();
+    }
+
+    /// Outlines `marks` on `display`, above every window, or takes the outlines down when
+    /// there are none.
+    pub fn mark(&mut self, display: &str, marks: &OverlayMarks) {
+        if marks.frames.is_empty() {
+            self.unmap(display, Layer::Marks);
+            self.marked.retain(|marked| marked != display);
+        } else {
+            self.draw_layer(display, Layer::Marks, Content::Marks(marks.clone()));
+            self.raise(display, Layer::Marks);
+            if !self.marked.iter().any(|marked| marked == display) {
+                self.marked.push(display.to_owned());
+            }
+        }
+        let _ = self.shared.conn.flush();
+    }
+
+    /// Puts the outlines back on top, after the window manager raised a window over them.
+    pub fn raise_marks(&mut self) {
+        for display in self.marked.clone() {
+            self.raise(&display, Layer::Marks);
+        }
+        let _ = self.shared.conn.flush();
+    }
+
+    /// Destroys the surfaces of displays no longer connected.
+    pub fn retain(&mut self, displays: &[String]) {
+        let gone: Vec<(String, Layer)> = self
+            .surfaces
+            .keys()
+            .filter(|(display, _)| !displays.contains(display))
+            .cloned()
+            .collect();
+        for key in gone {
+            self.close(&key);
+        }
+        let _ = self.shared.conn.flush();
+    }
+
+    pub fn close_all(&mut self) {
+        let keys: Vec<(String, Layer)> = self.surfaces.keys().cloned().collect();
+        for key in keys {
+            self.close(&key);
+        }
+        if let Some((_, colormap)) = self.argb.take() {
+            let _ = self.shared.conn.free_colormap(colormap);
+        }
+        let _ = self.shared.conn.flush();
+    }
+
+    fn close(&mut self, key: &(String, Layer)) {
+        if let Some(surface) = self.surfaces.remove(key) {
+            let _ = self.shared.conn.destroy_window(surface.window);
+        }
+        let (display, layer) = key;
+        match layer {
+            Layer::Zones if self.visible.as_ref() == Some(display) => self.visible = None,
+            Layer::Zones => {}
+            Layer::Marks => self.marked.retain(|marked| marked != display),
+        }
+    }
+
+    /// Draws `content` on the display's surface for `layer` unless it already shows it.
+    fn draw_layer(&mut self, display: &str, layer: Layer, content: Content) {
+        let outlines = !self.has_compositor();
+        let Some(window) = self.surface(display, layer, content.work_area()) else {
+            return;
+        };
+        let key = (display.to_owned(), layer);
+        let up_to_date = self
+            .surfaces
+            .get(&key)
+            .and_then(|surface| surface.drawn.as_ref())
+            .is_some_and(|(drawn, cut)| *drawn == content && *cut == outlines);
+        if !up_to_date
+            && self.draw(window, display, &content, outlines)
+            && let Some(surface) = self.surfaces.get_mut(&key)
+        {
+            surface.drawn = Some((content, outlines));
+        }
+    }
+
+    fn raise(&self, display: &str, layer: Layer) {
+        let Some(surface) = self.surfaces.get(&(display.to_owned(), layer)) else {
             return;
         };
         let conn = &self.shared.conn;
@@ -107,51 +232,11 @@ impl Overlays {
             surface.window,
             &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
         );
-        let _ = conn.flush();
-        self.visible = Some(display.to_owned());
     }
 
-    pub fn hide(&mut self) {
-        let Some(display) = self.visible.take() else {
-            return;
-        };
-        if let Some(surface) = self.surfaces.get(&display) {
+    fn unmap(&self, display: &str, layer: Layer) {
+        if let Some(surface) = self.surfaces.get(&(display.to_owned(), layer)) {
             let _ = self.shared.conn.unmap_window(surface.window);
-            let _ = self.shared.conn.flush();
-        }
-    }
-
-    /// Destroys the surfaces of displays no longer connected.
-    pub fn retain(&mut self, displays: &[String]) {
-        let gone: Vec<String> = self
-            .surfaces
-            .keys()
-            .filter(|display| !displays.contains(display))
-            .cloned()
-            .collect();
-        for display in gone {
-            self.close(&display);
-        }
-        let _ = self.shared.conn.flush();
-    }
-
-    pub fn close_all(&mut self) {
-        let displays: Vec<String> = self.surfaces.keys().cloned().collect();
-        for display in displays {
-            self.close(&display);
-        }
-        if let Some((_, colormap)) = self.argb.take() {
-            let _ = self.shared.conn.free_colormap(colormap);
-        }
-        let _ = self.shared.conn.flush();
-    }
-
-    fn close(&mut self, display: &str) {
-        if let Some(surface) = self.surfaces.remove(display) {
-            let _ = self.shared.conn.destroy_window(surface.window);
-        }
-        if self.visible.as_deref() == Some(display) {
-            self.visible = None;
         }
     }
 
@@ -170,10 +255,11 @@ impl Overlays {
                 .is_some_and(|reply| reply.owner != x11rb::NONE)
     }
 
-    /// The display's window, created or moved to cover `area`.
-    fn surface(&mut self, display: &str, area: Rect) -> Option<Window> {
+    /// The display's window for `layer`, created or moved to cover `area`.
+    fn surface(&mut self, display: &str, layer: Layer, area: Rect) -> Option<Window> {
         let (width, height) = pixel_size(area)?;
-        if let Some(surface) = self.surfaces.get_mut(display) {
+        let key = (display.to_owned(), layer);
+        if let Some(surface) = self.surfaces.get_mut(&key) {
             if surface.area != area {
                 let geometry = ConfigureWindowAux::new()
                     .x(area.x as i32)
@@ -188,7 +274,7 @@ impl Overlays {
         }
         let window = self.create_window(area, width, height)?;
         self.surfaces.insert(
-            display.to_owned(),
+            key,
             Surface {
                 window,
                 area,
@@ -255,20 +341,20 @@ impl Overlays {
         }
     }
 
-    /// Draws `scene` into a fresh background pixmap; true on success.
-    fn draw(&self, window: Window, display: &str, scene: &OverlayScene, outlines: bool) -> bool {
+    /// Draws `content` into a fresh background pixmap; true on success.
+    fn draw(&self, window: Window, display: &str, content: &Content, outlines: bool) -> bool {
         let scale = self.shared.scale(display);
-        let Some((width, height)) = pixel_size(scene.work_area) else {
+        let Some((width, height)) = pixel_size(content.work_area()) else {
             return false;
         };
         let depth = self.argb.map_or(self.root_depth(), |(depth, _)| depth);
         if self
-            .upload(window, depth, (width, height), scene, scale)
+            .upload(window, depth, (width, height), content, scale)
             .is_none()
         {
             return false;
         }
-        self.cut(window, scene, scale, outlines);
+        self.cut(window, content, scale, outlines);
         true
     }
 
@@ -281,14 +367,14 @@ impl Overlays {
             .map_or(24, |screen| screen.root_depth)
     }
 
-    /// Renders the scene band by band into a new pixmap, sets it as the window's
+    /// Renders the content band by band into a new pixmap, sets it as the window's
     /// background, and frees Snappy's handle; the window keeps the pixmap alive.
     fn upload(
         &self,
         window: Window,
         depth: u8,
         (width, height): (u32, u32),
-        scene: &OverlayScene,
+        content: &Content,
         scale: f64,
     ) -> Option<()> {
         let conn = &self.shared.conn;
@@ -304,7 +390,7 @@ impl Overlays {
         let request_rows = conn.maximum_request_bytes().saturating_sub(REQUEST_HEADER) / row_bytes;
         let band = (request_rows as u32).clamp(1, BAND_ROWS);
         for top in (0..height).step_by(band as usize) {
-            let Some(mut image) = render::render_rows(scene, scale, top, band) else {
+            let Some(mut image) = content.render_rows(scale, top, band) else {
                 break;
             };
             to_argb(image.data_mut(), self.shared.screen.msb_first);
@@ -332,13 +418,14 @@ impl Overlays {
 
     /// Without a compositor, cuts the window down to outlines; otherwise restores the
     /// full rectangle.
-    fn cut(&self, window: Window, scene: &OverlayScene, scale: f64, outlines: bool) {
+    fn cut(&self, window: Window, content: &Content, scale: f64, outlines: bool) {
         let conn = &self.shared.conn;
         if !outlines {
             let _ = conn.shape_mask(shape::SO::SET, shape::SK::BOUNDING, window, 0, 0, x11rb::NONE);
             return;
         }
-        let rectangles: Vec<Rectangle> = outline(scene, scale)
+        let rectangles: Vec<Rectangle> = content
+            .outline(scale)
             .into_iter()
             .filter(|rect| rect.width >= 1.0 && rect.height >= 1.0)
             .map(|rect| Rectangle {

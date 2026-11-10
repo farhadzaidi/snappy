@@ -15,7 +15,7 @@ import {Shortcuts} from './shortcuts.js';
 import * as Windows from './windows.js';
 
 /** Changes whenever a request, reply, or event changes shape. The app checks it. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 const OBJECT_PATH = '/io/github/farhadzaidi/Snappy/Shell';
 const INTERFACE = `
@@ -36,7 +36,9 @@ const INTERFACE = `
  * Requests that leave something behind for the app: grabs, monitoring, followed windows,
  * overlays, a menu.
  */
-const STATEFUL = new Set(['monitoring', 'register', 'follow', 'overlayPrepare', 'overlayShow', 'menu']);
+const STATEFUL = new Set([
+    'monitoring', 'register', 'follow', 'overlayPrepare', 'overlayShow', 'overlayMark', 'menu',
+]);
 
 export class Service {
     /** Sets everything up, or, when any part fails, takes down what was set up and throws. */
@@ -70,8 +72,7 @@ export class Service {
      */
     _sessionModeChanged() {
         const locked = Main.sessionMode.isLocked;
-        if (locked)
-            this._overlays.hide();
+        this._overlays.setLocked(locked);
         this._menu.setVisible(!locked);
     }
 
@@ -190,6 +191,9 @@ export class Service {
             return null;
         case 'overlayRetain':
             this._overlays.retain(request.displays);
+            return null;
+        case 'overlayMark':
+            this._overlays.mark(request.display, request.marks);
             return null;
         case 'menu':
             this._menu.update(request.name, request.generation, request.entries);

@@ -5,10 +5,10 @@
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use snappy_core::geometry::Rect;
-pub use snappy_linux::scene::{Frame, OverlayScene, OverlayText, OverlayZone};
+pub use snappy_linux::scene::{Frame, OverlayMarks, OverlayOutline, OverlayScene, OverlayText, OverlayZone};
 
 /// Matches `PROTOCOL_VERSION` in the extension's `service.js`.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 pub const EXTENSION_UUID: &str = "snappy@farhadzaidi.github.io";
 /// GNOME Shell owns this name; the extension exports its object on Shell's connection.
@@ -75,6 +75,11 @@ pub enum Request {
     OverlayHide,
     OverlayRetain {
         displays: Vec<String>,
+    },
+    /// Outline windows on a display apart from its zones; no outlines removes them.
+    OverlayMark {
+        display: String,
+        marks: OverlayMarks,
     },
     /// `name` is what assistive technology calls the item. Choices come back with
     /// `generation`, so a click on a menu that was replaced meanwhile is ignored.

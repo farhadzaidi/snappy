@@ -10,8 +10,8 @@ use snappy_core::keys::{Combo, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_linux::{journal, login_item};
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
-    Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
+    OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::bus::CallError;
@@ -409,6 +409,18 @@ impl Overlay for KWinPlatform {
             }
         }
         self.shared.overlays.send(Command::Retain(displays.to_vec()));
+    }
+
+    fn mark(&mut self, display: &str, marks: &OverlayMarks) {
+        let Some(target) = self.target(display) else {
+            journal::warn(format_args!("windows can't be outlined: no display {display}"));
+            return;
+        };
+        self.shared.overlays.send(Command::Mark {
+            display: display.to_owned(),
+            target,
+            marks: marks.clone(),
+        });
     }
 }
 

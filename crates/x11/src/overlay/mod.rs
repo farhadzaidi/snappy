@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
 use snappy_linux::tray::TrayIcon;
-use snappy_platform::{OverlayScene, PlatformEvent, TrayMenu};
+use snappy_platform::{OverlayMarks, OverlayScene, PlatformEvent, TrayMenu};
 
 use crate::shared::Shared;
 use surface::Overlays;
@@ -20,6 +20,9 @@ pub enum UiCommand {
     Show(String, OverlayScene),
     Hide,
     Retain(Vec<String>),
+    Mark(String, OverlayMarks),
+    /// The window manager may have raised a window over the outlines.
+    RaiseMarks,
     Tray(TrayMenu),
     Stop,
 }
@@ -45,6 +48,8 @@ fn run(shared: Arc<Shared>, events: Sender<PlatformEvent>, commands: Receiver<Ui
             UiCommand::Show(display, scene) => overlays.show(&display, &scene),
             UiCommand::Hide => overlays.hide(),
             UiCommand::Retain(displays) => overlays.retain(&displays),
+            UiCommand::Mark(display, marks) => overlays.mark(&display, &marks),
+            UiCommand::RaiseMarks => overlays.raise_marks(),
             UiCommand::Tray(menu) => {
                 if let Some(tray) = &tray {
                     tray.update(menu);

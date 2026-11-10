@@ -9,8 +9,8 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
-    Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
+    OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::ax::{self, AxElement};
@@ -165,6 +165,11 @@ impl Overlay for MacPlatform {
     fn retain(&mut self, displays: &[String]) {
         let displays = displays.to_vec();
         main_thread::spawn(move |_| overlay::retain(&displays));
+    }
+
+    fn mark(&mut self, display: &str, marks: &OverlayMarks) {
+        let (display, marks) = (display.to_owned(), marks.clone());
+        main_thread::spawn(move |mtm| overlay::mark(&display, &marks, mtm));
     }
 }
 

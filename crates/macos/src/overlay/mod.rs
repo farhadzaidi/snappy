@@ -1,8 +1,10 @@
-//! Zone overlays, one surface per display. Main thread only.
+//! Zone overlays, one surface per display, and the marked windows, on a surface of their
+//! own per display. Main thread only.
 //!
-//! Surfaces are created at `prepare` and kept, so the first drag never waits for one.
+//! Zone surfaces are created at `prepare` and kept, so the first drag never waits for one.
 //! At most one is visible at a time.
 
+mod marks;
 mod style;
 mod surface;
 
@@ -10,9 +12,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use objc2::MainThreadMarker;
-use snappy_platform::OverlayScene;
+use snappy_platform::{OverlayMarks, OverlayScene};
 
 use crate::displays::primary_height;
+use marks::MarkSurface;
 use surface::Surface;
 
 /// What the bookkeeping needs from one display's overlay window.
@@ -73,6 +76,22 @@ impl<S: Panel> Overlays<S> {
 
 thread_local! {
     static OVERLAYS: RefCell<Overlays<Surface>> = RefCell::new(Overlays::default());
+    static MARKS: RefCell<HashMap<String, MarkSurface>> = RefCell::new(HashMap::new());
+}
+
+/// Outlines `marks` on `display`, making its marks surface the first time there are any.
+pub fn mark(display: &str, marks: &OverlayMarks, mtm: MainThreadMarker) {
+    MARKS.with(|surfaces| {
+        let mut surfaces = surfaces.borrow_mut();
+        if marks.frames.is_empty() && !surfaces.contains_key(display) {
+            return;
+        }
+        let height = primary_height(mtm);
+        surfaces
+            .entry(display.to_owned())
+            .or_insert_with(|| MarkSurface::new(mtm))
+            .update(marks, height);
+    });
 }
 
 pub fn prepare(display: &str, scene: &OverlayScene, mtm: MainThreadMarker) {
@@ -113,6 +132,19 @@ pub fn retain(displays: &[String]) {
             }
             if overlays.shown.as_ref() == Some(&id) {
                 overlays.shown = None;
+            }
+        }
+    });
+    MARKS.with(|surfaces| {
+        let mut surfaces = surfaces.borrow_mut();
+        let gone: Vec<String> = surfaces
+            .keys()
+            .filter(|id| !displays.contains(id))
+            .cloned()
+            .collect();
+        for id in gone {
+            if let Some(surface) = surfaces.remove(&id) {
+                surface.close();
             }
         }
     });

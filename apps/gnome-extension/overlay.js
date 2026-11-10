@@ -1,6 +1,7 @@
 // The zone overlay: one container per display, drawn above every window, that never takes
-// input or focus. The app sends finished shapes, already placed and colored, so they look
-// the same as on Snappy's other platforms.
+// input or focus, and a second per display outlining marked windows, which stays while
+// zones come and go. The app sends finished shapes, already placed and colored, so they
+// look the same as on Snappy's other platforms.
 
 import Clutter from 'gi://Clutter';
 import St from 'gi://St';
@@ -55,11 +56,55 @@ function zoneActor(zone) {
     });
 }
 
+function outlineActor(outline) {
+    return new St.Widget({
+        reactive: false,
+        x: outline.x,
+        y: outline.y,
+        width: outline.width,
+        height: outline.height,
+        style:
+            `border: ${cssPixels(outline.borderWidth)} solid ${rgba(outline.border)}; ` +
+            `border-radius: ${cssPixels(outline.radius)};`,
+    });
+}
+
 export class Overlays {
     constructor() {
         /** Display ID to its container and the scene it shows. */
         this._displays = new Map();
         this._visible = null;
+        /** Display ID to the container outlining its marked windows, apart from the zones. */
+        this._marks = new Map();
+        this._locked = false;
+    }
+
+    /** Outlines a display's marked windows until the next call for it; none removes them. */
+    mark(display, marks) {
+        let actor = this._marks.get(display);
+        if (!actor) {
+            if (marks.outlines.length === 0)
+                return;
+            actor = new St.Widget({name: 'snappy-overlay', reactive: false, visible: false});
+            Main.layoutManager.uiGroup.add_child(actor);
+            this._marks.set(display, actor);
+        }
+        actor.set_position(marks.workArea.x, marks.workArea.y);
+        actor.set_size(marks.workArea.width, marks.workArea.height);
+        actor.destroy_all_children();
+        for (const outline of marks.outlines)
+            actor.add_child(outlineActor(outline));
+        Main.layoutManager.uiGroup.set_child_above_sibling(actor, null);
+        actor.visible = marks.outlines.length > 0 && !this._locked;
+    }
+
+    /** Nothing of Snappy's shows on the lock screen; marks come back when it goes. */
+    setLocked(locked) {
+        this._locked = locked;
+        if (locked)
+            this.hide();
+        for (const actor of this._marks.values())
+            actor.visible = !locked && actor.get_n_children() > 0;
     }
 
     _container(display, workArea) {
@@ -109,7 +154,7 @@ export class Overlays {
         this._visible = null;
     }
 
-    /** Drops the overlays of displays that are gone. */
+    /** Drops the overlays and marks of displays that are gone. */
     retain(displays) {
         for (const [display, entry] of this._displays) {
             if (displays.includes(display))
@@ -118,6 +163,12 @@ export class Overlays {
             this._displays.delete(display);
             if (this._visible === display)
                 this._visible = null;
+        }
+        for (const [display, actor] of this._marks) {
+            if (displays.includes(display))
+                continue;
+            actor.destroy();
+            this._marks.delete(display);
         }
     }
 

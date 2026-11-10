@@ -10,8 +10,8 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
-    Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
+    OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::dispatch::Dispatcher;
@@ -188,6 +188,13 @@ impl Overlay for WindowsPlatform {
     fn retain(&mut self, displays: &[String]) {
         let displays = displays.to_vec();
         self.dispatcher.post(move |main| main.overlays.retain(&displays));
+    }
+
+    fn mark(&mut self, display: &str, marks: &OverlayMarks) {
+        let (display, marks) = (display.to_owned(), marks.clone());
+        let scale = self.shared.scale(&display);
+        self.dispatcher
+            .post(move |main| main.overlays.mark(&display, &marks, scale));
     }
 }
 

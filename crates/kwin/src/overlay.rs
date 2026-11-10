@@ -12,6 +12,9 @@
 //! animate windows appearing and closing, as `fadingpopups` fades on-screen displays, so a
 //! surface made and destroyed on every drag would fade in and out. Hidden at alpha 0, the
 //! surface is skipped when KWin plans direct scanout, so full-screen apps lose nothing.
+//!
+//! Marked windows' outlines go on a second surface per display, made the same way the
+//! first time there are any, so they stay while the zones show and hide.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -23,9 +26,9 @@ use std::time::Duration;
 
 use snappy_core::geometry::{Point, Rect};
 use snappy_linux::journal;
-use snappy_linux::overlay_image::{pixel_size, render_rows, to_argb};
+use snappy_linux::overlay_image::{pixel_size, render_mark_rows, render_rows, to_argb};
 use snappy_linux::wayland::{Arg, Connection, Message};
-use snappy_platform::{OverlayScene, OverlayZone};
+use snappy_platform::{OverlayMarks, OverlayScene, OverlayZone};
 
 const COMPOSITOR: &str = "wl_compositor";
 const COMPOSITOR_VERSION: u32 = 4;
@@ -113,9 +116,59 @@ pub enum Command {
         scene: OverlayScene,
     },
     Hide,
+    /// Outlines windows on the display's marks surface; no frames hides it.
+    Mark {
+        display: String,
+        target: Target,
+        marks: OverlayMarks,
+    },
     /// Drops what is kept for displays that are gone.
     Retain(Vec<String>),
     Stop,
+}
+
+/// Which of a display's two surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Layer {
+    Zones,
+    Marks,
+}
+
+/// A surface: the display it covers and what it shows.
+type Key = (String, Layer);
+
+fn key(display: &str, layer: Layer) -> Key {
+    (display.to_owned(), layer)
+}
+
+/// What a surface shows.
+enum Content {
+    Zones(OverlayScene),
+    Marks(OverlayMarks),
+}
+
+impl Content {
+    fn work_area(&self) -> Rect {
+        match self {
+            Content::Zones(scene) => scene.work_area,
+            Content::Marks(marks) => marks.work_area,
+        }
+    }
+
+    /// The content in buffer pixels: every length times `factor`.
+    fn scaled(&self, factor: f64) -> Content {
+        match self {
+            Content::Zones(scene) => Content::Zones(scaled(scene, factor)),
+            Content::Marks(marks) => Content::Marks(OverlayMarks {
+                work_area: scaled_rect(marks.work_area, factor),
+                frames: marks
+                    .frames
+                    .iter()
+                    .map(|frame| scaled_rect(*frame, factor))
+                    .collect(),
+            }),
+        }
+    }
 }
 
 /// The overlay thread's handle.
@@ -158,6 +211,11 @@ fn run(commands: &Receiver<Command>) {
                 scene,
             } => retried(&mut session, |open| open.show(&display, &target, &scene)),
             Command::Hide => session.as_mut().map_or(Ok(()), Session::hide),
+            Command::Mark {
+                display,
+                target,
+                marks,
+            } => retried(&mut session, |open| open.mark(&display, &target, &marks)),
             Command::Retain(displays) => session.as_mut().map_or(Ok(()), |open| open.retain(&displays)),
         };
         match result {
@@ -228,10 +286,10 @@ struct Session {
     layer_shell: u32,
     alpha_modifier: Option<u32>,
     outputs: Vec<Output>,
-    surfaces: HashMap<String, Surface>,
-    /// The display whose overlay is showing.
+    surfaces: HashMap<Key, Surface>,
+    /// The display whose zones are showing.
     visible: Option<String>,
-    buffers: HashMap<String, Buffers>,
+    buffers: HashMap<Key, Buffers>,
 }
 
 impl Session {
@@ -306,11 +364,11 @@ impl Session {
                 return Ok(());
             }
         }
-        let Some(display) = self
+        let Some(key) = self
             .surfaces
             .iter()
             .find(|(_, surface)| surface.layer == message.object)
-            .map(|(display, _)| display.clone())
+            .map(|(key, _)| key.clone())
         else {
             return Ok(());
         };
@@ -321,7 +379,7 @@ impl Session {
                 }
             }
             // KWin took the surface away, as when its output went; it is made again next time.
-            LAYER_CLOSED => self.destroy_surface(&display)?,
+            LAYER_CLOSED => self.destroy_surface(&key)?,
             _ => {}
         }
         Ok(())
@@ -340,37 +398,43 @@ impl Session {
         if self.visible.as_deref() == Some(display) {
             return Ok(());
         }
-        self.draw_on(display, target, scene, HIDDEN)
+        let content = Content::Zones(scene.clone());
+        self.draw_on(&key(display, Layer::Zones), target, &content, HIDDEN)
     }
 
     fn show(&mut self, display: &str, target: &Target, scene: &OverlayScene) -> io::Result<()> {
         if self.visible.as_deref().is_some_and(|visible| visible != display) {
             self.hide()?;
         }
-        self.draw_on(display, target, scene, OPAQUE)?;
+        let content = Content::Zones(scene.clone());
+        self.draw_on(&key(display, Layer::Zones), target, &content, OPAQUE)?;
         self.visible = Some(display.to_owned());
         Ok(())
     }
 
-    /// Draws the scene on the display's surface at `alpha`, making or moving the surface
-    /// first when needed. Without an alpha control a hidden scene isn't drawn ahead.
-    fn draw_on(
-        &mut self,
-        display: &str,
-        target: &Target,
-        scene: &OverlayScene,
-        alpha: u32,
-    ) -> io::Result<()> {
+    /// Outlines the marked windows on the display's marks surface, or hides the surface
+    /// when there are none.
+    fn mark(&mut self, display: &str, target: &Target, marks: &OverlayMarks) -> io::Result<()> {
+        let key = key(display, Layer::Marks);
+        if marks.frames.is_empty() {
+            return self.conceal(&key);
+        }
+        self.draw_on(&key, target, &Content::Marks(marks.clone()), OPAQUE)
+    }
+
+    /// Draws `content` on the surface at `alpha`, making or moving the surface first when
+    /// needed. Without an alpha control a hidden scene isn't drawn ahead.
+    fn draw_on(&mut self, key: &Key, target: &Target, content: &Content, alpha: u32) -> io::Result<()> {
         if alpha == HIDDEN && self.alpha_modifier.is_none() {
             return Ok(());
         }
         self.roundtrip()?;
         let factor = buffer_scale(target.scale);
-        let surface = self.place(display, target, scene.work_area, factor)?;
-        let scaled = scaled(scene, f64::from(factor));
+        let surface = self.place(key, target, content.work_area(), factor)?;
+        let scaled = content.scaled(f64::from(factor));
         let (width, height) =
-            pixel_size(scaled.work_area).ok_or_else(|| io::Error::other("the work area has no pixels"))?;
-        let buffer = self.draw(display, &scaled, f64::from(factor), (width, height))?;
+            pixel_size(scaled.work_area()).ok_or_else(|| io::Error::other("the work area has no pixels"))?;
+        let buffer = self.draw(key, &scaled, f64::from(factor), (width, height))?;
         self.send(
             surface.surface,
             SURFACE_ATTACH,
@@ -393,12 +457,17 @@ impl Session {
         self.roundtrip()
     }
 
-    /// Hides what shows by making it invisible, so KWin sees no window close.
+    /// Hides the zones that show.
     fn hide(&mut self) -> io::Result<()> {
         let Some(display) = self.visible.take() else {
             return Ok(());
         };
-        let Some(surface) = self.surfaces.get(&display) else {
+        self.conceal(&key(&display, Layer::Zones))
+    }
+
+    /// Hides a surface by making it invisible, so KWin sees no window close.
+    fn conceal(&mut self, key: &Key) -> io::Result<()> {
+        let Some(surface) = self.surfaces.get(key) else {
             return Ok(());
         };
         match surface.alpha {
@@ -408,36 +477,36 @@ impl Session {
                 self.send(target, SURFACE_COMMIT, &[])?;
                 self.roundtrip()
             }
-            None => self.destroy_surface(&display),
+            None => self.destroy_surface(key),
         }
     }
 
-    /// The display's surface where it belongs: made when there is none, moved and resized
-    /// in place when the work area or scale changed, and made again only for a new output.
-    fn place(&mut self, display: &str, target: &Target, area: Rect, factor: u32) -> io::Result<SurfaceIds> {
+    /// The surface where it belongs: made when there is none, moved and resized in place
+    /// when the work area or scale changed, and made again only for a new output.
+    fn place(&mut self, key: &Key, target: &Target, area: Rect, factor: u32) -> io::Result<SurfaceIds> {
         let placement = (target.origin, area, factor);
-        match self.surfaces.get(display) {
+        match self.surfaces.get(key) {
             Some(surface) if surface.output == target.output && surface.placement == placement => {}
             Some(surface) if surface.output == target.output => {
                 let ids = SurfaceIds::of(surface);
                 self.configure(ids, target, area, factor)?;
-                if let Some(surface) = self.surfaces.get_mut(display) {
+                if let Some(surface) = self.surfaces.get_mut(key) {
                     surface.placement = placement;
                 }
             }
             _ => {
-                self.destroy_surface(display)?;
-                self.create(display, target, area, factor)?;
+                self.destroy_surface(key)?;
+                self.create(key, target, area, factor)?;
             }
         }
         self.surfaces
-            .get(display)
+            .get(key)
             .map(SurfaceIds::of)
             .ok_or_else(|| io::Error::other("the overlay surface is gone"))
     }
 
-    /// Makes the display's layer surface and waits for KWin to configure it.
-    fn create(&mut self, display: &str, target: &Target, area: Rect, factor: u32) -> io::Result<()> {
+    /// Makes a layer surface over the display and waits for KWin to configure it.
+    fn create(&mut self, key: &Key, target: &Target, area: Rect, factor: u32) -> io::Result<()> {
         let output = self.output(&target.output)?;
         let surface = self.connection.new_id();
         self.send(self.compositor, CREATE_SURFACE, &[Arg::Uint(surface)])?;
@@ -485,9 +554,9 @@ impl Session {
             placement: (target.origin, area, factor),
         };
         let ids = SurfaceIds::of(&created);
-        self.surfaces.insert(display.to_owned(), created);
+        self.surfaces.insert(key.clone(), created);
         self.configure(ids, target, area, factor).inspect_err(|_| {
-            self.surfaces.remove(display);
+            self.surfaces.remove(key);
         })
     }
 
@@ -525,11 +594,11 @@ impl Session {
         Ok(())
     }
 
-    fn destroy_surface(&mut self, display: &str) -> io::Result<()> {
-        let Some(surface) = self.surfaces.remove(display) else {
+    fn destroy_surface(&mut self, key: &Key) -> io::Result<()> {
+        let Some(surface) = self.surfaces.remove(key) else {
             return Ok(());
         };
-        if self.visible.as_deref() == Some(display) {
+        if key.1 == Layer::Zones && self.visible.as_ref() == Some(&key.0) {
             self.visible = None;
         }
         if let Some(control) = surface.alpha {
@@ -540,18 +609,19 @@ impl Session {
         self.roundtrip()
     }
 
-    /// Draws the scene into a buffer KWin isn't using and returns it.
-    fn draw(&mut self, display: &str, scene: &OverlayScene, scale: f64, size: (u32, u32)) -> io::Result<u32> {
-        if self
-            .buffers
-            .get(display)
-            .is_none_or(|buffers| buffers.size != size)
-        {
-            self.drop_buffers(display)?;
+    /// Draws `content`, `factor` buffer pixels to KWin's, into a buffer KWin isn't using
+    /// and returns it.
+    fn draw(&mut self, key: &Key, content: &Content, factor: f64, size: (u32, u32)) -> io::Result<u32> {
+        if self.buffers.get(key).is_none_or(|buffers| buffers.size != size) {
+            self.drop_buffers(key)?;
             let buffers = self.allocate(size)?;
-            self.buffers.insert(display.to_owned(), buffers);
+            self.buffers.insert(key.clone(), buffers);
         }
-        let Some(buffers) = self.buffers.get_mut(display) else {
+        let render = |top: u32, rows: u32| match content {
+            Content::Zones(scene) => render_rows(scene, factor, top, rows),
+            Content::Marks(marks) => render_mark_rows(marks, factor, top, rows),
+        };
+        let Some(buffers) = self.buffers.get_mut(key) else {
             return Err(io::Error::other("the overlay's buffers are gone"));
         };
         let Some(index) = buffers.slots.iter().position(|slot| !slot.busy) else {
@@ -563,8 +633,8 @@ impl Session {
         let mut top = 0;
         while top < height {
             let rows = BAND_ROWS.min(height - top);
-            let mut band = render_rows(scene, scale, top, rows)
-                .ok_or_else(|| io::Error::other("the overlay couldn't be drawn"))?;
+            let mut band =
+                render(top, rows).ok_or_else(|| io::Error::other("the overlay couldn't be drawn"))?;
             to_argb(band.data_mut(), false);
             buffers
                 .file
@@ -617,8 +687,8 @@ impl Session {
         })
     }
 
-    fn drop_buffers(&mut self, display: &str) -> io::Result<()> {
-        let Some(buffers) = self.buffers.remove(display) else {
+    fn drop_buffers(&mut self, key: &Key) -> io::Result<()> {
+        let Some(buffers) = self.buffers.remove(key) else {
             return Ok(());
         };
         for slot in &buffers.slots {
@@ -628,16 +698,16 @@ impl Session {
     }
 
     fn retain(&mut self, displays: &[String]) -> io::Result<()> {
-        let gone: Vec<String> = self
+        let gone: Vec<Key> = self
             .surfaces
             .keys()
             .chain(self.buffers.keys())
-            .filter(|display| !displays.contains(display))
+            .filter(|(display, _)| !displays.contains(display))
             .cloned()
             .collect();
-        for display in gone {
-            self.destroy_surface(&display)?;
-            self.drop_buffers(&display)?;
+        for key in gone {
+            self.destroy_surface(&key)?;
+            self.drop_buffers(&key)?;
         }
         Ok(())
     }
@@ -681,25 +751,26 @@ fn buffer_scale(scale: f64) -> u32 {
 
 /// The scene in buffer pixels: every length times `factor`.
 fn scaled(scene: &OverlayScene, factor: f64) -> OverlayScene {
-    let scale = |rect: Rect| {
-        Rect::new(
-            rect.x * factor,
-            rect.y * factor,
-            rect.width * factor,
-            rect.height * factor,
-        )
-    };
     OverlayScene {
-        work_area: scale(scene.work_area),
+        work_area: scaled_rect(scene.work_area, factor),
         zones: scene
             .zones
             .iter()
             .map(|zone| OverlayZone {
-                frame: scale(zone.frame),
+                frame: scaled_rect(zone.frame, factor),
                 ..zone.clone()
             })
             .collect(),
     }
+}
+
+fn scaled_rect(rect: Rect, factor: f64) -> Rect {
+    Rect::new(
+        rect.x * factor,
+        rect.y * factor,
+        rect.width * factor,
+        rect.height * factor,
+    )
 }
 
 /// A file in the session's runtime folder (else the temporary one), removed from it at once:
@@ -938,6 +1009,41 @@ mod tests {
         expected.extend([OPAQUE, HIDDEN]);
         assert_eq!(alphas, expected);
         assert_eq!(count(&requests, ("layer_surface", LAYER_SET_SIZE)), 2);
+    }
+
+    #[test]
+    fn marks_get_a_surface_of_their_own_that_stays_while_the_zones_hide() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let fake = FakeCompositor::serve(server);
+        let mut session = Session::on(Connection::on(client).unwrap()).unwrap();
+        let target = Target {
+            output: "Virtual-0".into(),
+            origin: Point::new(0.0, 0.0),
+            scale: 1.0,
+        };
+        let area = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let scene = OverlayScene {
+            work_area: area,
+            zones: Vec::new(),
+        };
+        let marks = |frames: Vec<Rect>| OverlayMarks {
+            work_area: area,
+            frames,
+        };
+
+        session.prepare("main", &target, &scene).unwrap();
+        session
+            .mark("main", &target, &marks(vec![Rect::new(20.0, 10.0, 80.0, 60.0)]))
+            .unwrap();
+        session.show("main", &target, &scene).unwrap();
+        session.hide().unwrap();
+        session.mark("main", &target, &marks(Vec::new())).unwrap();
+        drop(session);
+        let (requests, alphas) = fake.join().unwrap();
+
+        assert_eq!(count(&requests, ("layer_shell", GET_LAYER_SURFACE)), 2);
+        assert_eq!(count(&requests, ("layer_surface", LAYER_DESTROY)), 0);
+        assert_eq!(alphas, [HIDDEN, OPAQUE, OPAQUE, HIDDEN, HIDDEN]);
     }
 
     #[test]

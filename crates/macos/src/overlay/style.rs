@@ -121,11 +121,47 @@ pub fn place_zone(zone: &OverlayZone, work_area: Rect) -> ZonePlacement {
     }
 }
 
+/// A marked window's outline: the swap source's border, drawn inside the window's frame.
+pub const MARK_BORDER: Paint = Paint::new(Tint::Mint, 1.0);
+pub const MARK_BORDER_WIDTH: f64 = 3.0;
+/// Close to the corners of macOS's own windows.
+pub const MARK_CORNER_RADIUS: f64 = 10.0;
+
+/// The line along which a window's outline is stroked, relative to an overlay covering
+/// `work_area`: half the border inside the frame, so the whole border is inside it.
+pub fn mark_path(frame: Rect, work_area: Rect) -> Rect {
+    let half = MARK_BORDER_WIDTH / 2.0;
+    Rect::new(
+        frame.x - work_area.x,
+        frame.y - work_area.y,
+        frame.width,
+        frame.height,
+    )
+    .inset(half, half)
+}
+
 #[cfg(test)]
 mod tests {
     use snappy_platform::Caption;
 
     use super::*;
+
+    #[test]
+    fn a_marked_windows_outline_lies_inside_its_frame_relative_to_the_overlay() {
+        let path = mark_path(
+            Rect::new(300.0, 200.0, 600.0, 400.0),
+            Rect::new(100.0, 25.0, 1000.0, 800.0),
+        );
+        assert_eq!(path, Rect::new(201.5, 176.5, 597.0, 397.0));
+        assert_eq!(
+            MARK_BORDER,
+            zone_style(&OverlayZone {
+                swap_source: true,
+                ..zone()
+            })
+            .border
+        );
+    }
 
     fn zone() -> OverlayZone {
         OverlayZone {

@@ -157,12 +157,26 @@ impl Caption {
     }
 }
 
+/// Windows outlined on one display apart from its zones, such as the windows being taken
+/// along to another workspace. Each is drawn as the swap source's outline is, inside its
+/// frame, whether or not zones show.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct OverlayMarks {
+    pub work_area: Rect,
+    /// Window frames. Parts outside the work area aren't drawn.
+    pub frames: Vec<Rect>,
+}
+
 pub trait Overlay {
     fn prepare(&mut self, display: &str, scene: &OverlayScene);
     fn show(&mut self, display: &str, scene: &OverlayScene);
+    /// Hide the zones. Marks stay.
     fn hide(&mut self);
-    /// Release surfaces of displays not in `displays`.
+    /// Release surfaces of displays not in `displays`, marks included.
     fn retain(&mut self, displays: &[String]);
+    /// Outline `marks` on `display` until the next call for it; no frames removes them.
+    /// Like the zones, marks take no clicks and never take focus.
+    fn mark(&mut self, display: &str, marks: &OverlayMarks);
 }
 
 pub trait Permissions {

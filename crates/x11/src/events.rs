@@ -15,6 +15,7 @@ use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, Window};
 
 use crate::error::X11Error;
 use crate::input::{HeldModifiers, PRIMARY_BUTTON};
+use crate::overlay::UiCommand;
 use crate::shared::Shared;
 use crate::x::{self, lock};
 
@@ -24,6 +25,8 @@ const MODIFIER_KEYSYMS: std::ops::RangeInclusive<u32> = 0xffe1..=0xffee;
 pub struct EventLoop {
     shared: Arc<Shared>,
     events: Sender<PlatformEvent>,
+    /// The overlay thread, told when focus changes so it can keep outlines on top.
+    ui: Sender<UiCommand>,
     clients: ClientTracker,
     button_down: bool,
     /// Pointer motion seen but not yet reported; consecutive motion is coalesced.
@@ -40,7 +43,7 @@ enum Flow {
 }
 
 impl EventLoop {
-    pub fn new(shared: Arc<Shared>, events: Sender<PlatformEvent>) -> EventLoop {
+    pub fn new(shared: Arc<Shared>, events: Sender<PlatformEvent>, ui: Sender<UiCommand>) -> EventLoop {
         let list = x::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_CLIENT_LIST);
         let clients = ClientTracker::new(
             list.iter()
@@ -49,6 +52,7 @@ impl EventLoop {
         EventLoop {
             shared,
             events,
+            ui,
             clients,
             button_down: false,
             motion_pending: false,
@@ -276,7 +280,9 @@ impl EventLoop {
         }
     }
 
+    /// Window managers raise the window they focus, which can put it over the outlines.
     fn focus_changed(&self) {
+        let _ = self.ui.send(UiCommand::RaiseMarks);
         let shared = &self.shared;
         let active = x::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_ACTIVE_WINDOW)
             .first()

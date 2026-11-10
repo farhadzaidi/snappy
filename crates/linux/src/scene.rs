@@ -1,12 +1,12 @@
-//! The engine's overlay scenes as finished shapes, placed and colored by the style every
-//! Linux overlay shares, for desktop shells that draw overlays themselves: GNOME Shell's
-//! extension and KWin's script.
+//! The engine's overlay scenes and marked windows as finished shapes, placed and colored by
+//! the style every Linux overlay shares, for desktop shells that draw overlays themselves:
+//! GNOME Shell's extension.
 
 use serde::{Deserialize, Serialize};
 use snappy_core::geometry::Rect;
-use snappy_platform::OverlayScene as EngineScene;
+use snappy_platform::{OverlayMarks as EngineMarks, OverlayScene as EngineScene};
 
-use crate::overlay_style::{Paint, SHADOW_BLUR, SHADOW_OPACITY, place, zone_style};
+use crate::overlay_style::{MARK_BORDER, Paint, SHADOW_BLUR, SHADOW_OPACITY, place, place_mark, zone_style};
 
 /// A frame in the desktop shell's coordinates, as its script reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -56,6 +56,28 @@ pub struct OverlayZone {
     pub border_width: f64,
     pub number: OverlayText,
     pub caption: Option<OverlayText>,
+}
+
+/// One display's marked windows, every length in the shell's pixels and relative to the
+/// work area.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayMarks {
+    pub work_area: Frame,
+    pub outlines: Vec<OverlayOutline>,
+}
+
+/// A window's outline: a border inside its frame, and nothing else.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayOutline {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub radius: f64,
+    pub border: [f64; 4],
+    pub border_width: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -119,11 +141,48 @@ pub fn scene(scene: &EngineScene, scale: f64) -> OverlayScene {
     }
 }
 
+/// `scale` is the display's window units per point.
+pub fn marks(marks: &EngineMarks, scale: f64) -> OverlayMarks {
+    OverlayMarks {
+        work_area: Frame::from(marks.work_area),
+        outlines: marks
+            .frames
+            .iter()
+            .map(|frame| {
+                let placement = place_mark(*frame, marks.work_area, scale);
+                OverlayOutline {
+                    x: placement.shape.x,
+                    y: placement.shape.y,
+                    width: placement.shape.width,
+                    height: placement.shape.height,
+                    radius: placement.corner_radius,
+                    border: rgba(MARK_BORDER),
+                    border_width: placement.border_width,
+                }
+            })
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use snappy_platform::{Caption, OverlayZone as EngineZone};
 
     use super::*;
+
+    #[test]
+    fn marked_windows_become_mint_outlines_in_the_work_area() {
+        let engine = EngineMarks {
+            work_area: Rect::new(100.0, 32.0, 1000.0, 800.0),
+            frames: vec![Rect::new(300.0, 132.0, 400.0, 300.0)],
+        };
+        let marks = marks(&engine, 1.0);
+        assert_eq!(marks.work_area.y, 32.0);
+        let outline = &marks.outlines[0];
+        assert_eq!((outline.x, outline.y, outline.width), (200.0, 100.0, 400.0));
+        assert_eq!(outline.border, [0.0, 199.0, 190.0, 1.0]);
+        assert_eq!((outline.border_width, outline.radius), (3.0, 10.0));
+    }
 
     fn engine_scene() -> EngineScene {
         EngineScene {

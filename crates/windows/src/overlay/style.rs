@@ -57,6 +57,12 @@ pub fn zone_style(zone: &OverlayZone, accent: u32) -> ZoneStyle {
     }
 }
 
+/// A marked window's outline: the swap source's border, drawn inside the window's frame.
+pub const MARK_BORDER: Color = Color::rgb(MINT, 1.0);
+pub const MARK_BORDER_WIDTH: f64 = 3.0;
+/// Close to Windows 11's own window corners.
+pub const MARK_CORNER_RADIUS: f64 = 8.0;
+
 /// Where a zone's shape, number, and caption go, in pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placement {
@@ -128,6 +134,13 @@ mod tests {
             zone_style(&zone(false, false, true), DEFAULT_ACCENT).border_width,
             3.0
         );
+    }
+
+    #[test]
+    fn marked_windows_are_outlined_like_the_swap_source() {
+        let source = zone_style(&zone(false, false, true), DEFAULT_ACCENT);
+        assert_eq!(MARK_BORDER, source.border);
+        assert_eq!(MARK_BORDER_WIDTH, source.border_width);
     }
 
     #[test]

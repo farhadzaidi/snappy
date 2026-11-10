@@ -9,8 +9,9 @@ use snappy_core::keys::{Combo, Modifier, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_linux::{login_item, scene};
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
-    Permissions, Platform, Remedy, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
+    OverlayScene, Permissions, Platform, Remedy, Tray, TrayMenu, WindowId, WindowInfo, WindowState,
+    WindowSystem,
 };
 
 use crate::bus::CallError;
@@ -424,9 +425,26 @@ impl Overlay for GnomePlatform {
         }
     }
 
+    fn mark(&mut self, display: &str, marks: &OverlayMarks) {
+        let marks = scene::marks(marks, self.scale(display));
+        let request = Request::OverlayMark {
+            display: display.to_owned(),
+            marks: marks.clone(),
+        };
+        // Kept even when the extension can't be reached, so it gets them when it is back.
+        let _ = self.shared.bus.send(&request);
+        let mut state = self.shared.state();
+        if marks.outlines.is_empty() {
+            state.marked.remove(display);
+        } else {
+            state.marked.insert(display.to_owned(), marks);
+        }
+    }
+
     fn retain(&mut self, displays: &[String]) {
         {
             let mut state = self.shared.state();
+            state.marked.retain(|display, _| displays.contains(display));
             state
                 .overlay_prepared
                 .retain(|display, _| displays.contains(display));

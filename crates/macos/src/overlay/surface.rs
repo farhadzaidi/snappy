@@ -113,7 +113,7 @@ fn stale_zones(drawn: &[Option<&OverlayZone>], zones: &[OverlayZone], moved: boo
         .collect()
 }
 
-fn make_panel(mtm: MainThreadMarker) -> Retained<NSPanel> {
+pub(super) fn make_panel(mtm: MainThreadMarker) -> Retained<NSPanel> {
     let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0));
     let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
@@ -241,14 +241,14 @@ fn as_cf<T: Message>(object: &T) -> &CFType {
 }
 
 /// A rectangle measured from the overlay's top-left, in the root layer's bottom-up space.
-fn layer_rect(rect: Rect, container_height: f64) -> CGRect {
+pub(super) fn layer_rect(rect: Rect, container_height: f64) -> CGRect {
     CGRect::new(
         CGPoint::new(rect.x, layer_y(rect.y, rect.height, container_height)),
         CGSize::new(rect.width, rect.height),
     )
 }
 
-fn color(paint: Paint) -> Retained<CGColor> {
+pub(super) fn color(paint: Paint) -> Retained<CGColor> {
     let base = match paint.tint {
         Tint::Accent => NSColor::controlAccentColor(),
         Tint::Mint => NSColor::systemMintColor(),

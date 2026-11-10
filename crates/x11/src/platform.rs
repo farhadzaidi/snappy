@@ -11,8 +11,8 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
-    Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
+    OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 use x11rb::rust_connection::RustConnection;
 
@@ -201,6 +201,10 @@ impl Overlay for X11Platform {
 
     fn retain(&mut self, displays: &[String]) {
         self.ui(UiCommand::Retain(displays.to_vec()));
+    }
+
+    fn mark(&mut self, display: &str, marks: &OverlayMarks) {
+        self.ui(UiCommand::Mark(display.to_owned(), marks.clone()));
     }
 }
 

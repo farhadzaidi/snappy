@@ -9,9 +9,9 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Modifier, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayScene,
-    Permissions, Platform, RecoveryKey, Remedy, Tray, TrayMenu, WindowId, WindowInfo, WindowState,
-    WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
+    OverlayScene, Permissions, Platform, RecoveryKey, Remedy, Tray, TrayMenu, WindowId, WindowInfo,
+    WindowState, WindowSystem,
 };
 
 /// A window with scriptable app behavior.
@@ -87,6 +87,10 @@ pub struct FakePlatform {
     pub press_monitoring: bool,
     pub drag_monitoring: bool,
     pub overlay: Vec<OverlayCall>,
+    /// The windows each display outlines now; displays without any are absent.
+    pub marks: BTreeMap<String, Vec<Rect>>,
+    /// How many times marks were sent.
+    pub mark_calls: usize,
     pub tray: TrayMenu,
     pub on_managed_desktop: bool,
     pub login_item: bool,
@@ -127,6 +131,8 @@ impl Default for FakePlatform {
             press_monitoring: false,
             drag_monitoring: false,
             overlay: Vec::new(),
+            marks: BTreeMap::new(),
+            mark_calls: 0,
             tray: TrayMenu::default(),
             on_managed_desktop: true,
             login_item: false,
@@ -401,7 +407,18 @@ impl Overlay for FakePlatform {
         }
     }
 
-    fn retain(&mut self, _displays: &[String]) {}
+    fn retain(&mut self, displays: &[String]) {
+        self.marks.retain(|display, _| displays.contains(display));
+    }
+
+    fn mark(&mut self, display: &str, marks: &OverlayMarks) {
+        self.mark_calls += 1;
+        if marks.frames.is_empty() {
+            self.marks.remove(display);
+        } else {
+            self.marks.insert(display.to_owned(), marks.frames.clone());
+        }
+    }
 }
 
 impl Permissions for FakePlatform {

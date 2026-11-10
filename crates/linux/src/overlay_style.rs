@@ -64,6 +64,41 @@ pub fn zone_style(zone: &OverlayZone) -> ZoneStyle {
     }
 }
 
+/// A marked window's outline: the swap source's border, drawn inside the window's frame.
+pub const MARK_BORDER: Paint = Paint {
+    color: MINT,
+    alpha: 1.0,
+};
+pub const MARK_BORDER_WIDTH: f64 = 3.0;
+/// Close to the corners of the desktops' own windows.
+pub const MARK_CORNER_RADIUS: f64 = 10.0;
+
+/// Where a marked window's outline goes, in pixels relative to the work area: its frame,
+/// with the border inside it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarkPlacement {
+    pub shape: Rect,
+    pub corner_radius: f64,
+    pub border_width: f64,
+}
+
+pub fn place_mark(frame: Rect, work_area: Rect, scale: f64) -> MarkPlacement {
+    let shape = Rect::new(
+        frame.x - work_area.x,
+        frame.y - work_area.y,
+        frame.width,
+        frame.height,
+    );
+    MarkPlacement {
+        shape,
+        corner_radius: (MARK_CORNER_RADIUS * scale)
+            .min(shape.width / 2.0)
+            .min(shape.height / 2.0)
+            .max(0.0),
+        border_width: MARK_BORDER_WIDTH * scale,
+    }
+}
+
 /// Where a zone's shape, number, and caption go, in pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placement {
@@ -189,6 +224,23 @@ mod tests {
             }
         );
         assert_eq!(style.border_width, 3.0);
+    }
+
+    #[test]
+    fn a_marked_window_is_outlined_like_the_swap_source_inside_its_frame() {
+        let source = zone_style(&OverlayZone {
+            swap_source: true,
+            ..zone()
+        });
+        assert_eq!(MARK_BORDER, source.border);
+        assert_eq!(MARK_BORDER_WIDTH, source.border_width);
+        let mark = place_mark(
+            Rect::new(300.0, 200.0, 600.0, 400.0),
+            Rect::new(100.0, 25.0, 1000.0, 800.0),
+            2.0,
+        );
+        assert_eq!(mark.shape, Rect::new(200.0, 175.0, 600.0, 400.0));
+        assert_eq!((mark.border_width, mark.corner_radius), (6.0, 20.0));
     }
 
     #[test]

@@ -122,7 +122,7 @@ impl App {
 
     /// Reads events until `Stopper::stop`, then removes everything Snappy installed.
     pub fn run(self) -> Result<(), X11Error> {
-        let result = EventLoop::new(Arc::clone(&self.shared), self.events.clone()).run();
+        let result = EventLoop::new(Arc::clone(&self.shared), self.events.clone(), self.ui.clone()).run();
         self.teardown();
         result
     }

@@ -1,12 +1,14 @@
-//! Drawing an overlay scene into a premultiplied ARGB image, for adapters that draw their
-//! own overlays (X11, and KDE Plasma's layer-shell surfaces), and the outline shapes used
-//! when no compositor can show transparency.
+//! Drawing an overlay scene, or the marked windows' outlines, into a premultiplied ARGB
+//! image, for adapters that draw their own overlays (X11, and KDE Plasma's layer-shell
+//! surfaces), and the outline shapes used when no compositor can show transparency.
 
 use snappy_core::geometry::{Point, Rect};
-use snappy_platform::{OverlayScene, OverlayZone};
+use snappy_platform::{OverlayMarks, OverlayScene, OverlayZone};
 use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, Stroke, Transform};
 
-use crate::overlay_style::{self as style, BLACK, Placement, Rgb, WHITE, place, zone_style};
+use crate::overlay_style::{
+    self as style, BLACK, MARK_BORDER, MarkPlacement, Placement, Rgb, WHITE, place, place_mark, zone_style,
+};
 
 pub mod glyphs;
 
@@ -27,7 +29,32 @@ const SHADOW_HALOS: [(f64, f64); 2] = [(style::SHADOW_BLUR, 0.25), (style::SHADO
 /// `rows` rows of the scene's image starting at row `top`, or `None` when the work area
 /// has no pixels there. Drawing in bands keeps a whole overlay out of memory.
 pub fn render_rows(scene: &OverlayScene, scale: f64, top: u32, rows: u32) -> Option<Pixmap> {
-    let (width, height) = pixel_size(scene.work_area)?;
+    render_band(scene.work_area, top, rows, |canvas, drawn| {
+        for zone in &scene.zones {
+            let placement = place(zone, scene.work_area, scale);
+            if placement.shape.intersection_area(drawn) > 0.0 {
+                canvas.draw_zone(zone, &placement, scale);
+            }
+        }
+    })
+}
+
+/// `rows` rows of the image outlining the marked windows, like `render_rows`.
+pub fn render_mark_rows(marks: &OverlayMarks, scale: f64, top: u32, rows: u32) -> Option<Pixmap> {
+    render_band(marks.work_area, top, rows, |canvas, drawn| {
+        for frame in &marks.frames {
+            let placement = place_mark(*frame, marks.work_area, scale);
+            if placement.shape.intersection_area(drawn) > 0.0 {
+                canvas.draw_mark(&placement);
+            }
+        }
+    })
+}
+
+/// Rows `top` to `top + rows` of an image covering `area`, drawn by `draw`, which gets the
+/// canvas and the rows it covers in image coordinates.
+fn render_band(area: Rect, top: u32, rows: u32, draw: impl FnOnce(&mut Canvas, Rect)) -> Option<Pixmap> {
+    let (width, height) = pixel_size(area)?;
     let rows = rows.min(height.checked_sub(top)?);
     let first = top.saturating_sub(BAND_MARGIN);
     let last = (top + rows + BAND_MARGIN).min(height);
@@ -36,12 +63,7 @@ pub fn render_rows(scene: &OverlayScene, scale: f64, top: u32, rows: u32) -> Opt
         transform: Transform::from_translate(0.0, -(first as f32)),
     };
     let drawn = Rect::new(0.0, f64::from(first), f64::from(width), f64::from(last - first));
-    for zone in &scene.zones {
-        let placement = place(zone, scene.work_area, scale);
-        if placement.shape.intersection_area(drawn) > 0.0 {
-            canvas.draw_zone(zone, &placement, scale);
-        }
-    }
+    draw(&mut canvas, drawn);
 
     let row_bytes = width as usize * PIXEL_BYTES;
     let skip = (top - first) as usize * row_bytes;
@@ -73,19 +95,12 @@ impl Canvas {
             self.pixmap
                 .fill_path(&shape, &paint, FillRule::Winding, self.transform, None);
         }
-
-        // The border sits inside the shape, as an inner stroke would.
-        let half = placement.border_width / 2.0;
-        let border_rect = placement.shape.inset(half, half);
-        if let Some(border) = rounded_rect(border_rect, (placement.corner_radius - half).max(0.0)) {
-            let stroke = Stroke {
-                width: placement.border_width as f32,
-                ..Stroke::default()
-            };
-            let paint = solid(zone_style.border.color, zone_style.border.alpha);
-            self.pixmap
-                .stroke_path(&border, &paint, &stroke, self.transform, None);
-        }
+        self.draw_border(
+            placement.shape,
+            placement.corner_radius,
+            placement.border_width,
+            zone_style.border,
+        );
 
         let number = zone.number.to_string();
         let cap = (placement.number_size * CAP_HEIGHT) as f32;
@@ -105,6 +120,34 @@ impl Canvas {
             if let Some(path) = glyphs::text_path(caption.text(), x, y, cap) {
                 self.stroke_text(&path, cap * CAPTION_WEIGHT, WHITE, 1.0);
             }
+        }
+    }
+
+    fn draw_mark(&mut self, placement: &MarkPlacement) {
+        self.draw_border(
+            placement.shape,
+            placement.corner_radius,
+            placement.border_width,
+            MARK_BORDER,
+        );
+    }
+
+    /// A border inside `shape`, as an inner stroke would draw it.
+    fn draw_border(&mut self, shape: Rect, corner_radius: f64, width: f64, paint: style::Paint) {
+        let half = width / 2.0;
+        let line = shape.inset(half, half);
+        if let Some(border) = rounded_rect(line, (corner_radius - half).max(0.0)) {
+            let stroke = Stroke {
+                width: width as f32,
+                ..Stroke::default()
+            };
+            self.pixmap.stroke_path(
+                &border,
+                &solid(paint.color, paint.alpha),
+                &stroke,
+                self.transform,
+                None,
+            );
         }
     }
 
@@ -175,17 +218,35 @@ pub fn outline(scene: &OverlayScene, scale: f64) -> Vec<Rect> {
                 .caption
                 .zip(zone.caption)
                 .map(|((center, size), caption)| text_box(caption.text(), center, size));
-            [
-                Rect::new(shape.x, shape.y, shape.width, width),
-                Rect::new(shape.x, shape.max_y() - width, shape.width, width),
-                Rect::new(shape.x, shape.y, width, shape.height),
-                Rect::new(shape.max_x() - width, shape.y, width, shape.height),
-                number,
-            ]
-            .into_iter()
-            .chain(caption)
+            border_strips(shape, width)
+                .into_iter()
+                .chain([number])
+                .chain(caption)
         })
         .collect()
+}
+
+/// The marked windows' borders, for cutting an overlay down without a compositor, as
+/// `outline` does for zones. Rectangles are relative to the work area.
+pub fn mark_outline(marks: &OverlayMarks, scale: f64) -> Vec<Rect> {
+    marks
+        .frames
+        .iter()
+        .flat_map(|frame| {
+            let placement = place_mark(*frame, marks.work_area, scale);
+            border_strips(placement.shape, placement.border_width.ceil().max(2.0))
+        })
+        .collect()
+}
+
+/// The four strips `width` wide along the inside of `shape`'s edges.
+fn border_strips(shape: Rect, width: f64) -> [Rect; 4] {
+    [
+        Rect::new(shape.x, shape.y, shape.width, width),
+        Rect::new(shape.x, shape.max_y() - width, shape.width, width),
+        Rect::new(shape.x, shape.y, width, shape.height),
+        Rect::new(shape.max_x() - width, shape.y, width, shape.height),
+    ]
 }
 
 /// The box behind `text` set at font `size` around `center`, padded by half a cap height.
@@ -371,6 +432,32 @@ mod tests {
         let rects = outline(&scene(zones), 1.0);
         assert_eq!(rects.len(), 11, "the caption gets a box too");
         assert!(rects[10].contains(snappy_core::geometry::Point::new(747.0, 320.0)));
+    }
+
+    #[test]
+    fn marked_windows_are_outlined_in_mint_inside_their_frames_and_nothing_else_is_drawn() {
+        let marks = OverlayMarks {
+            work_area: AREA,
+            frames: vec![Rect::new(2020.0, 132.0, 400.0, 300.0)],
+        };
+        let pixmap = render_mark_rows(&marks, 1.0, 0, 600).unwrap();
+        assert_eq!((pixmap.width(), pixmap.height()), (1000, 600));
+        // The frame starts at local (100, 100); its 3 px border covers columns 100 to 102.
+        let border = rgba(&pixmap, 101, 250);
+        assert!(close(border, [0, 199, 190, 255], 2), "{border:?}");
+        assert_eq!(rgba(&pixmap, 98, 250), [0, 0, 0, 0], "nothing outside the frame");
+        assert_eq!(rgba(&pixmap, 300, 250), [0, 0, 0, 0], "the window shows through");
+
+        let strips = mark_outline(&marks, 1.0);
+        assert_eq!(strips.len(), 4);
+        assert_eq!(strips[0], Rect::new(100.0, 100.0, 400.0, 3.0));
+        let none = OverlayMarks {
+            work_area: AREA,
+            frames: Vec::new(),
+        };
+        assert!(mark_outline(&none, 1.0).is_empty());
+        let empty = render_mark_rows(&none, 1.0, 0, 600).unwrap();
+        assert!(empty.data().iter().all(|byte| *byte == 0));
     }
 
     #[test]

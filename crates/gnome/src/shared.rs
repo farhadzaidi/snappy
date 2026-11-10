@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use snappy_platform::{LiveControl, PlatformEvent};
 
 use crate::bus::Bus;
-use crate::protocol::{Accelerator, MenuEntry, OverlayScene, Request};
+use crate::protocol::{Accelerator, MenuEntry, OverlayMarks, OverlayScene, Request};
 
 pub struct Shared {
     pub bus: Bus,
@@ -38,6 +38,8 @@ pub struct State {
     /// The scene shown, by display, to skip sending one already on screen.
     pub overlay_shown: Option<(String, OverlayScene)>,
     pub overlay_prepared: HashMap<String, OverlayScene>,
+    /// The marks each display outlines, sent again when the extension starts over.
+    pub marked: HashMap<String, OverlayMarks>,
     /// Display IDs to window units per point, from the last display read.
     pub scales: HashMap<String, f64>,
 }
@@ -107,6 +109,12 @@ impl Shared {
                     name: name.clone(),
                     generation: state.menu_generation,
                     entries: entries.clone(),
+                });
+            }
+            for (display, marks) in &state.marked {
+                requests.push(Request::OverlayMark {
+                    display: display.clone(),
+                    marks: marks.clone(),
                 });
             }
             requests
