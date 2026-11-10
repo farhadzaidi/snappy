@@ -42,11 +42,6 @@ export function recorderHelp(platform: PlatformName): string {
   return `Click and press a combination with ${ctrl}, ${alt}, or ${meta}. Escape cancels; Delete clears.`;
 }
 
-/** "Snappy + 1–9". */
-export function defaultZoneShortcuts(platform: PlatformName): string {
-  return longLabel({ code: "Digit1", mods: ["snappy"], label: "1–9" }, platform);
-}
-
 const SYSTEM_NAMES: Record<PlatformName, string> = { macos: "macOS", windows: "Windows", linux: "Linux" };
 
 /** Why the availability probe refused a shortcut. */

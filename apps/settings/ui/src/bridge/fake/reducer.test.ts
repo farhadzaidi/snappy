@@ -147,29 +147,50 @@ describe("fake daemon", () => {
     const added = state.settings.workspaces.items.at(-1);
     expect(added?.name).toBe("Workspace 2");
     expect(state.addedWorkspace).toBe(added?.id);
-    expect([added?.switchShortcut, added?.sendShortcut, added?.sendAndSwitchShortcut]).toEqual([
-      null,
-      null,
-      null,
-    ]);
+    expect(added?.switchShortcut).toMatchObject(snappy("Digit2"));
+    expect([added?.sendShortcut, added?.sendAndSwitchShortcut]).toEqual([null, null]);
   });
 
-  it("every platform starts with the same Snappy-key workspace steps and no undo or redo", () => {
+  it("a new workspace switches with its digit unless another shortcut has it", () => {
+    const fourth = run(initialState("macos"), { kind: "addWorkspace" });
+    expect(fourth.state.settings.workspaces.items.at(-1)?.switchShortcut).toMatchObject(snappy("Digit4"));
+
+    const taken = run(
+      initialState("macos"),
+      { kind: "setHistoryShortcut", step: "undo", chord: snappy("Digit4") },
+      { kind: "addWorkspace" },
+    );
+    expect(taken.error).toBeNull();
+    expect(taken.state.settings.workspaces.items.at(-1)?.switchShortcut).toBeNull();
+  });
+
+  it("every platform starts with the same Snappy-key workspace shortcuts and no undo or redo", () => {
     for (const platform of ["macos", "windows", "linux"] as const) {
       const { workspaces, history } = initialState(platform).settings;
       expect(workspaces.previous).toMatchObject(snappy("Semicolon"));
       expect(workspaces.next).toMatchObject(snappy("Quote"));
-      expect(workspaces.movePrevious).toMatchObject(snappy("Period"));
-      expect(workspaces.moveNext).toMatchObject(snappy("Slash"));
-      expect(workspaces.items.every((item) => item.switchShortcut === null)).toBe(true);
+      expect(workspaces.sendPrevious).toMatchObject(snappy("Period"));
+      expect(workspaces.sendNext).toMatchObject(snappy("Slash"));
+      expect(workspaces.takeAlong).toMatchObject(snappy("Enter"));
+      expect(workspaces.items.map((item) => item.switchShortcut?.code)).toEqual([
+        "Digit1",
+        "Digit2",
+        "Digit3",
+      ]);
       expect(history).toEqual({ undo: null, redo: null });
     }
   });
 
-  it("move-window steps and undo and redo shortcuts are saved and checked for conflicts", () => {
+  it("send, take-along, and undo and redo shortcuts are saved and checked for conflicts", () => {
     const start = initialState("macos");
-    const moved = run(start, { kind: "setWorkspaceStepShortcut", step: "moveNext", chord: snappy("KeyN") });
-    expect(moved.state.settings.workspaces.moveNext).toEqual(snappy("KeyN"));
+    const moved = run(start, { kind: "setWorkspaceStepShortcut", step: "sendNext", chord: snappy("KeyN") });
+    expect(moved.state.settings.workspaces.sendNext).toEqual(snappy("KeyN"));
+    const taken = run(moved.state, {
+      kind: "setWorkspaceStepShortcut",
+      step: "takeAlong",
+      chord: snappy("KeyN"),
+    });
+    expect(taken.error).toBe("Snappy + N is already assigned to Send window to next workspace.");
     const undo = run(moved.state, { kind: "setHistoryShortcut", step: "undo", chord: snappy("KeyU") });
     expect(undo.state.settings.history.undo).toEqual(snappy("KeyU"));
     const byHand: KeyChord = { code: "KeyU", mods: ["ctrl", "alt", "meta"] };

@@ -137,5 +137,7 @@ export const core = {
     call<Layout>(wasm.layoutForDisplay, { settings, display }),
   layoutOptions: (settings: Settings, layout: Layout) =>
     call<LayoutOptions>(wasm.layoutOptions, { settings, layout }),
-  numberedWorkspace: (id: string, number: number) => call<Workspace>(wasm.numberedWorkspace, { id, number }),
+  /** "Workspace <number>", switched to with the Snappy key and its digit when that is free. */
+  newWorkspace: (settings: Settings, id: string, number: number) =>
+    call<Workspace>(wasm.newWorkspace, { settings, id, number }),
 };

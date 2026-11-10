@@ -143,7 +143,9 @@ test("presets open read-only with their shortcuts", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Center stage" })).toBeVisible();
   await expect(page.getByTitle("Preset shapes cannot be edited. Duplicate to customize.")).toBeVisible();
   await expect(page.getByRole("toolbar", { name: "Editing tools" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Zone 1 shortcut", exact: true })).toHaveText("Snappy + 1");
+  await expect(page.getByRole("button", { name: "Zone 1 shortcut", exact: true })).toHaveText(
+    "Record shortcut",
+  );
   await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toBeVisible();
 });
 

@@ -87,8 +87,9 @@ export interface Settings {
     activeId: string;
     previous: KeyChord | null;
     next: KeyChord | null;
-    movePrevious: KeyChord | null;
-    moveNext: KeyChord | null;
+    sendPrevious: KeyChord | null;
+    sendNext: KeyChord | null;
+    takeAlong: KeyChord | null;
     items: Workspace[];
   };
   history: Record<HistoryStep, KeyChord | null>;
@@ -188,7 +189,7 @@ export type Command =
   | { kind: "exportSettings"; path: string }
   | { kind: "dismissStatus" };
 
-export type WorkspaceStep = "previous" | "next" | "movePrevious" | "moveNext";
+export type WorkspaceStep = "previous" | "next" | "sendPrevious" | "sendNext" | "takeAlong";
 
 export type HistoryStep = "undo" | "redo";
 

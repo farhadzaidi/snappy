@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 
-import { defaultZoneShortcuts, modifierLabel, snappyKeyLabel } from "../core/labels";
+import { longLabel, modifierLabel, snappyKeyLabel } from "../core/labels";
+import type { KeyChord, PlatformName } from "../core/model";
 import { useAppState } from "../state/services";
 import { IconButton } from "../ui/Button";
 import { HelpIcon } from "../ui/icons";
@@ -36,6 +37,19 @@ export function HelpButton() {
   );
 }
 
+/** The Snappy key with one other key: what each default shortcut does. */
+function defaultShortcuts(platform: PlatformName): readonly { title: string; chord: KeyChord }[] {
+  const snappy = (code: string, label: string): KeyChord => ({ code, mods: ["snappy"], label });
+  return [
+    { title: "Move to the neighboring zone", chord: snappy("ArrowLeft", "← → ↑ ↓") },
+    { title: "Move to the nearest empty zone", chord: snappy("Space", "Space") },
+    { title: "Switch to workspace 1–9", chord: snappy("Digit1", "1–9") },
+    { title: "Previous or next workspace", chord: snappy("Semicolon", "; '") },
+    { title: "Send window to previous or next workspace", chord: snappy("Period", ". /") },
+    { title: "Take window along", chord: snappy("Enter", platform === "macos" ? "Return" : "Enter") },
+  ];
+}
+
 function HelpContent() {
   const { settings, platform } = useAppState();
   const { dragModifier, swapModifier, whenTaken } = settings.snapping;
@@ -59,7 +73,9 @@ function HelpContent() {
       )}
       <hr className="help-divider" />
       <HelpRow title="Snappy key" keys={snappyKeyLabel(platform)} />
-      <HelpRow title="Default zone shortcuts" keys={defaultZoneShortcuts(platform)} />
+      {defaultShortcuts(platform).map(({ title, chord }) => (
+        <HelpRow key={title} title={title} keys={longLabel(chord, platform)} />
+      ))}
       <HelpRow title="Hide the screen preview" keys="Escape" />
     </div>
   );

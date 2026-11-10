@@ -7,7 +7,7 @@ const card = (page: Page, name: string) =>
 const cardNames = (page: Page) => page.locator(".workspace-card-name").allTextContents();
 const nameField = (page: Page) => page.getByRole("textbox", { name: "Workspace name" });
 
-/** Workspaces have no shortcuts by default; give each Control+n to switch and Control+Shift+n to send. */
+/** Give each workspace Control+n to switch, in place of its default, and Control+Shift+n to send. */
 const assignShortcuts = (page: Page) =>
   page.evaluate(() =>
     window.snappyFake.patchState((state) => ({
@@ -48,16 +48,30 @@ test("the page explains how to start", async ({ page }) => {
 
 test("cards show their switch shortcut in saved order", async ({ page }) => {
   expect(await cardNames(page)).toEqual(["Workspace 1", "Workspace 2", "Workspace 3"]);
-  await expect(card(page, "Workspace 2")).not.toContainText("Ctrl");
+  await expect(card(page, "Workspace 2")).toContainText("Snappy + 2");
   await assignShortcuts(page);
   await expect(card(page, "Workspace 2")).toContainText("Ctrl + 2");
 });
 
-test("new workspaces are numbered, have no shortcuts, and are selected", async ({ page }) => {
+test("each workspace switches with the Snappy key and its number by default", async ({ page }) => {
+  const switchRecorder = page.getByRole("button", { name: "Switch to this workspace", exact: true });
+  for (const number of [1, 2, 3]) {
+    await card(page, `Workspace ${number}`).click();
+    await expect(switchRecorder).toHaveText(`Snappy + ${number}`);
+  }
+  await expect(page.getByRole("button", { name: "Move window here", exact: true })).toHaveText(
+    "Record shortcut",
+  );
+});
+
+test("new workspaces are numbered, switch with their number, and are selected", async ({ page }) => {
   await page.getByRole("button", { name: "New workspace" }).click();
   await expect(card(page, "Workspace 4")).toHaveAttribute("aria-pressed", "true");
   await expect(nameField(page)).toHaveValue("Workspace 4");
   await expect(page.getByRole("button", { name: "Switch to this workspace", exact: true })).toHaveText(
+    "Snappy + 4",
+  );
+  await expect(page.getByRole("button", { name: "Move here and switch", exact: true })).toHaveText(
     "Record shortcut",
   );
 });

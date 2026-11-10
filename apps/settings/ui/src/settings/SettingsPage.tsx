@@ -151,18 +151,19 @@ function MoveBetweenZonesGroup() {
 const WORKSPACE_STEPS: readonly { step: WorkspaceStep; title: string }[] = [
   { step: "previous", title: "Previous workspace" },
   { step: "next", title: "Next workspace" },
-  { step: "movePrevious", title: "Move window to previous workspace" },
-  { step: "moveNext", title: "Move window to next workspace" },
+  { step: "sendPrevious", title: "Send window to previous workspace" },
+  { step: "sendNext", title: "Send window to next workspace" },
+  { step: "takeAlong", title: "Take along" },
 ];
 
-/** The previous and next workspace shortcuts, alone or taking the window along. */
+/** The shortcuts for every workspace: stepping, sending the window away, and taking it along. */
 function WorkspaceStepsGroup() {
   const { settings, platform } = useAppState();
   const send = useSend();
   return (
     <Group
       title="Workspaces"
-      caption="Go to the previous or next workspace in list order, or take the focused window along."
+      caption="Go to the previous or next workspace in list order, or send the focused window there and stay. Take along picks up the focused window, or puts it down; picked-up windows come with you to the next workspace you switch to."
     >
       {WORKSPACE_STEPS.map(({ step, title }) => (
         <Row key={step} label={<span className="muted">{title}</span>}>

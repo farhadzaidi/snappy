@@ -273,7 +273,7 @@ function setWorkspacesEnabled(state: AppState, enabled: boolean): Outcome {
   return save(state, { ...state.settings, workspaces: { ...workspaces, enabled, items } });
 }
 
-/** A new workspace: the lowest unused number, no shortcuts, the active layouts. */
+/** A new workspace: the lowest unused number, switched to with its digit, the active layouts. */
 function addWorkspace(state: AppState): Outcome {
   const workspaces = state.settings.workspaces;
   if (workspaces.items.length >= MAX_WORKSPACES) {
@@ -283,7 +283,7 @@ function addWorkspace(state: AppState): Outcome {
   const idNumber = lowestUnused((n) => workspaces.items.some((item) => item.id === `workspace-${n}`));
   const active = workspaces.items.find((item) => item.id === workspaces.activeId);
   const added: Workspace = {
-    ...core.numberedWorkspace(`workspace-${idNumber}`, number),
+    ...core.newWorkspace(state.settings, `workspace-${idNumber}`, number),
     displays: { ...active?.displays },
   };
 

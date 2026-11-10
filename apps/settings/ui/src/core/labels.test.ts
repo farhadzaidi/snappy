@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   commandModifierHint,
   compactLabel,
-  defaultZoneShortcuts,
   longLabel,
   modifierLabel,
   modifierName,
@@ -48,10 +47,6 @@ describe("labels", () => {
     expect(recorderHelp("macos")).toBe(
       "Click and press a combination with Control, Option, or Command. Escape cancels; Delete clears.",
     );
-  });
-
-  it("default zone shortcuts read as the Snappy key, then 1–9", () => {
-    expect(defaultZoneShortcuts("macos")).toBe("Snappy + 1–9");
   });
 
   it("a refused probe names the shortcut", () => {

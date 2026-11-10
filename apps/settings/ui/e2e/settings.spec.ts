@@ -128,14 +128,32 @@ test("the nearest-empty-zone default is Snappy + Space on Windows and Linux too"
   }
 });
 
-test("the workspaces group shows the previous, next, and move-window shortcuts", async ({ page }) => {
+test("the workspaces group shows the step, send, and take-along shortcuts", async ({ page }) => {
   const workspaces = group(page, "Workspaces");
   const recorder = (name: string) => workspaces.getByRole("button", { name, exact: true });
-  await expect(workspaces.locator(".recorder-button")).toHaveCount(4);
+  await expect(workspaces.locator(".recorder-button")).toHaveCount(5);
   await expect(recorder("Previous workspace")).toHaveText("Snappy + ;");
   await expect(recorder("Next workspace")).toHaveText("Snappy + '");
-  await expect(recorder("Move window to previous workspace")).toHaveText("Snappy + .");
-  await expect(recorder("Move window to next workspace")).toHaveText("Snappy + /");
+  await expect(recorder("Send window to previous workspace")).toHaveText("Snappy + .");
+  await expect(recorder("Send window to next workspace")).toHaveText("Snappy + /");
+  await expect(recorder("Take along")).toHaveText("Snappy + ↩");
+});
+
+test("the take-along shortcut can be changed and refuses a chord in use", async ({ page }) => {
+  const takeAlong = group(page, "Workspaces").getByRole("button", { name: "Take along", exact: true });
+  await takeAlong.click();
+  await page.keyboard.press("Control+Alt+Meta+KeyT");
+  await expect(takeAlong).toHaveText("Snappy + T");
+  expect(await lastCommandOf(page, "setWorkspaceStepShortcut")).toMatchObject({
+    step: "takeAlong",
+    chord: { code: "KeyT", mods: ["snappy"] },
+  });
+
+  await takeAlong.click();
+  await page.keyboard.press("Control+Alt+Meta+Slash");
+  await expect(toast(page)).toContainText("Snappy + / is already assigned to Send window to next workspace.");
+  await page.keyboard.press("Escape");
+  await expect(takeAlong).toHaveText("Snappy + T");
 });
 
 test("the workspace defaults use the Snappy key on Windows and Linux too", async ({ page }) => {
@@ -147,6 +165,7 @@ test("the workspace defaults use the Snappy key on Windows and Linux too", async
       "Snappy + '",
       "Snappy + .",
       "Snappy + /",
+      "Snappy + ↩",
     ]);
   }
 });
@@ -220,7 +239,11 @@ test("the help popover explains snapping", async ({ page }) => {
   await expect(help).toContainText("Shift ⇧ + Command ⌘");
   await expect(help).toContainText("Snappy key");
   await expect(help).toContainText("Control + Option + Command");
-  await expect(help).toContainText("Snappy + 1–9");
+  await expect(help).toContainText("Switch to workspace 1–9Snappy + 1–9");
+  await expect(help).toContainText("Send window to previous or next workspaceSnappy + . /");
+  await expect(help).toContainText("Take window alongSnappy + Return");
+  await expect(help).toContainText("Move to the neighboring zoneSnappy + ← → ↑ ↓");
+  await expect(help).not.toContainText("Default zone shortcuts");
   await expect(help).not.toContainText("Swap with the keyboard");
   await expect(help).not.toContainText("Hold Shift with a zone or arrow shortcut");
   await expect(help).not.toContainText("Next display");
