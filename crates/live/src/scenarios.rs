@@ -516,6 +516,19 @@ fn floating(display: &Display, offset: f64) -> Rect {
     )
 }
 
+/// Window `index` of three side by side, apart from each other: where parking leaves frames
+/// alone, a window counts as shown while another of the fixture's covers its frame.
+fn side_by_side(display: &Display, index: usize) -> Rect {
+    let area = display.work_area;
+    let width = area.width * 0.28;
+    Rect::new(
+        area.x + 40.0 + (width + 40.0) * index as f64,
+        area.y + 120.0,
+        width,
+        area.height * 0.4,
+    )
+}
+
 fn drag_snaps(context: &mut Context) -> Result<Outcome, String> {
     let left = context.zone(0)?;
     let start = floating(&context.display, 0.0);
@@ -961,7 +974,7 @@ fn send_and_stay_batch(context: &mut Context) -> Result<Outcome, String> {
     let ids = ["batch-a", "batch-b", "batch-c"];
     let mut frames = Vec::new();
     for (index, id) in ids.iter().enumerate() {
-        context.open(id, floating(&context.display, 100.0 + 30.0 * index as f64))?;
+        context.open(id, side_by_side(&context.display, index))?;
         frames.push(context.fixture.frame(id)?);
     }
     let send = context.step_key(WorkspaceStep::SendNext)?;
@@ -1012,7 +1025,7 @@ fn take_two_along_by_step(context: &mut Context) -> Result<Outcome, String> {
     let ids = ["pair-a", "pair-b", "pair-left"];
     let mut frames = Vec::new();
     for (index, id) in ids.iter().enumerate() {
-        context.open(id, floating(&context.display, 140.0 + 30.0 * index as f64))?;
+        context.open(id, side_by_side(&context.display, index))?;
         frames.push(context.fixture.frame(id)?);
     }
     let take_along = context.step_key(WorkspaceStep::TakeAlong)?;
