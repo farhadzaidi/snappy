@@ -8,9 +8,21 @@ It runs as a small background program with a menu bar item (a notification-area 
 
 - **Zones.** Eight preset layouts (halves, thirds, center stage, quarters, and more) plus your own. Each display has its own layout, with an even 12-point gap between zones and around the edges.
 - **Drag to snap.** Hold Shift (or Option or Control) while dragging a window by its title bar. The zones appear on the display under the pointer; drop on one to snap the window into it. Let go of the modifier before dropping to cancel.
-- **Snappy-key shortcuts.** The Snappy key is Control+Option+Command on macOS, Ctrl+Alt+Win on Windows, and Ctrl+Alt+Super on Linux; shortcuts show it as "Snappy". With it, 1 to 9 send the focused window to a zone, the arrow keys move it to the neighboring zone, Space moves it into the nearest empty zone, `;` and `'` step through workspaces, and `.` and `/` take the focused window to the previous or next workspace. Each layout can also have a shortcut that applies it to the display under the pointer. Undo and redo of window moves are available as shortcuts you assign.
+- **Snappy-key shortcuts.** The Snappy key is Control+Option+Command on macOS, Ctrl+Alt+Win on Windows, and Ctrl+Alt+Super on Linux; shortcuts show it as "Snappy". Every default shortcut is the Snappy key and one other key, the same on every platform:
+
+  | Snappy + | Does |
+  |---|---|
+  | ← → ↑ ↓ | Move the focused window to the neighboring zone |
+  | Space | Move it into the nearest empty zone |
+  | 1 to 9 | Switch to workspace 1 to 9 |
+  | `;` `'` | Go to the previous or next workspace |
+  | `.` `/` | Send the focused window to the previous or next workspace, and stay |
+  | Return | Take the focused window along to the next workspace you switch to |
+
+  Anything else is a shortcut you assign: each zone, each layout (applied to the display under the pointer), sending to a particular workspace, and undo and redo of window moves. You can change or clear any shortcut.
 - **Swaps.** A window moved into a zone another window fills, by shortcut or by drag, trades places with it. A swap trades zones: when the moving window isn't in a zone, the other window goes to the zone under the moving window's center, and takes its exact spot only when that zone can't take it. The "When the zone is taken" setting can make it stack on top instead, and holding the extra key (Command on macOS, Ctrl elsewhere) during a drag does the opposite of the setting for that drop.
 - **Workspaces.** Groups of windows, one visible at a time. Switching hides the other groups' windows and brings the chosen group back exactly where it was. Each workspace can use its own layouts, and windows survive a crash or restart.
+- **Take along.** Snappy + Return picks up the focused window, and an outline shows it is picked up; pick up as many as you like. The next workspace switch, however you make it, brings them all along, where they are, and the last one picked up gets focus. Pressing Snappy + Return on a picked-up window puts it down.
 - **Layout editor.** Draw, cut, move, and resize zones on a canvas shaped like your display, with snapping guides, pixel-exact coordinate fields, and undo.
 - **Debug log.** An opt-in record of what Snappy saw, decided, and did, for finding out why a window or shortcut didn't behave as expected.
 

@@ -109,7 +109,7 @@ The debug log records what Snappy saw, what it decided, and what happened: recei
 
 Undo and redo of window moves were added this way; follow `MoveHistory` and `HistoryStep` through the code as a worked example. Say the new action is "center the focused window".
 
-1. **Settings model** (`crates/core/src/settings.rs`). Add the shortcut to `Settings` as an `Option<KeyChord>`, with its default in `Settings::defaults`. Add it to `SettingsFile`, the on-disk shape where every section is optional, so older files load. Include it in the validity checks.
+1. **Settings model** (`crates/core/src/settings.rs`). Add the shortcut to `Settings` as an `Option<KeyChord>`, with its default in `Settings::defaults`; a default is the Snappy key and one other key. Add it to `SettingsFile`, the on-disk shape where every section is optional, so older files load, and give a default to files that lack the field only where no other binding uses its chord, as `Settings::from_json` does for the nearest-empty-zone shortcut and, through `MissingChord`, for the workspace shortcuts. Include it in the validity checks.
 2. **Shortcut ownership** (`crates/core/src/bindings.rs`). Add a `HotKeyAction` variant, emit it from `desired_hotkeys` (inside `if snapping_live` if it moves windows), and list the chord in `global_names` so conflicts name it. Unit-test the defaults for conflicts and the registration.
 3. **Core logic** (`crates/core`). Put the decision, such as the centered frame, in a pure function with unit tests.
 4. **Engine** (`crates/engine/src/actions.rs`). Handle the new `HotKeyAction` in `hotkey`. Anything that moves a window goes through `Shared::submit`, typically with `run_snap`, so it is cancellable and undoable.

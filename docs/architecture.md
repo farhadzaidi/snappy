@@ -97,12 +97,12 @@ A swap runs `run_swap` instead. Its source (`SwapSource`) is the zone the window
 2. The adapter reports `HotKey(id)`. `actions::hotkey` (`crates/engine/src/actions.rs`) maps the ID back to a `HotKeyAction`. Shortcuts do nothing while the settings app is recording a shortcut or the master switch is off.
 3. Workspace actions go to `crates/engine/src/workspaces.rs`. Undo and redo submit `run_undo` and `run_redo`. A layout selection applies the layout to the display under the pointer.
 4. The nearest-empty-zone shortcut reaches `move_to_nearest_empty`. Once the operation runs, it reads the focused window's frame, looks up the windows filling every zone (`WindowSystem::windows_occupying`, leaving out inactive workspaces' windows as a swap does), picks a zone with `core::empty_zone::nearest_empty_zone`, and snaps there exactly like `run_snap`. With no empty zone it moves nothing and posts the quiet status "No empty zone on this display."
-5. Zone and arrow shortcuts reach `move_focused`. It reads the focused window and its display, finds the destination zone (the zone whose chord was pressed in that display's layout, or `core::navigate::destination` for an arrow), and submits a swap, or a snap when "When the zone is taken" is set to stack on top.
+5. Zone and arrow shortcuts reach `move_focused`. It reads the focused window and its display, finds the destination zone (the zone whose chord was pressed in that display's layout, or `core::navigate::destination` for an arrow), and submits a swap, or a snap when "When the zone is taken" is set to stack on top. Zones have no shortcuts until the user records some in the editor.
 6. Arrow presses that arrive while the previous move is still settling continue from the pending destination (`Core::pending_navigation`), so pressing an arrow three times moves three zones even if the app is slow.
 
 ## The Snappy key
 
-The Snappy key is one held key that every default shortcut uses. It stands for Control+Option+Command on macOS, Ctrl+Alt+Win on Windows, and Ctrl+Alt+Super on Linux.
+The Snappy key is one held key that every default shortcut uses. It stands for Control+Option+Command on macOS, Ctrl+Alt+Win on Windows, and Ctrl+Alt+Super on Linux. Every default is the Snappy key and exactly one other key, never another modifier on top, and the defaults are the same on every platform ([Behavior at a glance](#behavior-at-a-glance)).
 
 - **Its one definition** is `snappy_key_modifiers()` in `crates/core/src/keys.rs`, which returns the concrete modifiers it stands for.
 - **Shortcuts store it as a symbol.** A `KeyChord`'s modifiers are `ChordMods`: the Snappy key or not, plus concrete modifiers, written to settings files as a list such as `["snappy", "shift"]`. They are always normalized: holding every modifier the Snappy key stands for is the Snappy key, so a file or recording with `["ctrl", "alt", "meta"]` loads as `["snappy"]`. The settings UI's recorder normalizes through the same Rust code (`normalizeChord` in `crates/wasm`).
@@ -114,6 +114,8 @@ To make the Snappy key something else, change `snappy_key_modifiers()`. If the n
 ## How a settings change works
 
 Every `Command` lands in `commands::handle` (`crates/engine/src/commands.rs`). Changes to settings go through `commands::change`: copy the settings, apply the edit, run `Settings::validate` (which normalizes and checks every shortcut conflict), save atomically, then reconfigure everything that depends on settings (debug log, workspaces, live control, shortcuts, overlays, tray). A rejected change leaves the old settings in place and replies with the reason, which the settings app shows.
+
+Reading a file (`Settings::from_json`) keeps every shortcut it has, cleared ones (`null`) included, and ignores fields it doesn't know. A shortcut field the file lacks gets its default only when no binding the file has already uses that chord, so loading never creates a conflict: a file whose zones use the Snappy key with the digits keeps them, and a workspace switch shortcut it lacks stays unassigned.
 
 ## Workspaces
 
@@ -131,7 +133,27 @@ A switch refuses to start while a member window is full screen or has a sheet op
 
 ### A switch, end to end
 
-`workspaces::request_switch` (`crates/engine/src/workspaces.rs`) refuses when workspaces aren't running, are paused, or the target is already active, and defers the switch while displays are still settling. Otherwise it submits `switch_now`, which enrolls the focused app's windows, drops closed ones, runs `Session::switch_to`, focuses the target workspace's last focused window (or Snappy itself when there is none), saves membership and then only the new active workspace ID, refreshes shortcuts and overlays, and records the switch's timings.
+`workspaces::request_switch` (`crates/engine/src/workspaces.rs`) refuses when workspaces aren't running, are paused, or the target is already active, and defers the switch while displays are still settling. Otherwise it submits `switch_now`, which enrolls the focused app's windows, drops closed ones, runs `Session::switch_carrying` with the windows being taken along, focuses the last of those that arrived, else the target workspace's last focused window (or Snappy itself when there is none), saves membership and then only the new active workspace ID, refreshes shortcuts and overlays, and records the switch's timings. Every switch goes this way: by number, by step, from the menu, from a workspace's own shortcut, after a send that follows the window, and from the settings app.
+
+### Workspace shortcuts
+
+- **Switching by number.** Workspaces 1 to 9 switch with the Snappy key and their number by default. The shortcut is set when a workspace is made (`Workspace::numbered`, through `Settings::new_workspace` for one the user adds, which takes the lowest free "Workspace n" name), and only when no other binding uses that chord; later workspaces get none. Shortcuts belong to their workspace: reordering or deleting workspaces never changes them, so after a delete a new "Workspace 2" gets Snappy + 2 again only if that chord is free.
+- **Steps.** Snappy + `;` and `'` go to the previous or next workspace in saved order, wrapping, counting from a switch still on its way.
+- **Sending and staying.** Snappy + `.` and `/` send the focused window to the previous or next workspace (`send_and_stay`) and park it there; the active workspace stays. Focus then moves to the active workspace's most recently focused remaining window (`Session::focus_recent`, which keeps the order windows were focused in), which is its frontmost, so pressing again sends that one. With nothing left, focus is left to the system. A workspace's own send shortcut works the same way, and its "move here and switch" shortcut sends, then switches.
+
+### Taking windows along
+
+Snappy + Return (`workspaces::take_along`) picks up the focused window: the engine adds it to `WorkspaceController::carried`, an ordered list kept in memory only. Pressing it on a picked-up window puts it down. The next switch, however it is made, hands the list to `Session::switch_carrying`, which moves the picked-up windows of the active workspace into the target workspace without moving them on screen, parks the rest, and gives focus to the last one picked up. The list is then empty.
+
+- Switching to the workspace already showing is refused, so the list stays.
+- A picked-up window that closes, or that is sent to another workspace, is put down.
+- Workspaces stopping, pausing on another desktop, or being suspended put every window down; quitting forgets the list and moves nothing more than quitting always does.
+- With workspaces off, Snappy + Return isn't registered and reaches the focused app. While they are paused or can't run, it posts a quiet status saying why, such as "Paused on another macOS desktop…", and picks nothing up.
+- The debug log records `takeAlongPickedUp`, `takeAlongPutDown` (with the reason), `takeAlongArrived` on the switch, and `workspaceSend` for every send, with whether it stayed and which window got focus.
+
+### Marked windows
+
+Each picked-up window is outlined until it arrives or is put down, the way a drag outlines the swap source: a mint border inside the window's frame. The outlines are a layer of their own, apart from the zone scene: `Overlay::mark` takes a display and its `OverlayMarks` (the display's work area and the frames to outline), and an empty list takes them away. `Core::refresh_marks` sends each display the frames of the picked-up windows on it whenever the list changes, a picked-up window moves (`WindowMoved`), or displays change, and only to displays whose outlines changed. Every adapter draws the layer on a click-through surface of its own per display that never takes focus, so the outlines stay while zones show and hide ([platforms.md](platforms.md)).
 
 ### Parking
 
@@ -196,6 +218,6 @@ The numbers live in code; this is where to find them.
 - **Arrow navigation** (`crates/core/src/navigate.rs`). The window starts from the zone it overlaps most, moves to the nearest zone in that direction, prefers aligned neighbors, never wraps, and stops at the screen's edge.
 - **Nearest empty zone** (`crates/core/src/empty_zone.rs`). Candidates are the zones of each display's current enabled layout that no other window fills, by the occupancy rule; windows of inactive workspaces don't count, and the zone the window already fills is never one. Zones on the window's own display come first, then other displays'. The nearest is the one whose center is closest to the window's center, the earlier zone on a tie.
 - **Undo** (`crates/core/src/operations.rs`). 50 moves, one history per workspace or one overall. A swap undoes as one step.
-- **Shortcuts** (`crates/core/src/keys.rs`, `crates/core/src/bindings.rs`). Chords are physical keys plus at least one of Control, Option/Alt, or Command/Win/Super, counting the Snappy key's. Standard app commands (Command-C, Ctrl+C, Alt+F4, and others) are reserved. Two features can't share a chord, except zone chords in different layouts. The defaults are Snappy + 1 to 9 for zones, Snappy + arrows to move between zones, Snappy + Space to move to the nearest empty zone, Snappy + `;` and `'` to step through workspaces, and Snappy + `.` and `/` to take the focused window along.
+- **Shortcuts** (`crates/core/src/keys.rs`, `crates/core/src/bindings.rs`). Chords are physical keys plus at least one of Control, Option/Alt, or Command/Win/Super, counting the Snappy key's. Standard app commands (Command-C, Ctrl+C, Alt+F4, and others) are reserved. Two features can't share a chord, except zone chords in different layouts, and zone and selection chords with workspace chords while workspaces are off. The defaults, the same on every platform, are Snappy + arrows to move between zones, Snappy + Space to move to the nearest empty zone, Snappy + 1 to 9 to switch to workspaces 1 to 9, Snappy + `;` and `'` to step through workspaces, Snappy + `.` and `/` to send the focused window to the previous or next workspace and stay, and Snappy + Return to take windows along. Zones, layout selection, per-workspace sends, and undo and redo have none.
 - **Focus after a switch** (`crates/core/src/workspace/focus.rs`). For 0.75 seconds after a switch or send, app activations are ignored, because the switch itself causes some.
 - **Limits** (`crates/core/src/settings.rs`). 100 custom layouts, 32 workspaces, names up to 80 characters.

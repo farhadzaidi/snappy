@@ -30,9 +30,10 @@ Property tests (`proptest`, a dev-dependency of `snappy-core`) check invariants 
 `crates/engine/tests/scenarios.rs` drives a real `Engine` over `FakePlatform` end to end: events in, window frames, overlays, shortcuts, files, and status messages out. Helpers at the top of the file set things up:
 
 - `scenario` runs a test on a single-threaded runtime with paused time, so settle waits and the focus gate take no real time.
-- `live_engine(name, fake)` starts an engine on the halves layout with snapping live. `started(name, fake)` starts one without that setup.
+- `live_engine(name, fake)` starts an engine on the halves layout with snapping live, from a settings file that gives every layout's zones the Snappy key and their number, since zones have no shortcuts by default. `default_workspaces(name, fake)` starts one with workspaces on and every shortcut at its default, for the workspace scenarios that press Snappy + 1 to 9, `.`, `/`, and Return (`press_default`). `started(name, fake)` starts one without either setup.
 - Each test gets a scratch folder from its `name`, so names must be unique across the file. `paths_kept` reopens the same folder to simulate a restart or a crash.
-- `drag`, `release`, `press`, `hotkey_id`, `enable_workspaces`, `switch_to`, and `send_to` act like the user.
+- `drag`, `release`, `press`, `hotkey_id`, `focus`, `enable_workspaces`, `switch_to`, and `send_to` act like the user. `enable_workspaces` gives the workspaces Control with their number to switch, since `live_engine`'s zones hold the Snappy key's digits.
+- The fake records the outlines of marked windows per display (`FakePlatform::marks`), which the take-along scenarios check.
 
 ### The fake platform
 
@@ -80,7 +81,9 @@ Names must be unique within a file. Don't put ticket numbers or other IDs in nam
 `crates/live` runs the real daemon against real windows with real input and checks where the windows actually end up. It has two programs:
 
 - `snappy-fixture` opens plain windows on request over standard input and output (JSON lines): normal ones, ones with a minimum size, and ones that size in steps like a terminal. Each window reports its own frame, which is the ground truth.
-- `snappy-live` writes scratch settings (the platform's defaults with snapping on, the halves layout everywhere, and workspaces on with a shortcut for each), starts the daemon with `SNAPPY_HOME` pointing at a scratch folder and `SNAPPY_DEBUG=1`, posts pointer and keyboard input the way hardware does, runs the scenarios in `crates/live/src/scenarios.rs`, and writes `results.json` plus a screenshot of each failure. The overlay scenario also saves `overlay_caption.png`, a drag with the swap key held, to show the caption each platform draws. `--only <prefix>` runs the scenarios whose names start with it.
+- `snappy-live` writes scratch settings (the platform's defaults with snapping on, the halves layout everywhere, and workspaces on; every default shortcut is kept, and what has no default, the halves layout's two zones and each workspace's send and move here and switch, gets chords the platform leaves free), starts the daemon with `SNAPPY_HOME` pointing at a scratch folder and `SNAPPY_DEBUG=1`, posts pointer and keyboard input the way hardware does, runs the scenarios in `crates/live/src/scenarios.rs`, and writes `results.json` plus a screenshot of each failure. The overlay scenario also saves `overlay_caption.png`, a drag with the swap key held, to show the caption each platform draws, and the take-along scenario saves `take_along_outline.png`, a window picked up and outlined. `--only <prefix>` runs the scenarios whose names start with it.
+
+The workspace scenarios press the defaults users get: Snappy + 1 to 9 to switch by number, Snappy + `;` and `'` to step, Snappy + `/` three times to send three windows one after another while staying, and Snappy + Return to take one window along to workspace 3 by number, two along by a step, and to put one down again. They check that a picked-up window's outline shows, as a daemon surface over the work area at the floating layer, and goes when the window arrives.
 
 Scenarios take every shortcut and modifier from the run's settings, with the Snappy key expanded, so the same scenario presses Control+Option+Command+1 on macOS and Ctrl+Alt+Super+1 on Linux. The runs use the default "When the zone is taken", swap, so plain shortcuts and drags into an occupied zone swap, and a drag holding the swap key stacks. Drags let go of the modifiers right after the button, as quickly as input allows, so an adapter that reads modifiers late loses the drop. They read the daemon's debug log for what Snappy measured and decided itself, such as settle times and the overlay's caption.
 
