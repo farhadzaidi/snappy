@@ -89,12 +89,17 @@ export function zone(page: Page, number: number): Locator {
   return canvas(page).getByLabel(`Zone ${number}`, { exact: true });
 }
 
-/** Duplicate a preset and save it as a custom layout named "<preset> copy". */
 /**
  * Clicks a layout action, in the action bar or, when the bar is too narrow for it, in its
  * "More actions" menu.
  */
 export async function layoutAction(page: Page, name: string): Promise<void> {
+  // The bar first shows every action, then moves what doesn't fit into the menu once it
+  // has measured itself with the fonts loaded, so it is read only after that.
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
   const bar = page.getByRole("toolbar", { name: "Layout actions" });
   const inline = bar.getByRole("button", { name, exact: true });
   if (await inline.isVisible()) {
@@ -105,6 +110,7 @@ export async function layoutAction(page: Page, name: string): Promise<void> {
   await page.getByRole("menu", { name: "More actions" }).getByRole("menuitem", { name, exact: true }).click();
 }
 
+/** Duplicate a preset and save it as a custom layout named "<preset> copy". */
 export async function saveCustomCopy(page: Page, preset: string): Promise<void> {
   await page.getByRole("button", { name: preset, exact: true }).click();
   await layoutAction(page, "Duplicate");
