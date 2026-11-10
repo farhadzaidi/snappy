@@ -1,0 +1,17 @@
+{
+  "uuid": "snappy@farhadzaidi.github.io",
+  "name": "Snappy",
+  "description": "Lets Snappy snap, swap, and hide windows on GNOME.",
+  "url": "https://github.com/farhadzaidi/snappy",
+  "shell-version": [
+    "46",
+    "47",
+    "48",
+    "49"
+  ],
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
+  "version-name": "3"
+}

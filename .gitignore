@@ -1,0 +1,11 @@
+/target/
+node_modules/
+dist/
+.DS_Store
+*.log
+/apps/settings/src-tauri/target/
+/apps/settings/src-tauri/gen/
+/apps/settings/ui/src/wasm/
+/apps/settings/ui/test-results/
+/apps/settings/ui/playwright-report/
+.claude/

@@ -1,0 +1,8 @@
+# The Windows test VM has no Visual C++ runtime installed, and Snappy shouldn't need one:
+# link the C runtime statically. The static runtime ships without debug info, which the
+# linker would otherwise warn about (LNK4099).
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/ignore:4099"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/ignore:4099"]
