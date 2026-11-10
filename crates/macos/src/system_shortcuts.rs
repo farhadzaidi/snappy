@@ -174,13 +174,43 @@ mod tests {
     }
 
     #[test]
-    fn turning_on_the_contrast_shortcuts_takes_only_the_previous_move_window_step() {
+    fn the_shortcuts_macos_ships_leave_every_default_free() {
+        // Switching to desktop 1 to 9 on Control with the digit, here turned on, plus the
+        // Mission Control defaults.
+        let digits = [18, 19, 20, 21, 23, 22, 26, 28, 25];
+        let mut shipped: Vec<SystemShortcut> = digits
+            .into_iter()
+            .zip(118..)
+            .map(|(key_code, id)| SystemShortcut {
+                id,
+                enabled: true,
+                key_code,
+                modifiers: 0x4_0000,
+            })
+            .collect();
+        shipped.extend(DEFAULTS.iter().filter(|shortcut| shortcut.enabled));
+        assert!(is_taken(carbon("Digit3", &[Modifier::Ctrl]), &shipped));
+
+        let mut settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
+        settings.workspaces.items = (1..=9)
+            .map(|n| snappy_core::settings::Workspace::numbered(format!("workspace-{n}"), n))
+            .collect();
+        let combos = snappy_core::bindings::bound_combos(&settings);
+        assert_eq!(combos.len(), 5 + 9 + 5);
+        for combo in combos {
+            let carbon = CarbonChord::from_combo(&combo).unwrap();
+            assert!(!is_taken(carbon, &shipped), "{combo:?}");
+        }
+    }
+
+    #[test]
+    fn turning_on_the_contrast_shortcuts_takes_only_the_previous_send_step() {
         let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
         let step = |chord: &Option<snappy_core::keys::KeyChord>| {
             CarbonChord::from_combo(&chord.as_ref().unwrap().combo()).unwrap()
         };
-        let previous = step(&settings.workspaces.move_previous);
-        let next = step(&settings.workspaces.move_next);
+        let previous = step(&settings.workspaces.send_previous);
+        let next = step(&settings.workspaces.send_next);
         let mut turned_on = DEFAULTS;
         turned_on[4].enabled = true;
         turned_on[5].enabled = true;

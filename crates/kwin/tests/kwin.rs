@@ -1025,7 +1025,15 @@ fn the_daemon_snaps_inside_the_panels_with_its_overlay_showing_and_by_shortcut()
     };
     drop(input());
     let bus = zbus::blocking::Connection::session().unwrap();
-    let Some(mut daemon) = Daemon::start(&home, |_| {}) else {
+    // Zones have no shortcuts by default, so the halves layout's second zone gets one.
+    let Some(mut daemon) = Daemon::start(&home, |settings| {
+        let halves = settings.layout("halves").unwrap().clone();
+        let mut options = settings.options(&halves);
+        options
+            .zone_shortcuts
+            .insert(halves.zones[1].id.clone(), KeyChord::snappy("Digit2", []));
+        settings.layouts.options.insert(halves.id, options);
+    }) else {
         println!("skipped: set SNAPPY_KWIN_DAEMON to the daemon binary");
         return;
     };
@@ -1087,7 +1095,7 @@ fn the_daemon_snaps_inside_the_panels_with_its_overlay_showing_and_by_shortcut()
         },
     );
 
-    // The halves layout's second zone, by its default shortcut, moves the focused window.
+    // The halves layout's second zone, by its shortcut, moves the focused window.
     input.press_chord(&KeyChord::snappy("Digit2", []));
     let right = wait_for_frame(
         &bus,
@@ -1155,8 +1163,8 @@ fn the_daemons_workspaces_hide_and_bring_back_windows_with_the_default_shortcuts
     assert_eq!(kwin_skips_taskbar(&bus, title), Some(false));
 
     let mut input = input();
-    // Snappy + ' goes to the next workspace, which has no windows yet.
-    input.press_chord(&KeyChord::snappy("Quote", []));
+    // Snappy + 2 goes to the second workspace, which has no windows yet.
+    input.press_chord(&KeyChord::snappy("Digit2", []));
     let deadline = Instant::now() + WAIT;
     while kwin_skips_taskbar(&bus, title) != Some(true) {
         assert!(

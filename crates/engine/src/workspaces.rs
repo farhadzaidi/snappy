@@ -59,6 +59,9 @@ pub(crate) struct WorkspaceController {
     pub requested: Option<String>,
     /// A switch asked for while displays were changing, run once they settle.
     pub deferred_switch: Option<(String, bool)>,
+    /// Windows picked up to go along with the next switch, in the order they were picked
+    /// up. Kept in memory only: quitting forgets them and moves nothing.
+    pub carried: Vec<WindowId>,
 }
 
 impl WorkspaceController {
@@ -87,6 +90,14 @@ impl WorkspaceController {
                 _ => "Paused on another virtual desktop. Return to the original desktop to resume.",
             })
             .map(str::to_owned)
+    }
+
+    /// Why workspace shortcuts do nothing now, or `None` while workspaces run.
+    fn idle_message(&self, platform: PlatformName) -> Option<String> {
+        if self.session.is_none() || self.suspended {
+            return Some("Workspaces aren't running.".to_owned());
+        }
+        self.pause_message(platform)
     }
 }
 
@@ -196,6 +207,7 @@ fn suspend<P: Platform>(core: &mut Core<P>) {
     if std::mem::replace(&mut core.workspaces.suspended, true) {
         return;
     }
+    put_down_all(core, "workspaces suspended");
     core.trace("workspacesSuspended", || serde_json::json!({}));
     core.publish_state();
 }
@@ -287,6 +299,7 @@ fn start<P: Platform>(core: &mut Core<P>) {
 
 /// Return every parked window and stop tracking.
 pub(crate) fn stop<P: Platform>(core: &mut Core<P>) -> bool {
+    put_down_all(core, "workspaces stopped");
     let Some(mut session) = core.workspaces.session.take() else {
         return recover(core);
     };
@@ -608,10 +621,21 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
     let discovered = core.platform.now();
     let displays = core.display_frames();
     let previous = session.active().to_owned();
+    let carried = core.workspaces.carried.clone();
     let result = {
         let mut io = CoreIo::new(&mut *core);
-        session.switch_to(target, &displays, !focus_settings, &mut io)
+        session.switch_carrying(target, &carried, &displays, !focus_settings, &mut io)
     };
+    let arrived: Vec<WindowId> = carried
+        .iter()
+        .copied()
+        .filter(|window| {
+            result.is_ok()
+                && session
+                    .member(*window)
+                    .is_some_and(|member| member.workspace == target)
+        })
+        .collect();
     let moved = core.platform.now();
     let mut timing = SwitchTiming {
         queue_ms: (began - requested_at) * 1000.0,
@@ -638,9 +662,18 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
                 core.prepare_overlays();
                 timing.refresh_ms = (core.platform.now() - refresh) * 1000.0;
                 timing.succeeded = true;
+                if !carried.is_empty() {
+                    let windows: Vec<u64> = arrived.iter().map(|window| window.0).collect();
+                    core.trace(
+                        "takeAlongArrived",
+                        || serde_json::json!({ "to": target, "windows": windows, "picked": carried.len() }),
+                    );
+                    core.workspaces.carried.clear();
+                    core.refresh_marks();
+                }
             } else {
                 let mut io = CoreIo::new(&mut *core);
-                let _ = session.switch_to(&previous, &displays, true, &mut io);
+                let _ = session.switch_carrying(&previous, &arrived, &displays, true, &mut io);
             }
         }
         Err(error) => {
@@ -690,11 +723,11 @@ pub(crate) fn cycle<P: Platform + 'static>(shared: &Rc<Shared<P>>, step: isize) 
     }
 }
 
-/// Take the focused window to the previous or next workspace in saved order and switch
-/// there, wrapping like `cycle`.
-pub(crate) fn take_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, step: isize) {
+/// Send the focused window to the previous or next workspace in saved order, wrapping like
+/// `cycle`, and stay.
+pub(crate) fn send_and_stay<P: Platform + 'static>(shared: &Rc<Shared<P>>, step: isize) {
     if let Some(target) = adjacent(shared, step) {
-        send_focused(shared, &target, true);
+        send_focused(shared, &target, false);
     }
 }
 
@@ -712,7 +745,9 @@ fn adjacent<P: Platform>(shared: &Shared<P>, step: isize) -> Option<String> {
         .map(|item| item.id.clone())
 }
 
-/// Send the focused window to `target`, then switch there when `follow`.
+/// Send the focused window to `target`, then switch there when `follow`. Without `follow`,
+/// focus moves to the window used most recently among those left, so pressing again sends
+/// that one.
 pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target: &str, follow: bool) {
     if !shared.core.borrow().workspaces.is_running() {
         return;
@@ -721,7 +756,7 @@ pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target
     shared.submit(move |shared, _cancel| async move {
         let sent = {
             let mut core = shared.core.borrow_mut();
-            send_now(&mut core, &target)
+            send_now(&mut core, &target, !follow)
         };
         if let Some(window) = sent {
             for history in shared.histories.borrow_mut().values_mut() {
@@ -736,7 +771,7 @@ pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target
     });
 }
 
-fn send_now<P: Platform>(core: &mut Core<P>, target: &str) -> Option<WindowId> {
+fn send_now<P: Platform>(core: &mut Core<P>, target: &str, stay: bool) -> Option<WindowId> {
     let focused = match core.platform.focused_window() {
         Ok(info) => info,
         Err(_) => {
@@ -761,11 +796,24 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str) -> Option<WindowId> {
         let mut io = CoreIo::new(&mut *core);
         session.send(focused.id, target, &displays, &mut io)
     };
+    let left_focused = match (&result, stay) {
+        (Ok(()), true) => session.focus_recent(&mut CoreIo::new(&mut *core)),
+        _ => None,
+    };
     let now = core.platform.now();
     core.workspaces.focus.end_change(now);
     let sent = match result {
         Ok(()) => {
             save_membership(core, &session);
+            core.trace("workspaceSend", || {
+                serde_json::json!({
+                    "window": focused.id.0,
+                    "app": focused.app,
+                    "to": target,
+                    "stay": stay,
+                    "focused": left_focused.map(|window| window.0),
+                })
+            });
             Some(focused.id)
         }
         Err(error) => {
@@ -774,8 +822,83 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str) -> Option<WindowId> {
         }
     };
     core.workspaces.session = Some(session);
+    if sent.is_some() && core.workspaces.carried.contains(&focused.id) {
+        put_down(core, focused.id, "sent to another workspace");
+    }
     core.publish_state();
     sent
+}
+
+// MARK: Taking windows along
+
+/// Pick up the focused window to go along with the next switch, or put it down when it
+/// was already picked up.
+pub(crate) fn take_along<P: Platform>(core: &mut Core<P>) {
+    if let Some(reason) = core.workspaces.idle_message(core.capabilities.platform) {
+        core.trace("takeAlongSkipped", || serde_json::json!({ "reason": reason }));
+        core.announce_quietly(&reason);
+        return;
+    }
+    let focused = match core.platform.focused_window() {
+        Ok(info) => info,
+        Err(error) => {
+            let reason = error.to_string();
+            core.trace("takeAlongSkipped", || serde_json::json!({ "reason": reason }));
+            core.announce_quietly("Focus a window to take it along.");
+            return;
+        }
+    };
+    if core.workspaces.carried.contains(&focused.id) {
+        put_down(core, focused.id, "pressed again");
+        return;
+    }
+
+    let Some(mut session) = core.workspaces.session.take() else {
+        return;
+    };
+    enroll(core, &mut session, &focused);
+    let shown_here = session
+        .member(focused.id)
+        .is_some_and(|member| member.workspace == session.active() && member.parked.is_none());
+    core.workspaces.session = Some(session);
+    if !shown_here {
+        core.trace(
+            "takeAlongSkipped",
+            || serde_json::json!({ "window": focused.id.0, "app": focused.app, "reason": "not on the current workspace" }),
+        );
+        core.announce_quietly("Focus a window on the current workspace first.");
+        return;
+    }
+    core.workspaces.carried.push(focused.id);
+    let carried = core.workspaces.carried.len();
+    core.trace(
+        "takeAlongPickedUp",
+        || serde_json::json!({ "window": focused.id.0, "app": focused.app, "carried": carried }),
+    );
+    core.refresh_marks();
+}
+
+fn put_down<P: Platform>(core: &mut Core<P>, window: WindowId, reason: &str) {
+    core.workspaces.carried.retain(|carried| *carried != window);
+    let carried = core.workspaces.carried.len();
+    core.trace(
+        "takeAlongPutDown",
+        || serde_json::json!({ "window": window.0, "reason": reason, "carried": carried }),
+    );
+    core.refresh_marks();
+}
+
+/// Forget every picked-up window, as when workspaces stop or pause.
+fn put_down_all<P: Platform>(core: &mut Core<P>, reason: &str) {
+    if core.workspaces.carried.is_empty() {
+        return;
+    }
+    let windows: Vec<u64> = core.workspaces.carried.drain(..).map(|window| window.0).collect();
+    core.trace(
+        "takeAlongPutDown",
+        || serde_json::json!({ "windows": windows, "reason": reason, "carried": 0 }),
+    );
+    core.refresh_marks();
 }
 
 /// Delete a workspace, moving its windows to `destination`.
@@ -874,6 +997,9 @@ fn discover_focused_into<P: Platform>(
 
 /// Park a parked window again when its app brought it back.
 pub(crate) fn window_moved<P: Platform>(core: &mut Core<P>, window: WindowId) {
+    if core.workspaces.carried.contains(&window) {
+        core.refresh_marks();
+    }
     let now = core.platform.now();
     let recently = core
         .workspaces
@@ -909,6 +1035,9 @@ pub(crate) fn window_moved<P: Platform>(core: &mut Core<P>, window: WindowId) {
 }
 
 pub(crate) fn window_destroyed<P: Platform>(core: &mut Core<P>, window: WindowId) {
+    if core.workspaces.carried.contains(&window) {
+        put_down(core, window, "closed");
+    }
     if let Some(session) = core.workspaces.session.as_mut() {
         session.discard(window);
     }
@@ -946,6 +1075,9 @@ pub(crate) fn native_desktop_changed<P: Platform>(core: &mut Core<P>) {
     core.workspaces.paused = !core.platform.on_managed_desktop();
     let paused = core.workspaces.paused;
     core.trace("nativeDesktop", || serde_json::json!({ "paused": paused }));
+    if paused {
+        put_down_all(core, "paused on another desktop");
+    }
     if was_paused
         && !core.workspaces.paused
         && let Err(error) = update_displays(core)
@@ -1008,6 +1140,7 @@ fn apply_display_change<P: Platform>(shared: &Shared<P>, generation: u64, last_t
     core.workspaces.display_update_pending = false;
     core.configure_hotkeys();
     core.prepare_overlays();
+    core.refresh_marks();
     core.update_tray();
     core.publish_state();
     true

@@ -94,14 +94,26 @@ pub const ALL: &[(&str, Scenario)] = &[
         overlay_floats,
     ),
     ("the_menu_bar_item_is_shown", menu_bar_item),
-    ("switching_workspaces_parks_and_returns_windows", workspace_switch),
+    (
+        "switching_workspaces_by_number_parks_and_returns_windows",
+        workspace_switch,
+    ),
     ("previous_and_next_shortcuts_cycle_workspaces", step_workspaces),
     ("sending_parks_the_window_in_its_new_workspace", send_to_workspace),
     ("move_here_and_switch_follows_the_window", move_here_and_switch),
     (
-        "moving_the_window_to_the_next_workspace_switches_with_it",
-        move_to_next_workspace,
+        "sending_to_the_next_workspace_three_times_sends_three_windows_and_stays",
+        send_and_stay_batch,
     ),
+    (
+        "a_window_taken_along_goes_to_the_workspace_switched_to_by_number",
+        take_along_by_number,
+    ),
+    (
+        "two_windows_taken_along_go_to_the_next_workspace",
+        take_two_along_by_step,
+    ),
+    ("taking_a_carried_window_along_again_puts_it_down", put_down),
     ("quitting_returns_parked_windows", quit_returns_windows),
     ("full_screen_windows_are_never_moved", full_screen_refused),
 ];
@@ -225,6 +237,37 @@ impl<'a> Context<'a> {
         let what = format!("{} on screen", describe(target));
         self.wait_for(id, &what, |frame| near(frame, target) && shown(pid, frame))
             .map(|(_, elapsed)| elapsed)
+    }
+
+    /// Fail unless `id` is on screen at `before`, as a window taken along stays.
+    fn stayed(&mut self, id: &str, before: Rect) -> Result<(), String> {
+        let after = self.fixture.frame(id)?;
+        if self.is_parked(after) || !near(after, before) {
+            return Err(format!("{id} moved to {}", describe(after)));
+        }
+        Ok(())
+    }
+
+    /// Wait until the daemon shows, or no longer shows, the surface over the work area
+    /// that outlines the windows being taken along.
+    fn wait_outlines(&self, shown: bool) -> Result<(), String> {
+        let started = Instant::now();
+        loop {
+            let covering = daemon_windows_above(self, FLOATING_LAYER)?
+                .iter()
+                .any(|frame| frame.contains_rect(self.display.work_area));
+            if covering == shown {
+                return Ok(());
+            }
+            if started.elapsed() > SETTLE_TIMEOUT {
+                return Err(if shown {
+                    "the window taken along has no outline".to_owned()
+                } else {
+                    "the outline stayed on screen".to_owned()
+                });
+            }
+            pause(20);
+        }
     }
 
     /// Records of `event` in the daemon's debug log so far.
@@ -619,10 +662,12 @@ fn workspace_switch(context: &mut Context) -> Result<Outcome, String> {
     let start = floating(&context.display, 140.0);
     let before = context.open("ws", start)?;
     let before = context.fixture.frame("ws").unwrap_or(before);
-    context.press(&context.switch_key(2)?)?;
+    context.press(&context.switch_key(3)?)?;
     let elapsed = context.wait_parked("ws")?;
+    context.wait_active("workspace-3")?;
     context.press(&context.switch_key(1)?)?;
     context.wait_shown("ws", before)?;
+    context.wait_active("workspace-1")?;
     Ok(timed(elapsed))
 }
 
@@ -910,20 +955,108 @@ fn step_workspaces(context: &mut Context) -> Result<Outcome, String> {
     Ok(timed(elapsed))
 }
 
-fn move_to_next_workspace(context: &mut Context) -> Result<Outcome, String> {
-    context.open("carried", floating(&context.display, 260.0))?;
-    let before = context.fixture.frame("carried")?;
-    context.press(&context.step_key(WorkspaceStep::MoveNext)?)?;
-    context.wait_active("workspace-2")?;
-    pause(600);
-    let after = context.fixture.frame("carried")?;
-    if context.is_parked(after) || !near(after, before) {
-        return Err(format!("the window moved to {}", describe(after)));
+/// Three windows focused in turn, then sent to the next workspace one press at a time:
+/// each press sends the focused window and focus moves to the one used before it.
+fn send_and_stay_batch(context: &mut Context) -> Result<Outcome, String> {
+    let ids = ["batch-a", "batch-b", "batch-c"];
+    let mut frames = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        context.open(id, floating(&context.display, 100.0 + 30.0 * index as f64))?;
+        frames.push(context.fixture.frame(id)?);
     }
+    let send = context.step_key(WorkspaceStep::SendNext)?;
+    let mut slowest: f64 = 0.0;
+    for id in ids.iter().rev() {
+        context.press(&send)?;
+        slowest = slowest.max(context.wait_parked(id)?);
+        if context.active_workspace()? != "workspace-1" {
+            return Err("sending switched workspaces".to_owned());
+        }
+        pause(300);
+    }
+    context.press(&context.switch_key(2)?)?;
+    for (id, before) in ids.iter().zip(&frames) {
+        context.wait_shown(id, *before)?;
+    }
+    context.press(&context.switch_key(1)?)?;
+    for id in ids {
+        context.wait_parked(id)?;
+    }
+    Ok(timed(slowest))
+}
+
+/// A window picked up with the take-along key is outlined, then comes along, where it was,
+/// when the Snappy key and 3 switch to the third workspace.
+fn take_along_by_number(context: &mut Context) -> Result<Outcome, String> {
+    context.open("along", floating(&context.display, 120.0))?;
+    let before = context.fixture.frame("along")?;
+    context.press(&context.step_key(WorkspaceStep::TakeAlong)?)?;
+    context.wait_outlines(true)?;
+    screenshot(&context.out.join("take_along_outline.png"));
+
+    context.press(&context.switch_key(3)?)?;
+    context.wait_active("workspace-3")?;
+    let elapsed = context.began.elapsed().as_secs_f64() * 1000.0;
+    pause(600);
+    context.stayed("along", before)?;
+    context.wait_outlines(false)?;
+
+    context.press(&context.switch_key(1)?)?;
+    context.wait_active("workspace-1")?;
+    context.wait_parked("along")?;
+    Ok(timed(elapsed))
+}
+
+/// Two of three windows picked up go along to the next workspace; the third stays behind.
+fn take_two_along_by_step(context: &mut Context) -> Result<Outcome, String> {
+    let ids = ["pair-a", "pair-b", "pair-left"];
+    let mut frames = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        context.open(id, floating(&context.display, 140.0 + 30.0 * index as f64))?;
+        frames.push(context.fixture.frame(id)?);
+    }
+    let take_along = context.step_key(WorkspaceStep::TakeAlong)?;
+    for id in &ids[..2] {
+        context.focus(id)?;
+        context.press(&take_along)?;
+        pause(300);
+    }
+    context.wait_outlines(true)?;
+
+    context.press(&context.step_key(WorkspaceStep::Next)?)?;
+    context.wait_active("workspace-2")?;
+    let elapsed = context.wait_parked("pair-left")?;
+    pause(300);
+    for (id, before) in ids.iter().zip(&frames).take(2) {
+        context.stayed(id, *before)?;
+    }
+    context.wait_outlines(false)?;
+
     context.press(&context.step_key(WorkspaceStep::Previous)?)?;
     context.wait_active("workspace-1")?;
-    context.wait_parked("carried")?;
-    Ok(Outcome::default())
+    context.wait_shown("pair-left", frames[2])?;
+    for id in &ids[..2] {
+        context.wait_parked(id)?;
+    }
+    Ok(timed(elapsed))
+}
+
+/// Pressing the take-along key again puts the window down: its outline goes, and it stays
+/// behind at the next switch.
+fn put_down(context: &mut Context) -> Result<Outcome, String> {
+    context.open("down", floating(&context.display, 160.0))?;
+    let before = context.fixture.frame("down")?;
+    let take_along = context.step_key(WorkspaceStep::TakeAlong)?;
+    context.press(&take_along)?;
+    context.wait_outlines(true)?;
+    context.press(&take_along)?;
+    context.wait_outlines(false)?;
+
+    context.press(&context.switch_key(2)?)?;
+    let elapsed = context.wait_parked("down")?;
+    context.press(&context.switch_key(1)?)?;
+    context.wait_shown("down", before)?;
+    Ok(timed(elapsed))
 }
 
 /// Full-screen windows are refused, not moved. Runs last: it leaves a full-screen Space.

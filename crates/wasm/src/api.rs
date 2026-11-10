@@ -154,7 +154,8 @@ pub struct LayoutOptionsRequest {
 }
 
 #[derive(Deserialize)]
-pub struct NumberedWorkspaceRequest {
+pub struct NewWorkspaceRequest {
+    settings: Settings,
     id: String,
     number: usize,
 }
@@ -350,6 +351,6 @@ pub fn layout_options(request: LayoutOptionsRequest) -> LayoutOptions {
     request.settings.options(&request.layout)
 }
 
-pub fn numbered_workspace(request: NumberedWorkspaceRequest) -> Workspace {
-    Workspace::numbered(request.id, request.number)
+pub fn new_workspace(request: NewWorkspaceRequest) -> Workspace {
+    request.settings.new_workspace(request.id, request.number)
 }

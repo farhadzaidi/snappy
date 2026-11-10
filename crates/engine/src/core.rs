@@ -10,8 +10,8 @@ use snappy_core::layout::{Layout, Spacing, zone_frame};
 use snappy_core::settings::Settings;
 use snappy_ipc::{AppState, SnappingState, Status, ToSettings, WorkspacesState};
 use snappy_platform::{
-    Capabilities, Caption, Display, LiveControl, OverlayScene, OverlayZone, Platform, TrayDisplay, TrayItem,
-    TrayMenu, WindowId,
+    Capabilities, Caption, Display, LiveControl, OverlayMarks, OverlayScene, OverlayZone, Platform,
+    TrayDisplay, TrayItem, TrayMenu, WindowId,
 };
 
 use crate::debug_log::{DebugLog, Level};
@@ -76,6 +76,8 @@ pub(crate) struct Core<P> {
     pub diagnostics: Diagnostics,
     pub debug: DebugLog,
     pub added_workspace: Option<String>,
+    /// The marks each display was last sent; displays without any are absent.
+    marked: BTreeMap<String, OverlayMarks>,
 }
 
 impl<P: Platform> Core<P> {
@@ -115,6 +117,7 @@ impl<P: Platform> Core<P> {
             diagnostics,
             debug,
             added_workspace: None,
+            marked: BTreeMap::new(),
         }
     }
 
@@ -314,6 +317,45 @@ impl<P: Platform> Core<P> {
             }
         }
         self.publish_state();
+    }
+
+    /// Outline the windows being taken along on each display they show on, where they are
+    /// now. Only displays whose outlines changed are sent.
+    pub fn refresh_marks(&mut self) {
+        let carried = self.workspaces.carried.clone();
+        let platform = &mut self.platform;
+        let frames: Vec<Rect> = carried
+            .into_iter()
+            .filter_map(|window| {
+                let shown = platform.state(window).is_ok_and(|state| !state.minimized);
+                shown.then(|| platform.frame(window).ok()).flatten()
+            })
+            .collect();
+        for display in self.displays.clone() {
+            let marks = OverlayMarks {
+                work_area: display.work_area,
+                frames: frames
+                    .iter()
+                    .copied()
+                    .filter(|frame| frame.intersection_area(display.work_area) > 0.0)
+                    .collect(),
+            };
+            let unchanged = match self.marked.get(&display.id) {
+                Some(sent) => *sent == marks,
+                None => marks.frames.is_empty(),
+            };
+            if unchanged {
+                continue;
+            }
+            self.platform.mark(&display.id, &marks);
+            if marks.frames.is_empty() {
+                self.marked.remove(&display.id);
+            } else {
+                self.marked.insert(display.id.clone(), marks);
+            }
+        }
+        let displays = self.display_ids();
+        self.marked.retain(|display, _| displays.contains(display));
     }
 
     /// Forget the current press; the overlay disappears.

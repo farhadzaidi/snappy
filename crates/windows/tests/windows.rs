@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, KeyChord, Modifier, Mods, Platform};
-use snappy_core::settings::Settings;
+use snappy_core::settings::{Settings, Workspace};
 use snappy_core::workspace::{ParkingPolicy, parking_origin};
 use snappy_platform::{
     Caption, DesktopGuard, Display, HotKeys, Input, LoginItem, Overlay, OverlayScene, OverlayZone,
@@ -607,19 +607,23 @@ fn registered_shortcuts_fire_on_their_keys() {
     session.platform.unregister_all();
 }
 
-/// The reserved-chord audit: every default zone, move-between-zones, nearest-empty-zone,
-/// and workspace step chord is free on a stock Windows 11, so Windows and the shell leave
-/// them to Snappy.
+/// The reserved-chord audit: every default chord, moving between zones, to the nearest
+/// empty zone, the workspace steps, taking windows along, and switching to workspaces 1
+/// to 9, is free on a stock Windows 11, so Windows and the shell leave them to Snappy.
 #[test]
 fn the_windows_default_shortcuts_are_free() {
     require_desktop!();
     let mut session = Session::start();
     let settings = Settings::defaults(Platform::Windows);
-    let layout = settings.layout("six").unwrap();
-    let mut chords: Vec<KeyChord> = settings.options(layout).zone_shortcuts.into_values().collect();
-    chords.extend(settings.navigation.chords().map(|(_, chord)| chord.clone()));
+    let mut chords: Vec<KeyChord> = settings
+        .navigation
+        .chords()
+        .map(|(_, chord)| chord.clone())
+        .collect();
     chords.extend(settings.navigation.nearest_empty.clone());
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
+    chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
+    assert_eq!(chords.len(), 5 + 5 + 9);
     let taken: Vec<String> = chords
         .iter()
         .filter(|chord| !session.platform.is_available(&chord.combo()))

@@ -104,6 +104,19 @@ mod tests {
     }
 
     #[test]
+    fn every_default_shortcut_has_a_key_code_and_return_is_qts_return() {
+        let mut settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::Linux);
+        settings.workspaces.items = (1..=9)
+            .map(|n| snappy_core::settings::Workspace::numbered(format!("workspace-{n}"), n))
+            .collect();
+        for combo in snappy_core::bindings::bound_combos(&settings) {
+            assert!(key_code(&combo).is_some(), "{combo:?}");
+        }
+        let take_along = settings.workspaces.take_along.unwrap().combo();
+        assert_eq!(key_code(&take_along), Some(CONTROL | ALT | META | 0x0100_0004));
+    }
+
+    #[test]
     fn letters_are_capitals_and_keypad_keys_carry_the_keypad_bit() {
         let combo = |code: &str| Combo {
             code: KeyCode::new(code),

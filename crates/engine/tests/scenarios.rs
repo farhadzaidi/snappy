@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::{KeyChord, Modifier, Mods};
-use snappy_core::settings::{DragModifier, HistoryStep};
+use snappy_core::settings::{DragModifier, HistoryStep, LayoutOptions, Settings};
 use snappy_core::swap::WhenTaken;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_engine::{Engine, Input, Paths};
@@ -48,9 +48,24 @@ fn scenario<F: Future<Output = ()>>(test: impl FnOnce() -> F) {
     local.block_on(&runtime, test());
 }
 
-/// A live engine on the halves layout with one window open.
+/// A live engine on the halves layout, where every layout's zones have the Snappy key with
+/// their number as shortcuts.
 fn live_engine(name: &str, fake: FakePlatform) -> Engine<FakePlatform> {
-    let engine = Engine::new(fake, paths(name));
+    let paths = paths(name);
+    let mut settings = Settings::defaults(fake.platform);
+    for layout in snappy_core::layout::presets() {
+        let mut options = LayoutOptions::empty();
+        for (index, zone) in layout.zones.iter().enumerate().take(9) {
+            let chord = snappy(&format!("Digit{}", index + 1));
+            options.zone_shortcuts.insert(zone.id.clone(), chord);
+        }
+        settings.layouts.options.insert(layout.id.clone(), options);
+    }
+    if let Some(folder) = paths.settings.parent() {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    std::fs::write(&paths.settings, settings.to_json().unwrap()).unwrap();
+    let engine = Engine::new(fake, paths);
     engine.start();
     command(
         &engine,
@@ -1303,9 +1318,9 @@ fn writes_to(engine: &Engine<FakePlatform>, window: u64) -> usize {
     })
 }
 
-/// Workspaces have no shortcuts of their own by default, so give each Control+n to
-/// switch, Control+Shift+n to send, and Control+Option+n to move here and switch, then
-/// turn workspaces on.
+/// Give each workspace Control+n to switch, in place of its default Snappy key with n,
+/// which `live_engine`'s zones use, Control+Shift+n to send, and Control+Option+n to move
+/// here and switch, then turn workspaces on.
 fn enable_workspaces(engine: &Engine<FakePlatform>) {
     for (index, mut workspace) in engine.settings().workspaces.items.into_iter().enumerate() {
         let digit = format!("Digit{}", index + 1);
@@ -2555,10 +2570,17 @@ fn every_save_path_refuses_a_conflict_with_its_message() {
         );
         refused(
             Command::SetWorkspaceStepShortcut {
-                step: snappy_core::settings::WorkspaceStep::MoveNext,
+                step: snappy_core::settings::WorkspaceStep::SendNext,
                 chord: Some(snappy("Semicolon")),
             },
             "Snappy + ; is already assigned to Previous workspace.",
+        );
+        refused(
+            Command::SetWorkspaceStepShortcut {
+                step: snappy_core::settings::WorkspaceStep::TakeAlong,
+                chord: Some(snappy("Space")),
+            },
+            "Snappy + Space is already assigned to Move to the nearest empty zone.",
         );
         refused(
             Command::SetHistoryShortcut {
@@ -2963,33 +2985,335 @@ fn move_here_and_switch_sends_the_window_then_follows_it() {
     });
 }
 
+/// A live engine on the halves layout with workspaces on and every shortcut at its default.
+fn default_workspaces(name: &str, fake: FakePlatform) -> Engine<FakePlatform> {
+    let engine = started(name, fake);
+    command(
+        &engine,
+        Command::ApplyLayout {
+            display: "main".into(),
+            layout: "halves".into(),
+        },
+    );
+    command(&engine, Command::SetSnapping { enabled: true });
+    command(&engine, Command::SetWorkspacesEnabled { enabled: true });
+    assert!(app_state(&engine).workspaces.running);
+    engine
+}
+
+async fn press_default(engine: &Engine<FakePlatform>, chord: &str) {
+    event(engine, PlatformEvent::HotKey(hotkey_id(engine, &snappy(chord))));
+    settle(engine).await;
+}
+
+/// Focus a window the way the platform reports it.
+fn focus(engine: &Engine<FakePlatform>, window: u64) {
+    let pid = engine.with_platform(|p| {
+        p.focused = Some(WindowId(window));
+        p.windows[&WindowId(window)].pid
+    });
+    event(
+        engine,
+        PlatformEvent::FocusChanged {
+            pid,
+            by_activation: false,
+        },
+    );
+}
+
+fn focused(engine: &Engine<FakePlatform>) -> Option<WindowId> {
+    engine.with_platform(|p| p.focused)
+}
+
+fn marks(engine: &Engine<FakePlatform>) -> Vec<Rect> {
+    engine.with_platform(|p| p.marks.get("main").cloned().unwrap_or_default())
+}
+
+fn active(engine: &Engine<FakePlatform>) -> String {
+    engine.settings().workspaces.active_id
+}
+
+/// Four windows of one app, side by side.
+fn four_windows() -> FakePlatform {
+    let mut fake = FakePlatform::default();
+    for id in 1..=4 {
+        let frame = Rect::new(40.0 + 300.0 * (id as f64 - 1.0), 100.0, 280.0, 400.0);
+        fake.open(id, FakeWindow::new("com.example.editor", 100, frame));
+    }
+    fake
+}
+
 #[test]
-fn moving_the_window_to_the_next_workspace_takes_it_along_and_switches() {
+fn the_snappy_key_and_a_digit_switch_to_that_workspace() {
     scenario(|| async {
-        let engine = live_engine("move-next", two_zoned_windows());
-        enable_workspaces(&engine);
-        let next = hotkey_id(&engine, &snappy("Slash"));
-        event(&engine, PlatformEvent::HotKey(next));
-        settle(&engine).await;
-        assert_eq!(engine.settings().workspaces.active_id, "workspace-2");
-        assert_eq!(frame_of(&engine, 1), LEFT_ZONE, "the moved window shows");
+        let engine = default_workspaces("switch-by-number", two_zoned_windows());
+        press_default(&engine, "Digit3").await;
+        assert_eq!(active(&engine), "workspace-3");
+        assert!(is_parked(&engine, 1) && is_parked(&engine, 2));
+
+        press_default(&engine, "Digit1").await;
+        assert_eq!(active(&engine), "workspace-1");
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (LEFT_ZONE, RIGHT_ZONE)
+        );
+    });
+}
+
+#[test]
+fn sending_to_the_next_workspace_three_times_sends_three_windows_and_stays() {
+    scenario(|| async {
+        let engine = default_workspaces("send-and-stay", four_windows());
+        for window in 1..=4 {
+            focus(&engine, window);
+        }
+
+        for expected_focus in [3, 2, 1] {
+            press_default(&engine, "Slash").await;
+            assert_eq!(active(&engine), "workspace-1", "the send stays");
+            assert_eq!(focused(&engine), Some(WindowId(expected_focus)));
+        }
+        assert!([2, 3, 4].into_iter().all(|window| is_parked(&engine, window)));
+        assert!(!is_parked(&engine, 1));
+        assert_eq!(window_counts(&engine)["workspace-2"], 3);
+        assert_eq!(window_counts(&engine)["workspace-1"], 1);
+
+        press_default(&engine, "Digit2").await;
+        assert!([2, 3, 4].into_iter().all(|window| !is_parked(&engine, window)));
+    });
+}
+
+#[test]
+fn sending_to_the_previous_workspace_wraps_to_the_last_and_stays() {
+    scenario(|| async {
+        let engine = default_workspaces("send-previous", two_zoned_windows());
+        press_default(&engine, "Period").await;
+        assert_eq!(active(&engine), "workspace-1");
+        assert!(is_parked(&engine, 1));
+        assert_eq!(window_counts(&engine)["workspace-3"], 1);
+        assert_eq!(focused(&engine), Some(WindowId(2)));
+    });
+}
+
+#[test]
+fn sending_the_last_window_away_leaves_focus_alone() {
+    scenario(|| async {
+        let engine = default_workspaces("send-last", with_window(Rect::new(300.0, 200.0, 600.0, 400.0)));
+        press_default(&engine, "Slash").await;
+        assert!(is_parked(&engine, 1));
+        assert_eq!(active(&engine), "workspace-1");
+        assert_eq!(focused(&engine), Some(WindowId(1)), "nothing else was focused");
+    });
+}
+
+#[test]
+fn a_window_taken_along_goes_to_the_workspace_switched_to_by_number() {
+    scenario(|| async {
+        let engine = default_workspaces("take-by-number", two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [LEFT_ZONE], "the carried window is outlined");
+
+        press_default(&engine, "Digit3").await;
+        assert_eq!(active(&engine), "workspace-3");
+        assert_eq!(frame_of(&engine, 1), LEFT_ZONE, "it keeps its frame");
         assert!(is_parked(&engine, 2));
+        assert_eq!(focused(&engine), Some(WindowId(1)));
+        assert_eq!(window_counts(&engine)["workspace-3"], 1);
+        assert!(marks(&engine).is_empty(), "arrived windows lose their outline");
+
+        press_default(&engine, "Digit1").await;
+        assert!(is_parked(&engine, 1), "the set was emptied by the switch");
+        assert_eq!(frame_of(&engine, 2), RIGHT_ZONE);
+    });
+}
+
+#[test]
+fn two_windows_taken_along_go_to_the_next_workspace_and_the_last_picked_up_gets_focus() {
+    scenario(|| async {
+        let engine = default_workspaces("take-two-by-step", four_windows());
+        let frames: Vec<Rect> = (1..=4).map(|window| frame_of(&engine, window)).collect();
+        focus(&engine, 3);
+        press_default(&engine, "Enter").await;
+        focus(&engine, 1);
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [frames[2], frames[0]]);
+
+        press_default(&engine, "Quote").await;
+        assert_eq!(active(&engine), "workspace-2");
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 3)),
+            (frames[0], frames[2])
+        );
+        assert!(is_parked(&engine, 2) && is_parked(&engine, 4));
+        assert_eq!(focused(&engine), Some(WindowId(1)));
+        assert_eq!(window_counts(&engine)["workspace-2"], 2);
+        assert!(marks(&engine).is_empty());
+    });
+}
+
+#[test]
+fn taking_a_carried_window_along_again_puts_it_down() {
+    scenario(|| async {
+        let engine = default_workspaces("put-down", two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [LEFT_ZONE]);
+        press_default(&engine, "Enter").await;
+        assert!(marks(&engine).is_empty());
+
+        press_default(&engine, "Digit2").await;
+        assert!(is_parked(&engine, 1) && is_parked(&engine, 2));
+        assert_eq!(window_counts(&engine)["workspace-1"], 2);
+    });
+}
+
+#[test]
+fn a_carried_window_that_closes_leaves_the_set() {
+    scenario(|| async {
+        let engine = default_workspaces("carried-closed", two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        focus(&engine, 2);
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [LEFT_ZONE, RIGHT_ZONE]);
+
+        engine.with_platform(|p| {
+            p.windows.remove(&WindowId(1));
+            p.focused = Some(WindowId(2));
+        });
+        event(&engine, PlatformEvent::WindowDestroyed(WindowId(1)));
+        assert_eq!(marks(&engine), [RIGHT_ZONE]);
+
+        press_default(&engine, "Digit2").await;
+        assert_eq!(active(&engine), "workspace-2");
+        assert_eq!(frame_of(&engine, 2), RIGHT_ZONE);
         assert_eq!(window_counts(&engine)["workspace-2"], 1);
     });
 }
 
 #[test]
-fn moving_the_window_to_the_previous_workspace_wraps_to_the_last() {
+fn a_carried_windows_outline_follows_it_and_survives_a_switch_to_the_same_workspace() {
     scenario(|| async {
-        let engine = live_engine("move-previous", two_zoned_windows());
-        enable_workspaces(&engine);
-        let previous = hotkey_id(&engine, &snappy("Period"));
-        event(&engine, PlatformEvent::HotKey(previous));
+        let engine = default_workspaces("carried-moves", two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        let moved = Rect::new(100.0, 120.0, 500.0, 400.0);
+        place(&engine, 1, moved);
+        event(&engine, PlatformEvent::WindowMoved(WindowId(1)));
+        assert_eq!(marks(&engine), [moved]);
+
+        press_default(&engine, "Digit1").await;
+        assert_eq!(marks(&engine), [moved], "already there: still carried");
+
+        event(
+            &engine,
+            PlatformEvent::Tray(snappy_platform::TrayCommand::SwitchWorkspace(
+                "workspace-2".into(),
+            )),
+        );
         settle(&engine).await;
-        assert_eq!(engine.settings().workspaces.active_id, "workspace-3");
+        assert_eq!(active(&engine), "workspace-2");
+        assert_eq!(
+            frame_of(&engine, 1),
+            moved,
+            "the menu's switch takes it along too"
+        );
+        assert!(marks(&engine).is_empty());
+    });
+}
+
+#[test]
+fn quitting_forgets_carried_windows_and_moves_none_of_them() {
+    scenario(|| async {
+        let engine = default_workspaces("carried-quit", two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [LEFT_ZONE]);
+        engine.shutdown();
+        assert!(marks(&engine).is_empty());
+        assert_eq!(writes_to(&engine, 1), 0);
         assert_eq!(frame_of(&engine, 1), LEFT_ZONE);
-        assert!(is_parked(&engine, 2));
-        assert_eq!(window_counts(&engine)["workspace-3"], 1);
+    });
+}
+
+#[test]
+fn taking_along_does_nothing_while_workspaces_are_off_or_paused() {
+    scenario(|| async {
+        let engine = live_engine("take-along-off", two_zoned_windows());
+        assert!(
+            !engine.with_platform(|p| p
+                .registered
+                .iter()
+                .any(|(_, combo)| *combo == snappy("Enter").combo())),
+            "with workspaces off, Snappy + Return stays the app's"
+        );
+
+        let engine = default_workspaces("take-along-paused", two_zoned_windows());
+        engine.with_platform(|p| p.on_managed_desktop = false);
+        event(&engine, PlatformEvent::NativeDesktopChanged);
+        press_default(&engine, "Enter").await;
+        assert!(marks(&engine).is_empty());
+        let status = engine.status().unwrap();
+        assert_eq!(
+            (status.message.as_str(), status.is_error, status.notify),
+            (
+                "Paused on another macOS desktop. Return to the original desktop to resume.",
+                false,
+                false
+            )
+        );
+    });
+}
+
+#[test]
+fn pausing_on_another_desktop_puts_carried_windows_down() {
+    scenario(|| async {
+        let engine = default_workspaces("carried-paused", two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        engine.with_platform(|p| p.on_managed_desktop = false);
+        event(&engine, PlatformEvent::NativeDesktopChanged);
+        assert!(marks(&engine).is_empty());
+        engine.with_platform(|p| p.on_managed_desktop = true);
+        event(&engine, PlatformEvent::NativeDesktopChanged);
+        press_default(&engine, "Digit2").await;
+        assert!(is_parked(&engine, 1));
+    });
+}
+
+#[test]
+fn sending_a_carried_window_away_puts_it_down() {
+    scenario(|| async {
+        let engine = default_workspaces("carried-sent", two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        press_default(&engine, "Slash").await;
+        assert!(is_parked(&engine, 1));
+        assert!(marks(&engine).is_empty());
+        assert_eq!(focused(&engine), Some(WindowId(2)));
+        press_default(&engine, "Digit3").await;
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+        assert_eq!(window_counts(&engine)["workspace-3"], 0);
+    });
+}
+
+#[test]
+fn the_debug_log_records_taking_along_and_sending() {
+    scenario(|| async {
+        let name = "take-along-log";
+        let engine = default_workspaces(name, two_zoned_windows());
+        engine.force_debug_log();
+        press_default(&engine, "Enter").await;
+        press_default(&engine, "Enter").await;
+        press_default(&engine, "Enter").await;
+        press_default(&engine, "Digit2").await;
+        press_default(&engine, "Period").await;
+        let log = std::fs::read_to_string(paths_kept(name).log_dir.join("debug.jsonl")).unwrap();
+        for event in [
+            "takeAlongPickedUp",
+            "takeAlongPutDown",
+            "takeAlongArrived",
+            "workspaceSend",
+        ] {
+            assert!(
+                log.contains(&format!("\"event\":\"{event}\"")),
+                "{event} in {log}"
+            );
+        }
     });
 }
 
@@ -3010,8 +3334,14 @@ fn send_moves_the_focused_window_only_from_the_active_workspace() {
             "the settings window is sent like any other"
         );
         assert!(!is_parked(&engine, 1));
+        assert_eq!(
+            engine.with_platform(|p| p.focused),
+            Some(WindowId(1)),
+            "focus stays on this workspace"
+        );
 
         place(&engine, 9, settings_frame);
+        engine.with_platform(|p| p.focused = Some(WindowId(9)));
         let written = writes_to(&engine, 9);
         event(&engine, PlatformEvent::HotKey(send_to(&engine, 3)));
         settle(&engine).await;

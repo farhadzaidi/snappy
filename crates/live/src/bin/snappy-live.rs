@@ -83,38 +83,58 @@ const PLATFORM: Platform = if cfg!(target_os = "macos") {
 };
 
 /// Settings for the run: the defaults with snapping on, the halves layout everywhere, and
-/// workspaces on with shortcuts for each. The previous, next, and move-window steps keep
-/// their defaults, which are the same on every platform.
+/// workspaces on. Every default shortcut is kept, so the run presses the chords users get.
+/// What has no default, the halves layout's zones and each workspace's send and move here
+/// and switch, gets chords this platform leaves free.
 fn test_settings() -> Result<Settings, String> {
     let mut settings = Settings::defaults(PLATFORM);
     settings.snapping.enabled = true;
     settings.layouts.default_layout_id = "halves".to_owned();
     settings.workspaces.enabled = true;
-    match PLATFORM {
-        Platform::MacOs => assign_macos_workspace_shortcuts(&mut settings),
-        Platform::Windows => assign_windows_workspace_shortcuts(&mut settings),
-        Platform::Linux if is_gnome() => assign_gnome_workspace_shortcuts(&mut settings),
-        Platform::Linux => assign_linux_workspace_shortcuts(&mut settings),
-    }
+    let chords = match PLATFORM {
+        Platform::MacOs => MACOS_CHORDS,
+        Platform::Windows => WINDOWS_CHORDS,
+        Platform::Linux if is_gnome() => GNOME_CHORDS,
+        Platform::Linux => LINUX_CHORDS,
+    };
+    chords.assign(&mut settings)?;
     settings
         .validate(PLATFORM)
         .map_err(|error| format!("the test settings are invalid: {error}"))
 }
 
-/// Give workspace n the chords `keys(n)` returns, to switch, send, and move here and switch.
-fn assign_workspace_shortcuts(
-    settings: &mut Settings,
-    keys: impl Fn(usize) -> (String, String),
-    switch: &[Modifier],
-    send: &[Modifier],
-    send_and_switch: &[Modifier],
-) {
-    for (index, workspace) in settings.workspaces.items.iter_mut().enumerate() {
-        let (code, label) = keys(index + 1);
-        let chord = |mods: &[Modifier]| Some(KeyChord::new(&code, mods.iter().copied()).with_label(&label));
-        workspace.switch_shortcut = chord(switch);
-        workspace.send_shortcut = chord(send);
-        workspace.send_and_switch_shortcut = chord(send_and_switch);
+/// Chords for the shortcuts without a default: `key(n)` held with `zone` for zone n, with
+/// `send` to send to workspace n, and with `send_and_switch` to move here and switch to it.
+struct RunChords {
+    key: fn(usize) -> (String, String),
+    zone: &'static [Modifier],
+    send: &'static [Modifier],
+    send_and_switch: &'static [Modifier],
+}
+
+impl RunChords {
+    fn chord(&self, n: usize, mods: &[Modifier]) -> KeyChord {
+        let (code, label) = (self.key)(n);
+        KeyChord::new(&code, mods.iter().copied()).with_label(label)
+    }
+
+    fn assign(&self, settings: &mut Settings) -> Result<(), String> {
+        let halves = settings
+            .layout("halves")
+            .cloned()
+            .ok_or("there is no halves layout")?;
+        let mut options = settings.options(&halves);
+        for (index, zone) in halves.zones.iter().enumerate() {
+            options
+                .zone_shortcuts
+                .insert(zone.id.clone(), self.chord(index + 1, self.zone));
+        }
+        settings.layouts.options.insert(halves.id.clone(), options);
+        for (index, workspace) in settings.workspaces.items.iter_mut().enumerate() {
+            workspace.send_shortcut = Some(self.chord(index + 1, self.send));
+            workspace.send_and_switch_shortcut = Some(self.chord(index + 1, self.send_and_switch));
+        }
+        Ok(())
     }
 }
 
@@ -123,51 +143,38 @@ fn digit(n: usize) -> (String, String) {
 }
 
 /// Control with a digit, plus Shift to send or Option to move here and switch.
-fn assign_macos_workspace_shortcuts(settings: &mut Settings) {
-    assign_workspace_shortcuts(
-        settings,
-        digit,
-        &[Modifier::Ctrl],
-        &[Modifier::Ctrl, Modifier::Shift],
-        &[Modifier::Ctrl, Modifier::Alt],
-    );
-}
+const MACOS_CHORDS: RunChords = RunChords {
+    key: digit,
+    zone: &[Modifier::Ctrl],
+    send: &[Modifier::Ctrl, Modifier::Shift],
+    send_and_switch: &[Modifier::Ctrl, Modifier::Alt],
+};
 
-/// The taskbar owns Win with Ctrl, Alt, or Shift plus a digit, so these use F-keys with
-/// the Snappy key, which nothing in Windows uses.
-fn assign_windows_workspace_shortcuts(settings: &mut Settings) {
-    assign_workspace_shortcuts(
-        settings,
-        |n| (format!("F{n}"), format!("F{n}")),
-        &[Modifier::Ctrl, Modifier::Alt, Modifier::Meta],
-        &[Modifier::Ctrl, Modifier::Alt, Modifier::Shift, Modifier::Meta],
-        &[Modifier::Ctrl, Modifier::Alt, Modifier::Shift],
-    );
-}
+/// The taskbar owns Win with Ctrl, Alt, or Shift plus a digit, so these use F-keys, which
+/// nothing in Windows uses with these modifiers.
+const WINDOWS_CHORDS: RunChords = RunChords {
+    key: |n| (format!("F{n}"), format!("F{n}")),
+    zone: &[Modifier::Ctrl, Modifier::Alt, Modifier::Meta],
+    send: &[Modifier::Ctrl, Modifier::Alt, Modifier::Shift, Modifier::Meta],
+    send_and_switch: &[Modifier::Ctrl, Modifier::Alt, Modifier::Shift],
+};
 
-/// Super with Ctrl or Alt and a digit, which the zone shortcuts and the container's
-/// window manager leave free.
-fn assign_linux_workspace_shortcuts(settings: &mut Settings) {
-    assign_workspace_shortcuts(
-        settings,
-        digit,
-        &[Modifier::Ctrl, Modifier::Meta],
-        &[Modifier::Ctrl, Modifier::Shift, Modifier::Meta],
-        &[Modifier::Alt, Modifier::Meta],
-    );
-}
+/// Super with Ctrl or Alt and a digit, which the container's window manager leaves free.
+const LINUX_CHORDS: RunChords = RunChords {
+    key: digit,
+    zone: &[Modifier::Ctrl, Modifier::Meta],
+    send: &[Modifier::Ctrl, Modifier::Shift, Modifier::Meta],
+    send_and_switch: &[Modifier::Alt, Modifier::Meta],
+};
 
 /// GNOME binds Super with Ctrl and a digit to opening an app's new window, and Ctrl+Alt
 /// with an F-key switches to a text console, so these use Super with Alt, Shift, or both.
-fn assign_gnome_workspace_shortcuts(settings: &mut Settings) {
-    assign_workspace_shortcuts(
-        settings,
-        digit,
-        &[Modifier::Alt, Modifier::Meta],
-        &[Modifier::Ctrl, Modifier::Shift, Modifier::Meta],
-        &[Modifier::Alt, Modifier::Shift, Modifier::Meta],
-    );
-}
+const GNOME_CHORDS: RunChords = RunChords {
+    key: digit,
+    zone: &[Modifier::Alt, Modifier::Meta],
+    send: &[Modifier::Ctrl, Modifier::Shift, Modifier::Meta],
+    send_and_switch: &[Modifier::Alt, Modifier::Shift, Modifier::Meta],
+};
 
 /// A freshly started GNOME Shell ignores title bar drags of a Wayland app until the session
 /// has handled some input, so one throwaway window is clicked and dragged first.
@@ -367,19 +374,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_test_settings_are_valid_and_cover_every_workspace_shortcut() {
+    fn the_test_settings_keep_every_default_and_give_the_rest_a_chord() {
         let settings = test_settings().unwrap();
+        let defaults = Settings::defaults(PLATFORM);
         let workspaces = &settings.workspaces;
         assert!(workspaces.enabled);
-        assert_eq!(workspaces, &{
-            let mut expected = Settings::defaults(PLATFORM).workspaces;
-            expected.enabled = true;
-            expected.items.clone_from(&workspaces.items);
-            expected
-        });
-        assert_eq!(workspaces.steps().count(), 4);
-        for workspace in &workspaces.items {
+        assert_eq!(workspaces.steps().count(), 5);
+        assert!(
+            workspaces
+                .steps()
+                .all(|(step, chord)| defaults.workspaces.step(step) == Some(chord))
+        );
+        for (workspace, default) in workspaces.items.iter().zip(&defaults.workspaces.items) {
+            assert_eq!(workspace.switch_shortcut, default.switch_shortcut);
             assert_eq!(workspace.chords().count(), 3, "{}", workspace.id);
         }
+        assert_eq!(settings.navigation, defaults.navigation);
+        let halves = settings.layout("halves").unwrap();
+        assert_eq!(settings.options(halves).zone_shortcuts.len(), 2);
     }
 }

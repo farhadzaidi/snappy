@@ -40,8 +40,9 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
     match action {
         HotKeyAction::PreviousWorkspace => workspaces::cycle(shared, -1),
         HotKeyAction::NextWorkspace => workspaces::cycle(shared, 1),
-        HotKeyAction::MoveToPreviousWorkspace => workspaces::take_focused(shared, -1),
-        HotKeyAction::MoveToNextWorkspace => workspaces::take_focused(shared, 1),
+        HotKeyAction::SendToPreviousWorkspace => workspaces::send_and_stay(shared, -1),
+        HotKeyAction::SendToNextWorkspace => workspaces::send_and_stay(shared, 1),
+        HotKeyAction::TakeAlong => workspaces::take_along(&mut shared.core.borrow_mut()),
         HotKeyAction::SwitchWorkspace(target) => workspaces::request_switch(shared, &target, false),
         HotKeyAction::SendToWorkspace(target) => workspaces::send_focused(shared, &target, false),
         HotKeyAction::SendAndSwitch(target) => workspaces::send_focused(shared, &target, true),

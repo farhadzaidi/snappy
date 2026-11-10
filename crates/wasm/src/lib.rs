@@ -60,7 +60,7 @@ exports! {
     layoutConflict => layout_conflict,
     layoutForDisplay => layout_for_display,
     layoutOptions => layout_options,
-    numberedWorkspace => numbered_workspace,
+    newWorkspace => new_workspace,
 }
 
 #[cfg(test)]

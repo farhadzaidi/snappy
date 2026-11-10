@@ -362,7 +362,8 @@ fn enable_workspaces<P: Platform>(core: &mut Core<P>) -> Result<(), String> {
     Ok(())
 }
 
-/// A new workspace with the lowest free number and no shortcuts.
+/// A new workspace with the lowest free number, switched to with the Snappy key and that
+/// number when it is a free single digit.
 fn add_workspace<P: Platform>(core: &mut Core<P>) -> Result<(), String> {
     let items = &core.settings.workspaces.items;
     if items.len() >= snappy_core::settings::MAX_WORKSPACES {
@@ -372,7 +373,7 @@ fn add_workspace<P: Platform>(core: &mut Core<P>) -> Result<(), String> {
         .find(|n| !items.iter().any(|item| item.name == format!("Workspace {n}")))
         .unwrap_or(items.len() + 1);
     let id = new_id(core, number);
-    let mut workspace = Workspace::numbered(id.clone(), number);
+    let mut workspace = core.settings.new_workspace(id.clone(), number);
     workspace.displays = core
         .settings
         .workspaces

@@ -16,10 +16,12 @@ use crate::settings::{
 pub enum HotKeyAction {
     PreviousWorkspace,
     NextWorkspace,
-    /// Take the focused window to the previous workspace and switch there.
-    MoveToPreviousWorkspace,
-    /// Take the focused window to the next workspace and switch there.
-    MoveToNextWorkspace,
+    /// Send the focused window to the previous workspace and stay.
+    SendToPreviousWorkspace,
+    /// Send the focused window to the next workspace and stay.
+    SendToNextWorkspace,
+    /// Pick up or put down the focused window, to go along with the next switch.
+    TakeAlong,
     SwitchWorkspace(String),
     SendToWorkspace(String),
     SendAndSwitch(String),
@@ -39,8 +41,9 @@ impl HotKeyAction {
         match step {
             WorkspaceStep::Previous => HotKeyAction::PreviousWorkspace,
             WorkspaceStep::Next => HotKeyAction::NextWorkspace,
-            WorkspaceStep::MovePrevious => HotKeyAction::MoveToPreviousWorkspace,
-            WorkspaceStep::MoveNext => HotKeyAction::MoveToNextWorkspace,
+            WorkspaceStep::SendPrevious => HotKeyAction::SendToPreviousWorkspace,
+            WorkspaceStep::SendNext => HotKeyAction::SendToNextWorkspace,
+            WorkspaceStep::TakeAlong => HotKeyAction::TakeAlong,
         }
     }
 
@@ -367,20 +370,33 @@ mod tests {
         settings.layouts.options.insert(layout_id.into(), options);
     }
 
+    fn with_zone(settings: &mut Settings, zone_id: &str, chord: KeyChord) {
+        let layout_id = zone_id.rsplit_once('-').map_or(zone_id, |(layout, _)| layout);
+        let layout = settings.layout(layout_id).unwrap().clone();
+        let mut options = settings.options(&layout);
+        options.zone_shortcuts.insert(zone_id.into(), chord);
+        settings.layouts.options.insert(layout_id.into(), options);
+    }
+
     #[test]
     fn defaults_have_no_conflicts() {
-        assert_eq!(first_conflict(&Settings::defaults(MAC), MAC), None);
+        for platform in [Platform::MacOs, Platform::Windows, Platform::Linux] {
+            let mut settings = Settings::defaults(platform);
+            assert_eq!(first_conflict(&settings, platform), None, "{platform:?}");
+            settings.workspaces.enabled = true;
+            assert_eq!(first_conflict(&settings, platform), None, "{platform:?}");
+        }
     }
 
     #[test]
     fn zone_chords_are_unique_within_a_layout() {
-        let settings = Settings::defaults(MAC);
+        let mut settings = Settings::defaults(MAC);
+        with_zone(&mut settings, "halves-0", snappy("KeyK"));
         let halves = preset("halves").unwrap();
         let mut options = settings.options(halves);
-        let first = options.zone_shortcuts["halves-0"].clone();
-        options.zone_shortcuts.insert("halves-1".into(), first);
+        options.zone_shortcuts.insert("halves-1".into(), snappy("KeyK"));
         let conflict = conflict_with_layout(&settings, halves, &options, MAC).unwrap();
-        assert_eq!(conflict, "Halves uses Snappy + 1 for more than one zone.");
+        assert_eq!(conflict, "Halves uses Snappy + K for more than one zone.");
     }
 
     #[test]
@@ -395,7 +411,8 @@ mod tests {
         );
 
         let mut settings = Settings::defaults(MAC);
-        with_selection(&mut settings, "halves", snappy("Digit1"));
+        with_zone(&mut settings, "rows-0", snappy("KeyK"));
+        with_selection(&mut settings, "halves", snappy("KeyK"));
         assert!(
             first_conflict(&settings, MAC)
                 .unwrap()
@@ -419,7 +436,7 @@ mod tests {
     fn the_snappy_key_and_its_modifiers_held_by_hand_are_one_chord() {
         let mut settings = Settings::defaults(MAC);
         let by_hand = KeyChord::new("Digit1", [Modifier::Meta, Modifier::Alt, Modifier::Ctrl]);
-        settings.workspaces.items[0].switch_shortcut = Some(by_hand.clone());
+        settings.workspaces.items[1].switch_shortcut = Some(by_hand.clone());
         settings.workspaces.enabled = true;
         assert_eq!(
             first_conflict(&settings, MAC).as_deref(),
@@ -439,15 +456,14 @@ mod tests {
     #[test]
     fn disabled_layouts_reserve_nothing() {
         let mut settings = Settings::defaults(MAC);
-        with_selection(&mut settings, "halves", snappy("Digit1"));
+        with_selection(&mut settings, "halves", snappy("KeyK"));
+        with_zone(&mut settings, "rows-0", snappy("KeyK"));
+        assert!(first_conflict(&settings, MAC).is_some());
         for preset in crate::layout::presets() {
             let mut options = settings.options(preset);
             options.enabled = preset.id == "halves";
             settings.layouts.options.insert(preset.id.clone(), options);
         }
-        let mut halves = settings.options(preset("halves").unwrap());
-        halves.zone_shortcuts.clear();
-        settings.layouts.options.insert("halves".into(), halves);
         assert_eq!(first_conflict(&settings, MAC), None);
     }
 
@@ -506,53 +522,82 @@ mod tests {
         settings.workspaces.enabled = true;
         let displays = vec!["d".to_owned()];
         settings.history.undo = Some(snappy("KeyU"));
+        with_zone(&mut settings, "focus-0", snappy("KeyK"));
+        with_zone(&mut settings, "focus-1", snappy("KeyL"));
         let paused = desired_hotkeys(&settings, &displays, false);
         assert!(paused.iter().all(|hotkey| matches!(
             hotkey.action,
             HotKeyAction::PreviousWorkspace
                 | HotKeyAction::NextWorkspace
-                | HotKeyAction::MoveToPreviousWorkspace
-                | HotKeyAction::MoveToNextWorkspace
+                | HotKeyAction::SendToPreviousWorkspace
+                | HotKeyAction::SendToNextWorkspace
+                | HotKeyAction::TakeAlong
                 | HotKeyAction::SwitchWorkspace(_)
                 | HotKeyAction::SendToWorkspace(_)
                 | HotKeyAction::SendAndSwitch(_)
         )));
-        assert_eq!(paused.len(), 4);
+        assert_eq!(paused.len(), 5 + 3);
         let live = desired_hotkeys(&settings, &displays, true);
         let zones = live
             .iter()
             .filter(|hotkey| hotkey.action == HotKeyAction::Zone)
             .count();
-        assert_eq!(zones, 3);
+        assert_eq!(zones, 2);
         assert!(live.iter().any(|hotkey| hotkey.action == HotKeyAction::UndoMove));
     }
 
     #[test]
-    fn move_window_step_chords_check_the_same_rules_as_other_workspace_chords() {
+    fn send_and_take_along_chords_check_the_same_rules_as_other_workspace_chords() {
         let mut settings = Settings::defaults(MAC);
-        settings.workspaces.move_next = settings.workspaces.previous.clone();
+        settings.workspaces.send_next = settings.workspaces.previous.clone();
         assert_eq!(
             first_conflict(&settings, MAC).as_deref(),
             Some("Snappy + ; is already assigned to Previous workspace.")
         );
 
         let mut settings = Settings::defaults(MAC);
-        settings.workspaces.move_previous = Some(KeyChord::new("KeyQ", [Modifier::Meta]));
+        settings.workspaces.send_previous = Some(KeyChord::new("KeyQ", [Modifier::Meta]));
         assert_eq!(
             first_conflict(&settings, MAC).as_deref(),
             Some("Command + Q is already assigned to a standard app command.")
         );
 
         let mut settings = Settings::defaults(MAC);
-        settings.workspaces.items[2].send_shortcut = settings.workspaces.move_next.clone();
+        settings.workspaces.items[2].send_shortcut = settings.workspaces.send_next.clone();
         assert_eq!(
             first_conflict(&settings, MAC).as_deref(),
-            Some("Snappy + / is already assigned to Move window to next workspace.")
+            Some("Snappy + / is already assigned to Send window to next workspace.")
+        );
+
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.items[1].send_and_switch_shortcut = settings.workspaces.take_along.clone();
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + ↩ is already assigned to Take along.")
+        );
+
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.take_along = settings.navigation.nearest_empty.clone();
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + Space is already assigned to Move to the nearest empty zone.")
         );
     }
 
     #[test]
-    fn move_window_step_chords_register_while_workspaces_run() {
+    fn workspace_switches_by_number_clash_with_zone_digits_only_while_workspaces_are_on() {
+        let mut settings = Settings::defaults(MAC);
+        with_zone(&mut settings, "halves-0", snappy("Digit1"));
+        assert_eq!(first_conflict(&settings, MAC), None);
+        settings.workspaces.enabled = true;
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + 1 is already assigned to Switch to Workspace 1.")
+        );
+    }
+
+    #[test]
+    fn workspace_shortcuts_register_while_workspaces_run() {
         let mut settings = Settings::defaults(MAC);
         let actions = |settings: &Settings| -> Vec<HotKeyAction> {
             desired_hotkeys(settings, &[], false)
@@ -563,8 +608,12 @@ mod tests {
         assert!(actions(&settings).is_empty());
         settings.workspaces.enabled = true;
         let registered = actions(&settings);
-        assert!(registered.contains(&HotKeyAction::MoveToPreviousWorkspace));
-        assert!(registered.contains(&HotKeyAction::MoveToNextWorkspace));
+        assert!(registered.contains(&HotKeyAction::SendToPreviousWorkspace));
+        assert!(registered.contains(&HotKeyAction::SendToNextWorkspace));
+        assert!(registered.contains(&HotKeyAction::TakeAlong));
+        for id in ["workspace-1", "workspace-2", "workspace-3"] {
+            assert!(registered.contains(&HotKeyAction::SwitchWorkspace(id.to_owned())));
+        }
     }
 
     #[test]

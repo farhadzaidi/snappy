@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, KeyChord, Modifier, Mods, Platform};
-use snappy_core::settings::Settings;
+use snappy_core::settings::{Settings, Workspace};
 use snappy_platform::{
     Caption, DesktopGuard, HotKeys, Input, Overlay, OverlayScene, OverlayZone, PlatformEvent, WindowId,
     WindowSystem,
@@ -837,17 +837,22 @@ fn chords_grabbed_elsewhere_are_unavailable() {
     assert!(desktop.platform.is_available(&taken));
 }
 
-/// Every default zone, move-between-zones, nearest-empty-zone, and workspace step chord is
-/// free under the session's window manager, Xfwm4 with its default key bindings.
+/// Every default chord, moving between zones, to the nearest empty zone, the workspace
+/// steps, taking windows along, and switching to workspaces 1 to 9, is free under the
+/// session's window manager, Xfwm4 with its default key bindings.
 #[test]
 fn the_default_shortcuts_are_free() {
     let mut desktop = desktop!();
     let settings = Settings::defaults(Platform::Linux);
-    let layout = settings.layout("six").unwrap();
-    let mut chords: Vec<KeyChord> = settings.options(layout).zone_shortcuts.into_values().collect();
-    chords.extend(settings.navigation.chords().map(|(_, chord)| chord.clone()));
+    let mut chords: Vec<KeyChord> = settings
+        .navigation
+        .chords()
+        .map(|(_, chord)| chord.clone())
+        .collect();
     chords.extend(settings.navigation.nearest_empty.clone());
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
+    chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
+    assert_eq!(chords.len(), 5 + 5 + 9);
     let taken: Vec<String> = chords
         .iter()
         .filter(|chord| !desktop.platform.is_available(&chord.combo()))

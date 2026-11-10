@@ -18,8 +18,8 @@ pub const MAX_LAYOUT_OPTIONS: usize = 200;
 pub const MAX_WORKSPACES: usize = 32;
 pub const MAX_WORKSPACE_ID_LENGTH: usize = 128;
 pub const MAX_DISPLAY_ASSIGNMENTS: usize = 32;
-/// Zone shortcuts are created by default for this many leading zones.
-const DEFAULT_ZONE_SHORTCUTS: usize = 9;
+/// Workspaces numbered up to this get the Snappy key with their number to switch to them.
+const NUMBERED_SWITCH_SHORTCUTS: usize = 9;
 
 /// Display ID to layout ID.
 pub type DisplayAssignments = BTreeMap<String, String>;
@@ -192,27 +192,6 @@ impl LayoutOptions {
         }
     }
 
-    /// Options for a layout that has none stored: the Snappy key with 1…9 on the first nine
-    /// zones.
-    pub fn defaults_for(layout: &Layout) -> Self {
-        let zone_shortcuts = layout
-            .zones
-            .iter()
-            .take(DEFAULT_ZONE_SHORTCUTS)
-            .enumerate()
-            .map(|(index, zone)| {
-                let digit = index + 1;
-                let chord = KeyChord::snappy(&format!("Digit{digit}"), []);
-                (zone.id.clone(), chord.with_label(digit.to_string()))
-            })
-            .collect();
-        Self {
-            enabled: true,
-            select_shortcut: None,
-            zone_shortcuts,
-        }
-    }
-
     fn is_valid(&self) -> bool {
         self.zone_shortcuts.len() <= layout::MAX_ZONES
             && self.select_shortcut.as_ref().is_none_or(KeyChord::is_valid)
@@ -227,57 +206,47 @@ pub struct Workspaces {
     pub active_id: String,
     pub previous: Option<KeyChord>,
     pub next: Option<KeyChord>,
-    /// Take the focused window to the previous workspace and switch there.
+    /// Send the focused window to the previous workspace and stay.
     #[serde(default)]
-    pub move_previous: Option<KeyChord>,
-    /// Take the focused window to the next workspace and switch there.
+    pub send_previous: Option<KeyChord>,
+    /// Send the focused window to the next workspace and stay.
     #[serde(default)]
-    pub move_next: Option<KeyChord>,
+    pub send_next: Option<KeyChord>,
+    /// Pick up or put down the focused window; the next switch brings picked-up windows.
+    #[serde(default)]
+    pub take_along: Option<KeyChord>,
     pub items: Vec<Workspace>,
 }
 
-/// The shortcuts that step to the previous or next workspace, alone or taking the focused
-/// window along.
+/// The shortcuts for every workspace at once: stepping to the previous or next one,
+/// sending the focused window there, and taking windows along to the next switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkspaceStep {
     Previous,
     Next,
-    MovePrevious,
-    MoveNext,
+    SendPrevious,
+    SendNext,
+    TakeAlong,
 }
 
 impl WorkspaceStep {
-    pub const ALL: [WorkspaceStep; 4] = [
+    pub const ALL: [WorkspaceStep; 5] = [
         WorkspaceStep::Previous,
         WorkspaceStep::Next,
-        WorkspaceStep::MovePrevious,
-        WorkspaceStep::MoveNext,
+        WorkspaceStep::SendPrevious,
+        WorkspaceStep::SendNext,
+        WorkspaceStep::TakeAlong,
     ];
-
-    /// The steps that settings files written before they existed lack.
-    const ADDED_LATER: [WorkspaceStep; 2] = [WorkspaceStep::MovePrevious, WorkspaceStep::MoveNext];
-
-    /// How far through the saved order this step goes.
-    pub fn offset(self) -> isize {
-        match self {
-            WorkspaceStep::Previous | WorkspaceStep::MovePrevious => -1,
-            WorkspaceStep::Next | WorkspaceStep::MoveNext => 1,
-        }
-    }
-
-    /// True when the focused window goes along.
-    pub fn takes_window(self) -> bool {
-        matches!(self, WorkspaceStep::MovePrevious | WorkspaceStep::MoveNext)
-    }
 
     /// The name the settings app and conflict messages use.
     pub fn title(self) -> &'static str {
         match self {
             WorkspaceStep::Previous => "Previous workspace",
             WorkspaceStep::Next => "Next workspace",
-            WorkspaceStep::MovePrevious => "Move window to previous workspace",
-            WorkspaceStep::MoveNext => "Move window to next workspace",
+            WorkspaceStep::SendPrevious => "Send window to previous workspace",
+            WorkspaceStep::SendNext => "Send window to next workspace",
+            WorkspaceStep::TakeAlong => "Take along",
         }
     }
 
@@ -286,8 +255,9 @@ impl WorkspaceStep {
         match self {
             WorkspaceStep::Previous => "previous",
             WorkspaceStep::Next => "next",
-            WorkspaceStep::MovePrevious => "movePrevious",
-            WorkspaceStep::MoveNext => "moveNext",
+            WorkspaceStep::SendPrevious => "sendPrevious",
+            WorkspaceStep::SendNext => "sendNext",
+            WorkspaceStep::TakeAlong => "takeAlong",
         }
     }
 }
@@ -304,13 +274,14 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// "Workspace <number>", with no shortcuts of its own.
+    /// "Workspace <number>", switched to with the Snappy key and its number when that is a
+    /// single digit, and with no other shortcuts.
     pub fn numbered(id: impl Into<String>, number: usize) -> Self {
         Self {
             id: id.into(),
             name: format!("Workspace {number}"),
             displays: DisplayAssignments::new(),
-            switch_shortcut: None,
+            switch_shortcut: numbered_switch_shortcut(number),
             send_shortcut: None,
             send_and_switch_shortcut: None,
         }
@@ -335,10 +306,18 @@ impl Workspace {
     }
 }
 
+/// The Snappy key with the workspace's number, for workspaces 1 to 9.
+fn numbered_switch_shortcut(number: usize) -> Option<KeyChord> {
+    (1..=NUMBERED_SWITCH_SHORTCUTS)
+        .contains(&number)
+        .then(|| KeyChord::snappy(&format!("Digit{number}"), []).with_label(number.to_string()))
+}
+
 impl Workspaces {
-    /// Three workspaces, stepped through with the Snappy key and the semicolon and quote
-    /// keys, or with the period and slash keys to take the focused window along. Both pairs
-    /// sit together under the right hand, on every keyboard layout's home and bottom rows.
+    /// Three workspaces, switched to with the Snappy key and their number, and stepped
+    /// through with the Snappy key and the semicolon and quote keys, or with the period and
+    /// slash keys to send the focused window away. Both pairs sit together under the right
+    /// hand, on every keyboard layout's home and bottom rows. Return takes windows along.
     pub fn defaults() -> Self {
         let chord = |code: &str, label: &str| Some(KeyChord::snappy(code, []).with_label(label));
         Self {
@@ -346,8 +325,9 @@ impl Workspaces {
             active_id: "workspace-1".to_owned(),
             previous: chord("Semicolon", ";"),
             next: chord("Quote", "'"),
-            move_previous: chord("Period", "."),
-            move_next: chord("Slash", "/"),
+            send_previous: chord("Period", "."),
+            send_next: chord("Slash", "/"),
+            take_along: Some(KeyChord::snappy("Enter", [])),
             items: (1..=3)
                 .map(|n| Workspace::numbered(format!("workspace-{n}"), n))
                 .collect(),
@@ -358,8 +338,9 @@ impl Workspaces {
         match step {
             WorkspaceStep::Previous => self.previous.as_ref(),
             WorkspaceStep::Next => self.next.as_ref(),
-            WorkspaceStep::MovePrevious => self.move_previous.as_ref(),
-            WorkspaceStep::MoveNext => self.move_next.as_ref(),
+            WorkspaceStep::SendPrevious => self.send_previous.as_ref(),
+            WorkspaceStep::SendNext => self.send_next.as_ref(),
+            WorkspaceStep::TakeAlong => self.take_along.as_ref(),
         }
     }
 
@@ -367,8 +348,9 @@ impl Workspaces {
         let slot = match step {
             WorkspaceStep::Previous => &mut self.previous,
             WorkspaceStep::Next => &mut self.next,
-            WorkspaceStep::MovePrevious => &mut self.move_previous,
-            WorkspaceStep::MoveNext => &mut self.move_next,
+            WorkspaceStep::SendPrevious => &mut self.send_previous,
+            WorkspaceStep::SendNext => &mut self.send_next,
+            WorkspaceStep::TakeAlong => &mut self.take_along,
         };
         *slot = chord;
     }
@@ -446,13 +428,25 @@ impl Settings {
         self.layouts().find(|layout| layout.id == id)
     }
 
-    /// Stored options, or the defaults for a layout that has none.
+    /// Stored options, or empty ones for a layout that has none.
     pub fn options(&self, layout: &Layout) -> LayoutOptions {
         self.layouts
             .options
             .get(&layout.id)
             .cloned()
-            .unwrap_or_else(|| LayoutOptions::defaults_for(layout))
+            .unwrap_or_else(LayoutOptions::empty)
+    }
+
+    /// A workspace to add: `Workspace::numbered`, without the switch shortcut when another
+    /// binding already uses it. A workspace keeps its shortcuts when others are reordered
+    /// or deleted, so its number's chord may belong to another workspace by then.
+    pub fn new_workspace(&self, id: impl Into<String>, number: usize) -> Workspace {
+        let mut workspace = Workspace::numbered(id, number);
+        let used = bindings::bound_combos(self);
+        workspace.switch_shortcut = workspace
+            .switch_shortcut
+            .filter(|chord| !used.contains(&chord.combo()));
+        workspace
     }
 
     pub fn is_enabled(&self, layout: &Layout) -> bool {
@@ -571,9 +565,9 @@ impl Settings {
         self.layouts.options = options;
     }
 
-    /// Parse a settings file. Fields missing from the file take their defaults; a file
-    /// without `navigation`, without the nearest-empty-zone shortcut, or without the
-    /// move-window workspace steps, gets those default chords only where unused.
+    /// Parse a settings file. Fields missing from the file take their defaults, except
+    /// that a default shortcut is left unassigned when another binding the file has already
+    /// uses its chord. Shortcuts the file has, cleared ones included, are kept.
     pub fn from_json(bytes: &[u8], platform: Platform) -> Result<Settings, SettingsError> {
         if bytes.len() > MAX_FILE_BYTES {
             return Err(SettingsError::Invalid);
@@ -589,20 +583,17 @@ impl Settings {
             Some(written) => serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?,
             None => Navigation::default(),
         };
-        let missing_steps: Vec<WorkspaceStep> = file
-            .workspaces
-            .as_ref()
-            .map(|written| {
-                WorkspaceStep::ADDED_LATER
-                    .into_iter()
-                    .filter(|step| written.get(step.field()).is_none())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let workspaces = match file.workspaces {
+        let missing_workspace_chords = match &file.workspaces {
+            Some(written) => MissingChord::in_written(written),
+            None => MissingChord::all(&defaults.workspaces),
+        };
+        let mut workspaces: Workspaces = match file.workspaces {
             Some(written) => serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?,
             None => defaults.workspaces.clone(),
         };
+        for missing in &missing_workspace_chords {
+            missing.clear(&mut workspaces);
+        }
         let mut settings = Settings {
             version: file.version.unwrap_or(FORMAT_VERSION),
             snapping: file.snapping.unwrap_or(defaults.snapping),
@@ -615,19 +606,13 @@ impl Settings {
         if navigation_missing {
             settings.navigation = bindings::unused_navigation_defaults(&settings);
         }
-        let used = bindings::bound_combos(&settings);
-        for step in missing_steps {
-            let chord = defaults
-                .workspaces
-                .step(step)
-                .filter(|chord| !used.contains(&chord.combo()));
-            settings.workspaces.set_step(step, chord.cloned());
-        }
+        let mut used = bindings::bound_combos(&settings);
+        let mut unused = |chord: Option<KeyChord>| chord.filter(|chord| used.insert(chord.combo()));
         if nearest_empty_missing {
-            settings.navigation.nearest_empty = defaults
-                .navigation
-                .nearest_empty
-                .filter(|chord| !used.contains(&chord.combo()));
+            settings.navigation.nearest_empty = unused(defaults.navigation.nearest_empty);
+        }
+        for missing in missing_workspace_chords {
+            missing.fill(&mut settings.workspaces, &mut unused);
         }
         settings.validate(platform)
     }
@@ -638,6 +623,69 @@ impl Settings {
             return Err(SettingsError::Invalid);
         }
         Ok(bytes)
+    }
+}
+
+/// A workspace shortcut a settings file doesn't mention, as files written before it
+/// existed don't.
+#[derive(Debug, Clone, Copy)]
+enum MissingChord {
+    Step(WorkspaceStep),
+    /// The switch shortcut of the workspace at this position.
+    Switch(usize),
+}
+
+impl MissingChord {
+    fn in_written(workspaces: &serde_json::Value) -> Vec<MissingChord> {
+        let steps = WorkspaceStep::ALL
+            .into_iter()
+            .filter(|step| workspaces.get(step.field()).is_none())
+            .map(MissingChord::Step);
+        let items = workspaces.get("items").and_then(serde_json::Value::as_array);
+        let switches = items
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter(|(_, item)| item.get("switchShortcut").is_none())
+            .map(|(index, _)| MissingChord::Switch(index));
+        steps.chain(switches).collect()
+    }
+
+    /// Every workspace shortcut, for a file without workspaces.
+    fn all(workspaces: &Workspaces) -> Vec<MissingChord> {
+        let steps = WorkspaceStep::ALL.into_iter().map(MissingChord::Step);
+        let switches = (0..workspaces.items.len()).map(MissingChord::Switch);
+        steps.chain(switches).collect()
+    }
+
+    fn clear(self, workspaces: &mut Workspaces) {
+        match self {
+            MissingChord::Step(step) => workspaces.set_step(step, None),
+            MissingChord::Switch(index) => {
+                if let Some(item) = workspaces.items.get_mut(index) {
+                    item.switch_shortcut = None;
+                }
+            }
+        }
+    }
+
+    /// Assign the default chord, passed through `unused`, which drops chords in use.
+    fn fill(
+        self,
+        workspaces: &mut Workspaces,
+        unused: &mut impl FnMut(Option<KeyChord>) -> Option<KeyChord>,
+    ) {
+        match self {
+            MissingChord::Step(step) => {
+                let chord = Workspaces::defaults().step(step).cloned();
+                workspaces.set_step(step, unused(chord));
+            }
+            MissingChord::Switch(index) => {
+                if let Some(item) = workspaces.items.get_mut(index) {
+                    item.switch_shortcut = unused(numbered_switch_shortcut(index + 1));
+                }
+            }
+        }
     }
 }
 
@@ -748,8 +796,11 @@ mod tests {
                         displays.into_iter().map(|(d, l)| (d, l.to_owned())).collect();
                     settings.layouts.default_layout_id = default.to_owned();
                     for (preset, (enabled, ghost)) in layout::presets().iter().zip(options) {
-                        let mut options = LayoutOptions::defaults_for(preset);
+                        let mut options = LayoutOptions::empty();
                         options.enabled = enabled;
+                        options
+                            .zone_shortcuts
+                            .insert(preset.zones[0].id.clone(), KeyChord::snappy("Digit1", []));
                         if ghost {
                             options
                                 .zone_shortcuts
@@ -879,11 +930,16 @@ mod tests {
     }
 
     #[test]
-    fn presets_get_default_zone_shortcuts() {
+    fn zones_have_no_default_shortcuts() {
         let settings = Settings::defaults(MAC).validate(MAC).unwrap();
-        let focus = &settings.layouts.options["focus"];
-        assert_eq!(focus.zone_shortcuts.len(), 3);
-        assert_eq!(focus.zone_shortcuts["focus-0"].code.as_str(), "Digit1");
+        assert_eq!(settings.layouts.options.len(), layout::presets().len());
+        assert!(
+            settings
+                .layouts
+                .options
+                .values()
+                .all(|options| options.zone_shortcuts.is_empty())
+        );
     }
 
     #[test]
@@ -900,7 +956,7 @@ mod tests {
     }
 
     #[test]
-    fn default_shortcuts_use_the_snappy_key_on_every_platform() {
+    fn default_shortcuts_are_the_snappy_key_and_one_key_on_every_platform() {
         let combo = |chord: Option<&KeyChord>| chord.map(KeyChord::combo);
         for platform in PLATFORMS {
             let settings = Settings::defaults(platform).validate(platform).unwrap();
@@ -913,26 +969,33 @@ mod tests {
                     snappy("Quote"),
                     snappy("Period"),
                     snappy("Slash"),
+                    snappy("Enter"),
                 ],
                 "{platform:?}"
             );
-            assert!(workspaces.steps().all(|(_, chord)| chord.mods.has_snappy_key()));
-            assert!(workspaces.items.iter().all(|item| item.chords().count() == 0));
+            let switches: Vec<_> = workspaces
+                .items
+                .iter()
+                .map(|item| combo(item.switch_shortcut.as_ref()))
+                .collect();
+            assert_eq!(switches, [snappy("Digit1"), snappy("Digit2"), snappy("Digit3")]);
+            assert!(
+                workspaces
+                    .items
+                    .iter()
+                    .all(|item| item.send_shortcut.is_none() && item.send_and_switch_shortcut.is_none())
+            );
             assert_eq!(combo(settings.navigation.left.as_ref()), snappy("ArrowLeft"));
             assert_eq!(combo(settings.navigation.nearest_empty.as_ref()), snappy("Space"));
-            assert!(
-                settings
-                    .navigation
-                    .nearest_empty
-                    .as_ref()
-                    .unwrap()
-                    .mods
-                    .has_snappy_key()
-            );
-            let focus = &settings.layouts.options["focus"];
-            assert_eq!(Some(focus.zone_shortcuts["focus-0"].combo()), snappy("Digit1"));
-            assert!(focus.zone_shortcuts["focus-0"].mods.has_snappy_key());
             assert_eq!(settings.history, MoveHistory::default());
+
+            let every_chord = bindings::bound_combos(&settings);
+            assert_eq!(every_chord.len(), 5 + 3 + 5, "{platform:?}");
+            let snappy_key = crate::keys::snappy_key_modifiers();
+            assert!(
+                every_chord.iter().all(|combo| combo.mods == snappy_key),
+                "nothing but the Snappy key and one key: {every_chord:?}"
+            );
         }
         assert_eq!(
             Settings::defaults(Platform::Windows).workspaces,
@@ -940,47 +1003,184 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_file_without_move_steps_gets_their_defaults() {
-        let mut written = serde_json::to_value(Settings::defaults(MAC)).unwrap();
+    /// The defaults written without some workspace fields, as older files are.
+    fn written_without(settings: Settings, fields: &[&str]) -> Vec<u8> {
+        let mut written = serde_json::to_value(settings).unwrap();
         let workspaces = written["workspaces"].as_object_mut().unwrap();
-        workspaces.remove("movePrevious");
-        workspaces.remove("moveNext");
-        workspaces.insert("next".into(), serde_json::Value::Null);
-        let bytes = serde_json::to_vec(&written).unwrap();
+        for field in fields {
+            workspaces.remove(*field);
+        }
+        serde_json::to_vec(&written).unwrap()
+    }
+
+    #[test]
+    fn a_file_without_send_steps_or_take_along_gets_their_defaults() {
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.next = None;
+        let bytes = written_without(settings, &["sendPrevious", "sendNext", "takeAlong"]);
         let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(
-            loaded.workspaces.move_previous.map(|c| c.combo()),
+            loaded.workspaces.send_previous.map(|c| c.combo()),
             snappy("Period")
         );
-        assert_eq!(loaded.workspaces.move_next.map(|c| c.combo()), snappy("Slash"));
+        assert_eq!(loaded.workspaces.send_next.map(|c| c.combo()), snappy("Slash"));
+        assert_eq!(loaded.workspaces.take_along.map(|c| c.combo()), snappy("Enter"));
         assert_eq!(loaded.workspaces.next, None, "written steps are kept");
         assert_eq!(loaded.history, MoveHistory::default());
     }
 
     #[test]
-    fn a_file_without_move_steps_skips_defaults_another_binding_uses() {
+    fn a_file_without_send_steps_or_take_along_skips_defaults_another_binding_uses() {
         let mut settings = Settings::defaults(MAC);
-        settings.workspaces.move_next = None;
         settings.workspaces.items[0].switch_shortcut = Some(KeyChord::snappy("Slash", []));
-        let mut written = serde_json::to_value(settings).unwrap();
-        let workspaces = written["workspaces"].as_object_mut().unwrap();
-        workspaces.remove("movePrevious");
-        workspaces.remove("moveNext");
-        let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
+        settings.history.undo = Some(KeyChord::snappy("Enter", []));
+        settings.workspaces.send_next = None;
+        settings.workspaces.take_along = None;
+        let bytes = written_without(settings, &["sendPrevious", "sendNext", "takeAlong"]);
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(
-            loaded.workspaces.move_previous.map(|c| c.combo()),
+            loaded.workspaces.send_previous.map(|c| c.combo()),
             snappy("Period")
         );
-        assert_eq!(loaded.workspaces.move_next, None);
+        assert_eq!(loaded.workspaces.send_next, None);
+        assert_eq!(loaded.workspaces.take_along, None);
+        assert_eq!(loaded.history.undo.map(|c| c.combo()), snappy("Enter"));
     }
 
     #[test]
-    fn a_saved_cleared_move_step_stays_cleared() {
+    fn a_file_with_the_former_move_steps_ignores_them_and_gets_the_send_steps() {
+        let mut written = serde_json::to_value(Settings::defaults(MAC)).unwrap();
+        let workspaces = written["workspaces"].as_object_mut().unwrap();
+        for field in ["sendPrevious", "sendNext", "takeAlong"] {
+            workspaces.remove(field);
+        }
+        let former = |code: &str| serde_json::json!({ "code": code, "mods": ["snappy", "shift"] });
+        workspaces.insert("movePrevious".into(), former("BracketLeft"));
+        workspaces.insert("moveNext".into(), former("BracketRight"));
+        let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
+        assert_eq!(
+            loaded.workspaces.send_previous.as_ref().map(KeyChord::combo),
+            snappy("Period")
+        );
+        assert_eq!(
+            loaded.workspaces.send_next.as_ref().map(KeyChord::combo),
+            snappy("Slash")
+        );
+        let saved = String::from_utf8(loaded.to_json().unwrap()).unwrap();
+        assert!(!saved.contains("moveNext"), "{saved}");
+    }
+
+    #[test]
+    fn a_saved_cleared_workspace_shortcut_stays_cleared() {
         let mut settings = Settings::defaults(MAC);
-        settings.workspaces.set_step(WorkspaceStep::MoveNext, None);
+        settings.workspaces.set_step(WorkspaceStep::SendNext, None);
+        settings.workspaces.set_step(WorkspaceStep::TakeAlong, None);
+        settings.workspaces.items[1].switch_shortcut = None;
         let loaded = Settings::from_json(&settings.to_json().unwrap(), MAC).unwrap();
-        assert_eq!(loaded.workspaces.move_next, None);
+        assert_eq!(loaded.workspaces.send_next, None);
+        assert_eq!(loaded.workspaces.take_along, None);
+        assert_eq!(loaded.workspaces.items[1].switch_shortcut, None);
+    }
+
+    /// Layout options as files written while zones had digit shortcuts store them.
+    fn zones_on_the_digits(settings: &mut Settings) {
+        for preset in layout::presets() {
+            let mut options = LayoutOptions::empty();
+            for (index, zone) in preset.zones.iter().enumerate().take(9) {
+                let digit = index + 1;
+                options
+                    .zone_shortcuts
+                    .insert(zone.id.clone(), KeyChord::snappy(&format!("Digit{digit}"), []));
+            }
+            settings.layouts.options.insert(preset.id.clone(), options);
+        }
+    }
+
+    #[test]
+    fn a_file_without_workspaces_keeps_its_zone_digits_and_skips_those_switch_defaults() {
+        let mut settings = Settings::defaults(MAC);
+        zones_on_the_digits(&mut settings);
+        let mut written = serde_json::to_value(&settings).unwrap();
+        written.as_object_mut().unwrap().remove("workspaces");
+        let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
+        assert_eq!(
+            loaded.layouts.options["halves"].zone_shortcuts["halves-0"].combo(),
+            KeyChord::snappy("Digit1", []).combo()
+        );
+        assert!(
+            loaded
+                .workspaces
+                .items
+                .iter()
+                .all(|item| item.switch_shortcut.is_none())
+        );
+        assert_eq!(loaded.workspaces.take_along.map(|c| c.combo()), snappy("Enter"));
+        assert_eq!(loaded.workspaces.items.len(), 3);
+    }
+
+    #[test]
+    fn a_file_with_zone_digits_and_cleared_switch_shortcuts_loads_unchanged() {
+        let mut settings = Settings::defaults(MAC);
+        zones_on_the_digits(&mut settings);
+        for item in &mut settings.workspaces.items {
+            item.switch_shortcut = None;
+        }
+        let loaded = Settings::from_json(&settings.to_json().unwrap(), MAC).unwrap();
+        assert_eq!(loaded.workspaces, settings.workspaces);
+        assert_eq!(loaded.layouts.options["halves"].zone_shortcuts.len(), 2);
+    }
+
+    #[test]
+    fn workspaces_without_a_written_switch_shortcut_get_their_positions_digit_where_free() {
+        let mut settings = Settings::defaults(MAC);
+        settings.history.redo = Some(KeyChord::snappy("Digit2", []));
+        settings.workspaces.items[1].switch_shortcut = None;
+        let mut written = serde_json::to_value(&settings).unwrap();
+        for item in written["workspaces"]["items"].as_array_mut().unwrap() {
+            item.as_object_mut().unwrap().remove("switchShortcut");
+        }
+        let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
+        let switches: Vec<_> = loaded
+            .workspaces
+            .items
+            .iter()
+            .map(|item| item.switch_shortcut.as_ref().map(KeyChord::combo))
+            .collect();
+        assert_eq!(switches, [snappy("Digit1"), None, snappy("Digit3")]);
+    }
+
+    #[test]
+    fn workspaces_one_to_nine_switch_with_their_digit_and_later_ones_have_no_shortcuts() {
+        let fourth = Workspace::numbered("workspace-4", 4);
+        assert_eq!(fourth.name, "Workspace 4");
+        assert_eq!(
+            fourth.switch_shortcut.as_ref().map(KeyChord::combo),
+            snappy("Digit4")
+        );
+        assert_eq!(
+            fourth.switch_shortcut.as_ref().unwrap().compact_label(MAC),
+            "Snappy + 4"
+        );
+        assert_eq!(fourth.send_shortcut, None);
+        assert_eq!(fourth.send_and_switch_shortcut, None);
+        assert!(Workspace::numbered("workspace-9", 9).switch_shortcut.is_some());
+        assert_eq!(Workspace::numbered("workspace-10", 10).chords().count(), 0);
+    }
+
+    #[test]
+    fn a_new_workspace_skips_its_digit_when_another_binding_uses_it() {
+        let mut settings = Settings::defaults(MAC);
+        let added = settings.new_workspace("workspace-4", 4);
+        assert_eq!(
+            added.switch_shortcut.as_ref().map(KeyChord::combo),
+            snappy("Digit4")
+        );
+
+        settings.workspaces.items[2].switch_shortcut = Some(KeyChord::snappy("Digit4", []));
+        let added = settings.new_workspace("workspace-4", 4);
+        assert_eq!(added.switch_shortcut, None);
+        settings.workspaces.items.push(added);
+        assert_eq!(settings.validate(MAC).map(|_| ()), Ok(()));
     }
 
     /// The defaults written without the nearest-empty-zone shortcut, as older files are.
@@ -1020,13 +1220,6 @@ mod tests {
         assert!(json.contains(r#""nearestEmpty": null"#), "{json}");
         let loaded = Settings::from_json(json.as_bytes(), MAC).unwrap();
         assert_eq!(loaded.navigation.nearest_empty, None);
-    }
-
-    #[test]
-    fn new_workspaces_have_no_shortcuts() {
-        let workspace = Workspace::numbered("workspace-4", 4);
-        assert_eq!(workspace.name, "Workspace 4");
-        assert_eq!(workspace.chords().count(), 0);
     }
 
     #[test]
@@ -1075,28 +1268,28 @@ mod tests {
         let concrete = serde_json::json!(["ctrl", "alt", "meta"]);
         written["navigation"]["left"]["mods"] = concrete.clone();
         written["workspaces"]["previous"]["mods"] = concrete;
-        written["workspaces"]["moveNext"]["mods"] = serde_json::json!(["shift", "ctrl", "alt", "meta"]);
+        written["workspaces"]["sendNext"]["mods"] = serde_json::json!(["shift", "ctrl", "alt", "meta"]);
         let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
         assert_eq!(loaded.navigation, Navigation::defaults());
         assert_eq!(loaded.workspaces.previous, Workspaces::defaults().previous);
         assert_eq!(
-            loaded.workspaces.move_next,
+            loaded.workspaces.send_next,
             Some(KeyChord::snappy("Slash", [Modifier::Shift]).with_label("/"))
         );
 
         let saved: serde_json::Value = serde_json::from_slice(&loaded.to_json().unwrap()).unwrap();
         assert_eq!(saved["navigation"]["left"]["mods"], serde_json::json!(["snappy"]));
         assert_eq!(
-            saved["workspaces"]["moveNext"]["mods"],
+            saved["workspaces"]["sendNext"]["mods"],
             serde_json::json!(["snappy", "shift"])
         );
     }
 
     #[test]
-    fn a_file_with_the_old_shift_bracket_move_steps_keeps_them() {
+    fn a_file_with_shift_bracket_send_steps_keeps_them() {
         let mut settings = Settings::defaults(MAC);
-        settings.workspaces.move_previous = Some(KeyChord::snappy("BracketLeft", [Modifier::Shift]));
-        settings.workspaces.move_next = Some(KeyChord::snappy("BracketRight", [Modifier::Shift]));
+        settings.workspaces.send_previous = Some(KeyChord::snappy("BracketLeft", [Modifier::Shift]));
+        settings.workspaces.send_next = Some(KeyChord::snappy("BracketRight", [Modifier::Shift]));
         let loaded = Settings::from_json(&settings.to_json().unwrap(), MAC).unwrap();
         assert_eq!(loaded.workspaces, settings.workspaces);
     }
