@@ -144,7 +144,7 @@ impl Overlays {
     /// Outlines `marks` on `display`, above every window, or takes the outlines down when
     /// there are none.
     pub fn mark(&mut self, display: &str, marks: &OverlayMarks) {
-        if marks.frames.is_empty() {
+        if marks.windows.is_empty() {
             self.unmap(display, Layer::Marks);
             self.marked.retain(|marked| marked != display);
         } else {

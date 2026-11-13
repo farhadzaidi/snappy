@@ -252,6 +252,7 @@ pub(super) fn color(paint: Paint) -> Retained<CGColor> {
     let base = match paint.tint {
         Tint::Accent => NSColor::controlAccentColor(),
         Tint::Mint => NSColor::systemMintColor(),
+        Tint::Orange => NSColor::systemOrangeColor(),
         Tint::White => NSColor::whiteColor(),
     };
     base.colorWithAlphaComponent(paint.alpha).CGColor()

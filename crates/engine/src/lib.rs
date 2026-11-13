@@ -11,6 +11,7 @@ mod debug_log;
 mod diagnostics;
 mod drag;
 mod ops;
+mod selection;
 mod store;
 mod workspaces;
 
@@ -113,18 +114,34 @@ impl<P: Platform + 'static> Engine<P> {
                 workspaces::focus_changed(shared, by_activation)
             }
             PlatformEvent::WindowMoved(window) => {
-                workspaces::window_moved(&mut shared.core.borrow_mut(), window)
+                let mut core = shared.core.borrow_mut();
+                let outlined = core
+                    .selection
+                    .windows
+                    .iter()
+                    .any(|selected| core.workspaces.tab_root(*selected) == window);
+                if outlined || core.selection.flash == Some(window) {
+                    core.refresh_marks();
+                }
+                workspaces::window_moved(&mut core, window)
             }
             PlatformEvent::WindowDestroyed(window) => {
-                workspaces::window_destroyed(&mut shared.core.borrow_mut(), window)
+                let mut core = shared.core.borrow_mut();
+                selection::window_closed(&mut core, window);
+                workspaces::window_destroyed(&mut core, window)
             }
             PlatformEvent::AppLaunched { .. } => {}
             PlatformEvent::AppTerminated { pid } => {
-                workspaces::app_terminated(&mut shared.core.borrow_mut(), pid)
+                let mut core = shared.core.borrow_mut();
+                workspaces::app_terminated(&mut core, pid);
+                selection::prune(&mut core);
             }
             PlatformEvent::DisplaysChanged => workspaces::displays_changed(shared),
             PlatformEvent::NativeDesktopChanged => {
-                workspaces::native_desktop_changed(&mut shared.core.borrow_mut())
+                let mut core = shared.core.borrow_mut();
+                // Selected windows of the desktop left behind no longer show.
+                selection::clear(&mut core, "native desktop changed");
+                workspaces::native_desktop_changed(&mut core)
             }
             PlatformEvent::PermissionChanged => {
                 let mut core = shared.core.borrow_mut();
@@ -165,6 +182,7 @@ impl<P: Platform + 'static> Engine<P> {
                 workspaces::request_switch(shared, &id, false)
             }
             PlatformEvent::QuitRequested => self.shutdown(),
+            PlatformEvent::RestartRequested => self.shutdown_for_restart(),
         }
     }
 
@@ -197,6 +215,20 @@ impl<P: Platform + 'static> Engine<P> {
         self.shared.cancel_current();
         let mut core = self.shared.core.borrow_mut();
         workspaces::stop(&mut core);
+        Self::release(&mut core);
+    }
+
+    /// Stop for a new daemon to take over: windows stay where they are, parked ones
+    /// included, and the journal and membership stay for the next launch.
+    pub fn shutdown_for_restart(&self) {
+        self.shared.cancel_current();
+        let mut core = self.shared.core.borrow_mut();
+        workspaces::detach(&mut core);
+        Self::release(&mut core);
+    }
+
+    /// Write timings and give up input, shortcuts, and overlays.
+    fn release(core: &mut crate::core::Core<P>) {
         core.diagnostics.export_timings();
         core.platform.set_press_monitoring(false);
         core.platform.set_drag_monitoring(false);

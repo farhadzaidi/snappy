@@ -10,7 +10,15 @@ mod settings_app;
 use std::fs::{File, TryLockError};
 use std::process::ExitCode;
 
+/// How long `--stop-for-restart` waits for the running daemon to exit.
+#[cfg(windows)]
+const RESTART_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    if std::env::args().any(|arg| arg == "--stop-for-restart") {
+        return stop_for_restart();
+    }
     let background = std::env::args().any(|arg| arg == "--background");
     let Some(paths) = paths::snappy_paths() else {
         eprintln!("snappy: no home folder");
@@ -25,6 +33,25 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("snappy: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Stop the running daemon so a new one can take over with every window where it is, the
+/// way `SIGUSR2` does elsewhere: Windows has no such signal.
+#[cfg(windows)]
+fn stop_for_restart() -> ExitCode {
+    match snappy_windows::request_restart(RESTART_WAIT) {
+        snappy_windows::RestartRequest::Stopped | snappy_windows::RestartRequest::NotRunning => {
+            ExitCode::SUCCESS
+        }
+        snappy_windows::RestartRequest::Unsupported => {
+            eprintln!("snappy: the running Snappy can't stop for a restart; end it with taskkill /F instead");
+            ExitCode::FAILURE
+        }
+        snappy_windows::RestartRequest::StillRunning => {
+            eprintln!("snappy: the running Snappy didn't stop");
             ExitCode::FAILURE
         }
     }

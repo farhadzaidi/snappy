@@ -11,10 +11,12 @@ pub const SIZE: &str = "AXSize";
 pub const FULL_SCREEN: &str = "AXFullScreen";
 pub const MINIMIZED: &str = "AXMinimized";
 pub const FOCUSED_WINDOW: &str = "AXFocusedWindow";
+pub const TABS: &str = "AXTabs";
 pub const ENHANCED_USER_INTERFACE: &str = "AXEnhancedUserInterface";
 
 pub const WINDOW_ROLE: &str = "AXWindow";
 pub const SHEET_ROLE: &str = "AXSheet";
+pub const TAB_GROUP_ROLE: &str = "AXTabGroup";
 
 pub const RAISE_ACTION: &str = "AXRaise";
 

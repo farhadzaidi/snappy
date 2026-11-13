@@ -1,12 +1,14 @@
 //! Snappy's rules: where zones sit, how layouts are edited, and how windows are
 //! placed. No operating-system dependencies and no I/O.
 
+pub mod assignment;
 pub mod bindings;
 pub mod bounds;
 pub mod drag;
 pub mod editor;
 pub mod empty_zone;
 pub mod error;
+pub mod focus;
 pub mod geometry;
 pub mod keys;
 pub mod layout;

@@ -3,6 +3,7 @@
 
 import type {
   Direction,
+  FocusShortcut,
   HistoryStep,
   KeyChord,
   PlatformName,
@@ -33,6 +34,18 @@ export function nearestEmptyConflict(
 ): string | null {
   return core.settingsConflict(
     { ...settings, navigation: { ...settings.navigation, nearestEmpty: chord } },
+    platform,
+  );
+}
+
+export function focusConflict(
+  settings: Settings,
+  shortcut: FocusShortcut,
+  chord: KeyChord,
+  platform: PlatformName,
+): string | null {
+  return core.settingsConflict(
+    { ...settings, navigation: { ...settings.navigation, [shortcut]: chord } },
     platform,
   );
 }

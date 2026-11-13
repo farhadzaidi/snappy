@@ -171,7 +171,7 @@ describe("fake daemon", () => {
       expect(workspaces.next).toMatchObject(snappy("Quote"));
       expect(workspaces.sendPrevious).toMatchObject(snappy("Period"));
       expect(workspaces.sendNext).toMatchObject(snappy("Slash"));
-      expect(workspaces.takeAlong).toMatchObject(snappy("Enter"));
+      expect(workspaces).not.toHaveProperty("takeAlong");
       expect(workspaces.items.map((item) => item.switchShortcut?.code)).toEqual([
         "Digit1",
         "Digit2",
@@ -181,16 +181,66 @@ describe("fake daemon", () => {
     }
   });
 
-  it("send, take-along, and undo and redo shortcuts are saved and checked for conflicts", () => {
+  it("every platform focuses with Snappy + I J K L, selects with Return, and clears with backslash", () => {
+    for (const platform of ["macos", "windows", "linux"] as const) {
+      const { navigation } = initialState(platform).settings;
+      expect(navigation.focusUp).toMatchObject(snappy("KeyI"));
+      expect(navigation.focusLeft).toMatchObject(snappy("KeyJ"));
+      expect(navigation.focusDown).toMatchObject(snappy("KeyK"));
+      expect(navigation.focusRight).toMatchObject(snappy("KeyL"));
+      expect(navigation.selectWindow).toMatchObject(snappy("Enter"));
+      expect(navigation.clearSelection).toMatchObject({ ...snappy("Backslash"), label: "\\" });
+    }
+  });
+
+  it("only macOS refuses the Snappy key with Delete, which it never passes on", () => {
+    const refused = run(initialState("macos"), {
+      kind: "setFocusShortcut",
+      shortcut: "clearSelection",
+      chord: snappy("Backspace"),
+    });
+    expect(refused.error).toBe("macOS reserves Control + Option + Command + Delete; it never reaches apps.");
+    expect(refused.state.settings.navigation.clearSelection).toMatchObject(snappy("Backslash"));
+
+    for (const platform of ["windows", "linux"] as const) {
+      const accepted = run(initialState(platform), {
+        kind: "setFocusShortcut",
+        shortcut: "clearSelection",
+        chord: snappy("Backspace"),
+      });
+      expect(accepted.error).toBeNull();
+      expect(accepted.state.settings.navigation.clearSelection).toEqual(snappy("Backspace"));
+    }
+  });
+
+  it("focus and selection shortcuts are saved, cleared, and checked for conflicts", () => {
+    const start = initialState("macos");
+    const changed = run(start, { kind: "setFocusShortcut", shortcut: "selectWindow", chord: snappy("KeyS") });
+    expect(changed.error).toBeNull();
+    expect(changed.state.settings.navigation.selectWindow).toEqual(snappy("KeyS"));
+
+    const clash = run(changed.state, {
+      kind: "setFocusShortcut",
+      shortcut: "clearSelection",
+      chord: snappy("KeyS"),
+    });
+    expect(clash.error).toBe("Snappy + S is already assigned to Select window.");
+    expect(clash.state.settings.navigation.clearSelection).toMatchObject(snappy("Backslash"));
+
+    const cleared = run(changed.state, { kind: "setFocusShortcut", shortcut: "clearSelection", chord: null });
+    expect(cleared.state.settings.navigation.clearSelection).toBeNull();
+  });
+
+  it("send, and undo and redo shortcuts are saved and checked for conflicts", () => {
     const start = initialState("macos");
     const moved = run(start, { kind: "setWorkspaceStepShortcut", step: "sendNext", chord: snappy("KeyN") });
     expect(moved.state.settings.workspaces.sendNext).toEqual(snappy("KeyN"));
     const taken = run(moved.state, {
-      kind: "setWorkspaceStepShortcut",
-      step: "takeAlong",
+      kind: "setFocusShortcut",
+      shortcut: "selectWindow",
       chord: snappy("KeyN"),
     });
-    expect(taken.error).toBe("Snappy + N is already assigned to Send window to next workspace.");
+    expect(taken.error).toBe("Snappy + N is already assigned to Select window.");
     const undo = run(moved.state, { kind: "setHistoryShortcut", step: "undo", chord: snappy("KeyU") });
     expect(undo.state.settings.history.undo).toEqual(snappy("KeyU"));
     const byHand: KeyChord = { code: "KeyU", mods: ["ctrl", "alt", "meta"] };

@@ -379,7 +379,7 @@ mod tests {
         let defaults = Settings::defaults(PLATFORM);
         let workspaces = &settings.workspaces;
         assert!(workspaces.enabled);
-        assert_eq!(workspaces.steps().count(), 5);
+        assert_eq!(workspaces.steps().count(), 4);
         assert!(
             workspaces
                 .steps()

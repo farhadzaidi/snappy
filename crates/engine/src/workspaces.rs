@@ -1,7 +1,7 @@
 //! Running workspaces against real windows: discovery, switching and sending, crash
 //! recovery, containment, and reacting to desktop and display changes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -11,14 +11,16 @@ use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::Platform as PlatformName;
 use snappy_core::workspace::{
-    FocusPolicy, JournalEntry, Member, PARKED_TOLERANCE, Session, WorkspaceIo, is_parked, reachable,
+    FocusPolicy, Found, JournalEntry, Journaled, Member, PARKED_TOLERANCE, Relaunch, Session, Tabs,
+    WorkspaceIo, is_parked, reachable, relaunch,
 };
 use snappy_ipc::ToSettings;
-use snappy_platform::{Platform, RecoveryKey, WindowId, WindowInfo};
+use snappy_platform::{Platform, RecoveryKey, WindowId, WindowInfo, WindowState};
 
 use crate::core::Core;
 use crate::diagnostics::SwitchTiming;
 use crate::ops::Shared;
+use crate::selection;
 use crate::store::{read_state, remove_state, write_state};
 
 /// Wait this long for a display change to settle.
@@ -59,9 +61,6 @@ pub(crate) struct WorkspaceController {
     pub requested: Option<String>,
     /// A switch asked for while displays were changing, run once they settle.
     pub deferred_switch: Option<(String, bool)>,
-    /// Windows picked up to go along with the next switch, in the order they were picked
-    /// up. Kept in memory only: quitting forgets them and moves nothing.
-    pub carried: Vec<WindowId>,
 }
 
 impl WorkspaceController {
@@ -81,6 +80,19 @@ impl WorkspaceController {
             .is_some_and(|session| session.is_inactive(window))
     }
 
+    /// The shown tab `window` sits behind, as last learned, else `window` itself.
+    pub fn tab_root(&self, window: WindowId) -> WindowId {
+        self.session
+            .as_ref()
+            .map_or(window, |session| session.tab_root(window))
+    }
+
+    pub fn is_hidden_tab(&self, window: WindowId) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.is_hidden_tab(window))
+    }
+
     pub fn pause_message(&self, platform: PlatformName) -> Option<String> {
         self.paused
             .then_some(match platform {
@@ -90,14 +102,6 @@ impl WorkspaceController {
                 _ => "Paused on another virtual desktop. Return to the original desktop to resume.",
             })
             .map(str::to_owned)
-    }
-
-    /// Why workspace shortcuts do nothing now, or `None` while workspaces run.
-    fn idle_message(&self, platform: PlatformName) -> Option<String> {
-        if self.session.is_none() || self.suspended {
-            return Some("Workspaces aren't running.".to_owned());
-        }
-        self.pause_message(platform)
     }
 }
 
@@ -207,7 +211,7 @@ fn suspend<P: Platform>(core: &mut Core<P>) {
     if std::mem::replace(&mut core.workspaces.suspended, true) {
         return;
     }
-    put_down_all(core, "workspaces suspended");
+    selection::clear(core, "workspaces suspended");
     core.trace("workspacesSuspended", || serde_json::json!({}));
     core.publish_state();
 }
@@ -223,6 +227,7 @@ pub(crate) fn resume<P: Platform>(core: &mut Core<P>) {
     core.platform.bind(&displays);
     core.workspaces.paused = !core.platform.on_managed_desktop();
 
+    sync_all_tabs(core, &mut session);
     let frames = core.display_frames();
     let inactive: Vec<WindowId> = session
         .members()
@@ -252,8 +257,12 @@ pub(crate) fn resume<P: Platform>(core: &mut Core<P>) {
     core.publish_state();
 }
 
+/// Start tracking. Windows a previous run left parked for a workspace that isn't showing
+/// rejoin it where they are, so a restart while apps keep running changes nothing on
+/// screen; every other window joins the active workspace.
 fn start<P: Platform>(core: &mut Core<P>) {
-    if !recover(core) {
+    let recovered = recover(core, true);
+    if !recovered.complete {
         let message = if core.capabilities.needs_permission {
             "Some hidden windows could not be restored. Check Accessibility, then quit and reopen Snappy to retry."
         } else {
@@ -265,12 +274,25 @@ fn start<P: Platform>(core: &mut Core<P>) {
     let displays = core.displays.clone();
     core.platform.bind(&displays);
     core.workspaces.paused = false;
-    core.workspaces.remembered = read_state(&core.paths.membership()).unwrap_or_default();
+    let remembered: Vec<SavedWindow> = read_state(&core.paths.membership()).unwrap_or_default();
+    let running: Vec<RecoveryKey> = core
+        .platform
+        .all_windows()
+        .into_iter()
+        .filter_map(|info| info.recovery_key)
+        .collect();
+    let (live, stale): (Vec<SavedWindow>, Vec<SavedWindow>) = remembered
+        .into_iter()
+        .partition(|entry| running.iter().any(|key| key.same_process(&entry.key)));
+    core.workspaces.remembered = live;
     let mut session = Session::new(
         core.settings.workspaces.active_id.clone(),
         core.capabilities.parking,
     );
 
+    for (info, entry) in &recovered.kept {
+        rejoin(core, &mut session, info, entry);
+    }
     // Visible windows, plus minimized ones that remember a workspace, and
     // windows still waiting on the parking desktop.
     let visible = core.platform.visible_windows(None);
@@ -286,22 +308,120 @@ fn start<P: Platform>(core: &mut Core<P>) {
     for info in candidates {
         enroll(core, &mut session, &info);
     }
+    sync_all_tabs(core, &mut session);
+    let journal = session.journal();
+    if let Err(error) = CoreIo::new(&mut *core).write_journal(&journal) {
+        core.announce_error(&error.to_string());
+    }
+
     let windows = session.members().len();
     let active = session.active().to_owned();
+    let mut rejoined: BTreeMap<String, usize> = BTreeMap::new();
+    for (info, _) in &recovered.kept {
+        if let Some(member) = session.member(info.id) {
+            *rejoined.entry(member.workspace.clone()).or_default() += 1;
+        }
+    }
     core.workspaces.session = Some(session);
-    core.trace(
-        "workspacesStarted",
-        || serde_json::json!({ "active": active, "windows": windows }),
-    );
+    core.trace("workspacesStarted", || {
+        serde_json::json!({
+            "active": active,
+            "windows": windows,
+            "rejoined": rejoined,
+            "returned": recovered.returned,
+            "leftAlone": recovered.left_alone,
+            "staleJournal": recovered.stale,
+            "staleMembership": stale.len(),
+        })
+    });
     discover_focused(core, false, true);
     core.publish_state();
 }
 
+/// A window a previous run left parked for a workspace that isn't showing joins it again,
+/// keeping its home frame, and stays where it is.
+fn rejoin<P: Platform>(core: &mut Core<P>, session: &mut Session, info: &WindowInfo, entry: &SavedWindow) {
+    let Some(key) = info.recovery_key.clone() else {
+        return;
+    };
+    let displays = core.display_frames();
+    let policy = core.capabilities.parking;
+    let parked_now = core
+        .platform
+        .state(info.id)
+        .is_ok_and(|state| is_parked(policy, info.frame, &displays, state.on_parking_desktop));
+    // A home frame that is itself a parking spot would strand the window when it returns.
+    let home_origin = if is_parked(policy, entry.frame, &displays, false) {
+        let area = core.display_of(info.frame).map(|display| display.work_area);
+        fitted_origin(entry.frame.origin(), info.frame.size(), area)
+    } else {
+        entry.frame.origin()
+    };
+    let member = Member {
+        workspace: entry.workspace_id.clone(),
+        frame: Rect::from_origin_size(home_origin, info.frame.size()),
+        parked: if parked_now {
+            Some(info.frame.origin())
+        } else {
+            entry.parked_origin.or(Some(info.frame.origin()))
+        },
+    };
+    core.trace("workspaceJoin", || {
+        serde_json::json!({
+            "window": info.id.0,
+            "app": info.app,
+            "workspace": member.workspace,
+            "frame": member.frame,
+            "rejoined": true,
+        })
+    });
+    core.workspaces.keys.insert(info.id, key);
+    session.enroll(info.id, member);
+}
+
+/// Stop for a restart: every window stays where it is, parked ones included, and the journal
+/// and membership are saved for the next launch to pick up.
+pub(crate) fn detach<P: Platform>(core: &mut Core<P>) {
+    selection::clear(core, "restarting");
+    let Some(mut session) = core.workspaces.session.take() else {
+        return;
+    };
+    let closed: Vec<WindowId> = session
+        .members()
+        .keys()
+        .copied()
+        .filter(|window| core.platform.is_closed(*window))
+        .collect();
+    for window in closed {
+        session.discard(window);
+    }
+    sync_all_tabs(core, &mut session);
+    let journal = {
+        let mut io = CoreIo::new(&mut *core);
+        session.capture_active_frames(&mut io);
+        let journal = session.journal();
+        io.write_journal(&journal).map(|()| journal.len())
+    };
+    save_membership(core, &session);
+    let active = session.active().to_owned();
+    let windows = session.members().len();
+    match journal {
+        Ok(parked) => core.trace(
+            "workspacesDetached",
+            || serde_json::json!({ "active": active, "windows": windows, "parked": parked }),
+        ),
+        Err(error) => core.flag(
+            "workspacesDetached",
+            || serde_json::json!({ "active": active, "windows": windows, "error": error.to_string() }),
+        ),
+    }
+}
+
 /// Return every parked window and stop tracking.
 pub(crate) fn stop<P: Platform>(core: &mut Core<P>) -> bool {
-    put_down_all(core, "workspaces stopped");
+    selection::clear(core, "workspaces stopped");
     let Some(mut session) = core.workspaces.session.take() else {
-        return recover(core);
+        return recover(core, false).complete;
     };
     core.workspaces.focus.begin_change();
     let closed: Vec<WindowId> = session
@@ -313,6 +433,7 @@ pub(crate) fn stop<P: Platform>(core: &mut Core<P>) -> bool {
     for window in closed {
         session.discard(window);
     }
+    sync_all_tabs(core, &mut session);
     let areas = core.work_areas();
     let returned = {
         let mut io = CoreIo::new(&mut *core);
@@ -363,12 +484,23 @@ fn enroll<P: Platform>(core: &mut Core<P>, session: &mut Session, info: &WindowI
     // the workspace remembered for it.
     let remembered = remembered_entry(core, info);
     let workspaces = &core.settings.workspaces;
-    let owner = remembered
+    let owned = remembered
         .as_ref()
         .filter(|_| parked_now || minimized)
         .map(|entry| entry.workspace_id.clone())
-        .filter(|id| workspaces.item(id).is_some())
-        .unwrap_or_else(|| workspaces.active_id.clone());
+        .filter(|id| workspaces.item(id).is_some());
+    // A shown tab with no workspace of its own, such as a new tab, goes where its group is.
+    if owned.is_none()
+        && let Some(group) = core
+            .platform
+            .tab_groups(&[info.id])
+            .into_iter()
+            .find(|group| group.shown.id == info.id)
+        && join_tab_group(core, session, info, &group.hidden)
+    {
+        return;
+    }
+    let owner = owned.unwrap_or_else(|| core.settings.workspaces.active_id.clone());
     // A window found parked keeps the visible position remembered for it. One with none
     // comes back just inside the screen rather than staying stranded.
     let visible_origin = match (parked_now, &remembered) {
@@ -426,35 +558,171 @@ fn enroll<P: Platform>(core: &mut Core<P>, session: &mut Session, info: &WindowI
     }
 }
 
+/// A shown tab Snappy hasn't met, such as a new tab, joins the tabs hidden behind it where
+/// they are: in their workspace, with their frame and parking. False when none of them is a
+/// member.
+fn join_tab_group<P: Platform>(
+    core: &mut Core<P>,
+    session: &mut Session,
+    info: &WindowInfo,
+    hidden: &[WindowId],
+) -> bool {
+    let sibling = session
+        .recently_focused()
+        .find(|window| hidden.contains(window))
+        .or_else(|| {
+            hidden
+                .iter()
+                .copied()
+                .find(|window| session.member(*window).is_some())
+        });
+    let (Some(sibling), Some(key)) = (sibling, info.recovery_key.clone()) else {
+        return false;
+    };
+    let Some(mut member) = session.member(sibling).cloned() else {
+        return false;
+    };
+    if member.parked.is_none() {
+        member.frame = info.frame;
+    }
+    core.workspaces.keys.insert(info.id, key);
+    let tabs: Vec<u64> = hidden.iter().map(|window| window.0).collect();
+    core.trace("workspaceJoin", || {
+        serde_json::json!({
+            "window": info.id.0,
+            "app": info.app,
+            "workspace": member.workspace,
+            "frame": member.frame,
+            "tabOf": tabs,
+        })
+    });
+    session.enroll(info.id, member);
+    let mut refreshed = hidden.to_vec();
+    refreshed.push(info.id);
+    let group = Tabs {
+        shown: info.id,
+        hidden: hidden.to_vec(),
+    };
+    session.update_tabs(&[group], &refreshed);
+    let journal = session.journal();
+    if let Err(error) = CoreIo::new(&mut *core).write_journal(&journal) {
+        core.announce_error(&error.to_string());
+    }
+    true
+}
+
+/// Learn the tab groups of every member's app.
+fn sync_all_tabs<P: Platform>(core: &mut Core<P>, session: &mut Session) {
+    let members: Vec<WindowId> = session.members().keys().copied().collect();
+    sync_tabs(core, session, &members);
+}
+
+/// Learn from the platform which members of the apps owning `windows` are tabs of one
+/// window, and keep each group in its shown tab's workspace. A shown tab Snappy hasn't met
+/// joins the tabs behind it.
+fn sync_tabs<P: Platform>(core: &mut Core<P>, session: &mut Session, windows: &[WindowId]) {
+    let groups = core.platform.tab_groups(windows);
+    for group in &groups {
+        if session.member(group.shown.id).is_none() {
+            join_tab_group(core, session, &group.shown, &group.hidden);
+        }
+    }
+    let pids: BTreeSet<u32> = windows
+        .iter()
+        .filter_map(|window| core.workspaces.keys.get(window).map(|key| key.pid))
+        .chain(groups.iter().map(|group| group.shown.pid))
+        .collect();
+    let refreshed: Vec<WindowId> = session
+        .members()
+        .keys()
+        .copied()
+        .filter(|window| {
+            core.workspaces
+                .keys
+                .get(window)
+                .is_some_and(|key| pids.contains(&key.pid))
+        })
+        .collect();
+    let tabs: Vec<Tabs> = groups
+        .iter()
+        .map(|group| Tabs {
+            shown: group.shown.id,
+            hidden: group.hidden.clone(),
+        })
+        .collect();
+    let moved = session.update_tabs(&tabs, &refreshed);
+    if moved.is_empty() {
+        return;
+    }
+    let unified: Vec<serde_json::Value> = tabs
+        .iter()
+        .filter(|group| group.hidden.iter().any(|window| moved.contains(window)))
+        .map(|group| {
+            let workspace = session.member(group.shown).map(|member| member.workspace.clone());
+            let hidden: Vec<u64> = group.hidden.iter().map(|window| window.0).collect();
+            serde_json::json!({ "shown": group.shown.0, "hidden": hidden, "workspace": workspace })
+        })
+        .collect();
+    core.trace("tabsUnified", || serde_json::json!({ "groups": unified }));
+    let journal = session.journal();
+    if let Err(error) = CoreIo::new(&mut *core).write_journal(&journal) {
+        core.announce_error(&error.to_string());
+    }
+    save_membership(core, session);
+}
+
 fn remembered_entry<P: Platform>(core: &Core<P>, info: &WindowInfo) -> Option<SavedWindow> {
     let key = info.recovery_key.as_ref()?;
     core.workspaces
         .remembered
         .iter()
-        .find(|entry| &entry.key == key)
+        .find(|entry| entry.key.same_window(key))
         .cloned()
 }
 
 // MARK: Recovery
 
-/// Bring back windows a previous run left parked. False when some remain.
-pub(crate) fn recover<P: Platform>(core: &mut Core<P>) -> bool {
+/// What launch recovery did with the windows a previous run left parked.
+#[derive(Default)]
+struct Recovered {
+    /// No window that should have come back is still parked.
+    complete: bool,
+    /// Windows still parked for a workspace that isn't showing, which stay that way.
+    kept: Vec<(WindowInfo, SavedWindow)>,
+    returned: usize,
+    /// Moved away from their parked spot while Snappy wasn't running.
+    left_alone: usize,
+    /// Their process is gone, or its ID now belongs to a later process.
+    stale: usize,
+}
+
+/// Go through the windows a previous run left parked. With `keep`, windows still parked
+/// for a workspace that isn't showing stay parked, journaled, to rejoin it; otherwise every
+/// one comes back.
+fn recover<P: Platform>(core: &mut Core<P>, keep: bool) -> Recovered {
     let path = core.paths.journal();
     let Some(entries): Option<Vec<SavedWindow>> = read_state(&path) else {
-        return !path.exists();
+        return Recovered {
+            complete: !path.exists(),
+            ..Recovered::default()
+        };
     };
     let windows = core.platform.all_windows();
-    let areas = core.work_areas();
+    let (displays, areas) = (core.display_frames(), core.work_areas());
     let policy = core.capabilities.parking;
+    let active = keep.then(|| core.settings.workspaces.active_id.clone());
+    let mut recovered = Recovered::default();
     let mut remaining = Vec::new();
 
     for entry in entries {
         let Some(parked) = entry.parked_origin else {
             continue;
         };
-        let exact = windows
-            .iter()
-            .find(|w| w.recovery_key.as_ref() == Some(&entry.key));
+        let exact = windows.iter().find(|w| {
+            w.recovery_key
+                .as_ref()
+                .is_some_and(|key| key.same_window(&entry.key))
+        });
         let by_position: Vec<&WindowInfo> = windows
             .iter()
             .filter(|w| {
@@ -479,46 +747,76 @@ pub(crate) fn recover<P: Platform>(core: &mut Core<P>) -> bool {
         });
 
         let Some(window) = found else {
-            let still_running = windows.iter().any(|w| w.pid == entry.key.pid);
+            let still_running = windows.iter().any(|w| {
+                w.recovery_key
+                    .as_ref()
+                    .is_some_and(|key| key.same_process(&entry.key))
+            });
             if still_running || !by_position.is_empty() {
+                let process: Vec<&RecoveryKey> = windows
+                    .iter()
+                    .filter_map(|w| w.recovery_key.as_ref())
+                    .filter(|key| key.pid == entry.key.pid)
+                    .collect();
+                core.flag("workspaceWindowNotFound", || {
+                    serde_json::json!({ "key": entry.key, "sameProcess": process, "atParkedSpot": by_position.len() })
+                });
                 remaining.push(entry);
+            } else {
+                recovered.stale += 1;
             }
             continue;
         };
-        let on_parking_desktop = |core: &mut Core<P>| {
-            core.platform
-                .state(window.id)
-                .is_ok_and(|state| state.on_parking_desktop)
+        let state = core.platform.state(window.id).ok();
+        let journaled = Journaled {
+            workspace: &entry.workspace_id,
+            workspace_exists: core.settings.workspaces.item(&entry.workspace_id).is_some(),
+            parked,
+            prior_parked: entry.prior_parked_origin,
         };
-        let at_park = if policy.moves_windows() {
-            [Some(parked), entry.prior_parked_origin]
-                .into_iter()
-                .flatten()
-                .any(|p| near(window.frame, p))
-        } else {
-            on_parking_desktop(core)
+        let now = Found {
+            frame: window.frame,
+            minimized: state.is_some_and(|state| state.minimized),
+            on_parking_desktop: state.is_some_and(|state| state.on_parking_desktop),
+            movable: state.is_some_and(WindowState::movable),
         };
-        if !at_park {
-            continue;
-        }
-        let home = reachable(entry.frame.with_origin(entry.frame.origin()), &areas).origin();
-        let returned = core.platform.show_for_workspace(window.id, home).is_ok()
-            && core
-                .platform
-                .frame(window.id)
-                .is_ok_and(|frame| near(frame, home))
-            && !on_parking_desktop(core);
-        if !returned {
-            remaining.push(entry);
+        match relaunch(policy, &displays, &journaled, &now, active.as_deref()) {
+            Relaunch::StaysParked => recovered.kept.push((window.clone(), entry)),
+            Relaunch::LeftAlone => recovered.left_alone += 1,
+            Relaunch::ComesBack => {
+                let home = reachable(entry.frame, &areas).origin();
+                let returned = core.platform.show_for_workspace(window.id, home).is_ok()
+                    && core
+                        .platform
+                        .frame(window.id)
+                        .is_ok_and(|frame| near(frame, home))
+                    && !core
+                        .platform
+                        .state(window.id)
+                        .is_ok_and(|state| state.on_parking_desktop);
+                if returned {
+                    recovered.returned += 1;
+                } else {
+                    remaining.push(entry);
+                }
+            }
         }
     }
 
-    let saved = if remaining.is_empty() {
+    // Kept windows stay journaled until the session takes them over, so a crash before then
+    // still finds them.
+    let still_parked: Vec<SavedWindow> = remaining
+        .iter()
+        .cloned()
+        .chain(recovered.kept.iter().map(|(_, entry)| entry.clone()))
+        .collect();
+    let saved = if still_parked.is_empty() {
         remove_state(&path)
     } else {
-        write_state(&path, &remaining)
+        write_state(&path, &still_parked)
     };
-    saved.is_ok() && remaining.is_empty()
+    recovered.complete = saved.is_ok() && remaining.is_empty();
+    recovered
 }
 
 fn near(frame: Rect, origin: Point) -> bool {
@@ -539,12 +837,17 @@ fn save_membership<P: Platform>(core: &mut Core<P>, session: &Session) {
             })
         })
         .collect();
-    let running: Vec<u32> = core.platform.all_windows().iter().map(|info| info.pid).collect();
+    let running: Vec<RecoveryKey> = core
+        .platform
+        .all_windows()
+        .into_iter()
+        .filter_map(|info| info.recovery_key)
+        .collect();
     let workspaces = &core.settings.workspaces;
     let kept = core.workspaces.remembered.iter().filter(|entry| {
         !tracked.iter().any(|t| t.key == entry.key)
             && workspaces.item(&entry.workspace_id).is_some()
-            && running.contains(&entry.key.pid)
+            && running.iter().any(|key| key.same_process(&entry.key))
     });
     let entries: Vec<SavedWindow> = tracked.iter().cloned().chain(kept.cloned()).collect();
     if let Err(error) = write_state(&core.paths.membership(), &entries) {
@@ -617,11 +920,12 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
     for window in closed {
         session.discard(window);
     }
+    sync_all_tabs(core, &mut session);
 
     let discovered = core.platform.now();
     let displays = core.display_frames();
     let previous = session.active().to_owned();
-    let carried = core.workspaces.carried.clone();
+    let carried = core.selection.windows.clone();
     let result = {
         let mut io = CoreIo::new(&mut *core);
         session.switch_carrying(target, &carried, &displays, !focus_settings, &mut io)
@@ -664,12 +968,11 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
                 timing.succeeded = true;
                 if !carried.is_empty() {
                     let windows: Vec<u64> = arrived.iter().map(|window| window.0).collect();
-                    core.trace(
-                        "takeAlongArrived",
-                        || serde_json::json!({ "to": target, "windows": windows, "picked": carried.len() }),
-                    );
-                    core.workspaces.carried.clear();
-                    core.refresh_marks();
+                    let tabs = tabs_along(&session, &arrived);
+                    core.trace("selectionCarried", || {
+                        serde_json::json!({ "to": target, "windows": windows, "selected": carried.len(), "tabs": tabs })
+                    });
+                    selection::clear(core, "carried along");
                 }
             } else {
                 let mut io = CoreIo::new(&mut *core);
@@ -698,6 +1001,26 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
     core.workspaces.focus.end_change(now);
     core.update_tray();
     core.publish_state();
+}
+
+/// The hidden tabs that went along with `windows`, by the shown tab they sit behind, for
+/// the debug log.
+fn tabs_along(session: &Session, windows: &[WindowId]) -> serde_json::Value {
+    let mut roots: Vec<WindowId> = Vec::new();
+    for window in windows {
+        let root = session.tab_root(*window);
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    let groups: serde_json::Map<String, serde_json::Value> = roots
+        .into_iter()
+        .filter_map(|root| {
+            let hidden: Vec<u64> = session.tabs_behind(root).iter().map(|window| window.0).collect();
+            (!hidden.is_empty()).then(|| (root.0.to_string(), serde_json::json!(hidden)))
+        })
+        .collect();
+    serde_json::Value::Object(groups)
 }
 
 /// Save only the new active workspace.
@@ -746,8 +1069,8 @@ fn adjacent<P: Platform>(shared: &Shared<P>, step: isize) -> Option<String> {
 }
 
 /// Send the focused window to `target`, then switch there when `follow`. Without `follow`,
-/// focus moves to the window used most recently among those left, so pressing again sends
-/// that one.
+/// a selection is sent instead of the focused window, and focus moves to the window used
+/// most recently among those left, so pressing again sends that one.
 pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target: &str, follow: bool) {
     if !shared.core.borrow().workspaces.is_running() {
         return;
@@ -756,17 +1079,22 @@ pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target
     shared.submit(move |shared, _cancel| async move {
         let sent = {
             let mut core = shared.core.borrow_mut();
-            send_now(&mut core, &target, !follow)
+            selection::prune(&mut core);
+            if follow || core.selection.is_empty() {
+                send_now(&mut core, &target, !follow).into_iter().collect()
+            } else {
+                send_selection_now(&mut core, &target)
+            }
         };
-        if let Some(window) = sent {
+        for window in &sent {
             for history in shared.histories.borrow_mut().values_mut() {
-                history.forget(window);
+                history.forget(*window);
             }
-            if follow {
-                let mut core = shared.core.borrow_mut();
-                let now = core.platform.now();
-                switch_now(&mut core, &target, false, now);
-            }
+        }
+        if follow && !sent.is_empty() {
+            let mut core = shared.core.borrow_mut();
+            let now = core.platform.now();
+            switch_now(&mut core, &target, false, now);
         }
     });
 }
@@ -781,6 +1109,7 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str, stay: bool) -> Option
     };
     let mut session = core.workspaces.session.take()?;
     enroll(core, &mut session, &focused);
+    sync_tabs(core, &mut session, &[focused.id]);
     let in_active = session
         .member(focused.id)
         .is_some_and(|member| member.workspace == session.active());
@@ -805,6 +1134,7 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str, stay: bool) -> Option
     let sent = match result {
         Ok(()) => {
             save_membership(core, &session);
+            let tabs = tabs_along(&session, &[focused.id]);
             core.trace("workspaceSend", || {
                 serde_json::json!({
                     "window": focused.id.0,
@@ -812,6 +1142,7 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str, stay: bool) -> Option
                     "to": target,
                     "stay": stay,
                     "focused": left_focused.map(|window| window.0),
+                    "tabs": tabs,
                 })
             });
             Some(focused.id)
@@ -822,83 +1153,102 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str, stay: bool) -> Option
         }
     };
     core.workspaces.session = Some(session);
-    if sent.is_some() && core.workspaces.carried.contains(&focused.id) {
-        put_down(core, focused.id, "sent to another workspace");
+    if sent.is_some() {
+        selection::remove(core, focused.id, "sent to another workspace");
     }
     core.publish_state();
     sent
 }
 
-// MARK: Taking windows along
-
-/// Pick up the focused window to go along with the next switch, or put it down when it
-/// was already picked up.
-pub(crate) fn take_along<P: Platform>(core: &mut Core<P>) {
-    if let Some(reason) = core.workspaces.idle_message(core.capabilities.platform) {
-        core.trace("takeAlongSkipped", || serde_json::json!({ "reason": reason }));
-        core.announce_quietly(&reason);
-        return;
-    }
-    let focused = match core.platform.focused_window() {
-        Ok(info) => info,
-        Err(error) => {
-            let reason = error.to_string();
-            core.trace("takeAlongSkipped", || serde_json::json!({ "reason": reason }));
-            core.announce_quietly("Focus a window to take it along.");
-            return;
-        }
-    };
-    if core.workspaces.carried.contains(&focused.id) {
-        put_down(core, focused.id, "pressed again");
-        return;
-    }
-
+/// Send every selected window on the active workspace to `target` and stay, focusing the
+/// window used most recently among those left. Returns the windows sent; they leave the
+/// selection, and any that couldn't go stay in it.
+fn send_selection_now<P: Platform>(core: &mut Core<P>, target: &str) -> Vec<WindowId> {
     let Some(mut session) = core.workspaces.session.take() else {
-        return;
+        return Vec::new();
     };
-    enroll(core, &mut session, &focused);
-    let shown_here = session
-        .member(focused.id)
+    let chosen = core.selection.windows.clone();
+    sync_tabs(core, &mut session, &chosen);
+    // A selected tab stands for its group, which goes once.
+    let mut selected: Vec<WindowId> = Vec::new();
+    for window in chosen {
+        let root = session.tab_root(window);
+        let here = session
+            .member(root)
+            .is_some_and(|member| member.workspace == session.active());
+        if here && !selected.contains(&root) {
+            selected.push(root);
+        }
+    }
+
+    core.workspaces.focus.begin_change();
+    let displays = core.display_frames();
+    let mut sent = Vec::new();
+    let mut failure = None;
+    for window in selected {
+        let result = {
+            let mut io = CoreIo::new(&mut *core);
+            session.send(window, target, &displays, &mut io)
+        };
+        match result {
+            Ok(()) => sent.push(window),
+            Err(error) => failure = failure.or(Some(error)),
+        }
+    }
+    let left_focused = if sent.is_empty() {
+        None
+    } else {
+        session.focus_recent(&mut CoreIo::new(&mut *core))
+    };
+    let now = core.platform.now();
+    core.workspaces.focus.end_change(now);
+    if !sent.is_empty() {
+        save_membership(core, &session);
+        let windows: Vec<u64> = sent.iter().map(|window| window.0).collect();
+        let tabs = tabs_along(&session, &sent);
+        core.trace("workspaceSend", || {
+            serde_json::json!({
+                "windows": windows,
+                "to": target,
+                "stay": true,
+                "focused": left_focused.map(|window| window.0),
+                "tabs": tabs,
+            })
+        });
+    }
+    if let Some(error) = failure {
+        core.announce_error(&error.to_string());
+    }
+    let gone: Vec<WindowId> = core
+        .selection
+        .windows
+        .iter()
+        .copied()
+        .filter(|window| sent.contains(&session.tab_root(*window)))
+        .collect();
+    core.workspaces.session = Some(session);
+    for window in &gone {
+        selection::remove(core, *window, "sent to another workspace");
+    }
+    core.publish_state();
+    sent
+}
+
+/// Whether `info` shows on the active workspace, enrolling it first, so it can be
+/// selected. Always true while workspaces don't run.
+pub(crate) fn shown_on_active_workspace<P: Platform>(core: &mut Core<P>, info: &WindowInfo) -> bool {
+    if !core.workspaces.is_running() {
+        return true;
+    }
+    let Some(mut session) = core.workspaces.session.take() else {
+        return true;
+    };
+    enroll(core, &mut session, info);
+    let shown = session
+        .member(info.id)
         .is_some_and(|member| member.workspace == session.active() && member.parked.is_none());
     core.workspaces.session = Some(session);
-    if !shown_here {
-        core.trace(
-            "takeAlongSkipped",
-            || serde_json::json!({ "window": focused.id.0, "app": focused.app, "reason": "not on the current workspace" }),
-        );
-        core.announce_quietly("Focus a window on the current workspace first.");
-        return;
-    }
-    core.workspaces.carried.push(focused.id);
-    let carried = core.workspaces.carried.len();
-    core.trace(
-        "takeAlongPickedUp",
-        || serde_json::json!({ "window": focused.id.0, "app": focused.app, "carried": carried }),
-    );
-    core.refresh_marks();
-}
-
-fn put_down<P: Platform>(core: &mut Core<P>, window: WindowId, reason: &str) {
-    core.workspaces.carried.retain(|carried| *carried != window);
-    let carried = core.workspaces.carried.len();
-    core.trace(
-        "takeAlongPutDown",
-        || serde_json::json!({ "window": window.0, "reason": reason, "carried": carried }),
-    );
-    core.refresh_marks();
-}
-
-/// Forget every picked-up window, as when workspaces stop or pause.
-fn put_down_all<P: Platform>(core: &mut Core<P>, reason: &str) {
-    if core.workspaces.carried.is_empty() {
-        return;
-    }
-    let windows: Vec<u64> = core.workspaces.carried.drain(..).map(|window| window.0).collect();
-    core.trace(
-        "takeAlongPutDown",
-        || serde_json::json!({ "windows": windows, "reason": reason, "carried": 0 }),
-    );
-    core.refresh_marks();
+    shown
 }
 
 /// Delete a workspace, moving its windows to `destination`.
@@ -911,6 +1261,7 @@ pub(crate) fn remove_workspace<P: Platform>(
         return Ok(());
     };
     core.workspaces.focus.begin_change();
+    sync_all_tabs(core, &mut session);
     let result = {
         let mut io = CoreIo::new(&mut *core);
         session.remove_workspace(id, destination, &mut io)
@@ -968,8 +1319,18 @@ fn discover_focused_into<P: Platform>(
             None
         }
     };
+    // Tabs change as the user picks them, so learn the focused app's groups first: a tab
+    // shown for the first time joins its group, and follows like a member when that group
+    // is on another workspace.
+    let known = focused
+        .as_ref()
+        .is_some_and(|info| session.member(info.id).is_some());
+    if let Some(info) = &focused {
+        sync_tabs(core, session, &[info.id]);
+    }
     if let Some(info) = &focused
         && let Some(member) = session.member(info.id)
+        && (known || member.workspace != session.active())
     {
         if member.workspace == session.active() {
             session.note_focus(info.id);
@@ -997,9 +1358,6 @@ fn discover_focused_into<P: Platform>(
 
 /// Park a parked window again when its app brought it back.
 pub(crate) fn window_moved<P: Platform>(core: &mut Core<P>, window: WindowId) {
-    if core.workspaces.carried.contains(&window) {
-        core.refresh_marks();
-    }
     let now = core.platform.now();
     let recently = core
         .workspaces
@@ -1035,9 +1393,6 @@ pub(crate) fn window_moved<P: Platform>(core: &mut Core<P>, window: WindowId) {
 }
 
 pub(crate) fn window_destroyed<P: Platform>(core: &mut Core<P>, window: WindowId) {
-    if core.workspaces.carried.contains(&window) {
-        put_down(core, window, "closed");
-    }
     if let Some(session) = core.workspaces.session.as_mut() {
         session.discard(window);
     }
@@ -1075,9 +1430,6 @@ pub(crate) fn native_desktop_changed<P: Platform>(core: &mut Core<P>) {
     core.workspaces.paused = !core.platform.on_managed_desktop();
     let paused = core.workspaces.paused;
     core.trace("nativeDesktop", || serde_json::json!({ "paused": paused }));
-    if paused {
-        put_down_all(core, "paused on another desktop");
-    }
     if was_paused
         && !core.workspaces.paused
         && let Err(error) = update_displays(core)
@@ -1154,6 +1506,7 @@ fn update_displays<P: Platform>(core: &mut Core<P>) -> Result<(), WindowError> {
         return Ok(());
     };
     core.workspaces.focus.begin_change();
+    sync_all_tabs(core, &mut session);
     let (displays, areas) = (core.display_frames(), core.work_areas());
     let result = {
         let mut io = CoreIo::new(&mut *core);

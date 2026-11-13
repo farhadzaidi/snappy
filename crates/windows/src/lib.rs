@@ -35,5 +35,5 @@ mod wide;
 
 pub use app::{App, Stopper};
 pub use error::WindowsError;
-pub use instance::{Claim, Instance, claim};
+pub use instance::{Claim, Instance, RestartRequest, claim, request_restart};
 pub use platform::WindowsPlatform;

@@ -5,6 +5,7 @@ mod enumerate;
 mod lookup;
 mod operations;
 pub(crate) mod server;
+mod tabs;
 
 use std::time::Duration;
 
@@ -19,6 +20,7 @@ use crate::messages::{NOT_RESPONDING, WINDOW_GONE, unavailable};
 use crate::observers;
 use crate::permissions;
 use crate::registry::{self, Entry, Shared};
+use crate::tabs::TabMemory;
 use crate::thresholds::AX_MESSAGING_TIMEOUT;
 
 use chrome::ChromeWorkaround;
@@ -26,6 +28,7 @@ use chrome::ChromeWorkaround;
 pub struct Windows {
     registry: Shared<AxElement>,
     chrome: ChromeWorkaround,
+    tabs: TabMemory,
 }
 
 impl Windows {
@@ -33,6 +36,7 @@ impl Windows {
         Self {
             registry,
             chrome: ChromeWorkaround::default(),
+            tabs: TabMemory::default(),
         }
     }
 

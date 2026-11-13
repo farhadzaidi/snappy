@@ -2,13 +2,15 @@
 //! pixels, multiplied by the display's scale.
 
 use snappy_core::geometry::{Point, Rect};
-use snappy_platform::OverlayZone;
+use snappy_platform::{MarkStyle, OverlayZone};
 
 use super::canvas::Color;
 
 /// The documented accent when the system's can't be read.
 pub const DEFAULT_ACCENT: u32 = 0x007AFF;
 const MINT: u32 = 0x00C7BE;
+/// macOS's system orange.
+const ORANGE: u32 = 0xFF9F0A;
 const WHITE: u32 = 0xFFFFFF;
 
 pub const CORNER_RADIUS: f64 = 16.0;
@@ -57,8 +59,18 @@ pub fn zone_style(zone: &OverlayZone, accent: u32) -> ZoneStyle {
     }
 }
 
-/// A marked window's outline: the swap source's border, drawn inside the window's frame.
+/// A selected window's outline: the swap source's border, drawn inside the window's frame.
 pub const MARK_BORDER: Color = Color::rgb(MINT, 1.0);
+/// The brief outline of a window a focus shortcut just focused, in a color of its own so
+/// it never reads as selected.
+pub const FOCUS_BORDER: Color = Color::rgb(ORANGE, 1.0);
+
+pub fn mark_border(style: MarkStyle) -> Color {
+    match style {
+        MarkStyle::Selected => MARK_BORDER,
+        MarkStyle::Focused => FOCUS_BORDER,
+    }
+}
 pub const MARK_BORDER_WIDTH: f64 = 3.0;
 /// Close to Windows 11's own window corners.
 pub const MARK_CORNER_RADIUS: f64 = 8.0;
@@ -137,10 +149,13 @@ mod tests {
     }
 
     #[test]
-    fn marked_windows_are_outlined_like_the_swap_source() {
+    fn selected_windows_are_outlined_like_the_swap_source_and_focused_ones_apart() {
         let source = zone_style(&zone(false, false, true), DEFAULT_ACCENT);
-        assert_eq!(MARK_BORDER, source.border);
+        assert_eq!(mark_border(MarkStyle::Selected), source.border);
         assert_eq!(MARK_BORDER_WIDTH, source.border_width);
+        let focused = mark_border(MarkStyle::Focused);
+        assert_ne!(focused, source.border);
+        assert_ne!(focused, Color::rgb(DEFAULT_ACCENT, 1.0));
     }
 
     #[test]

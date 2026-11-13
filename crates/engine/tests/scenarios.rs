@@ -7,13 +7,15 @@ use std::time::Duration;
 
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::{KeyChord, Modifier, Mods};
-use snappy_core::settings::{DragModifier, HistoryStep, LayoutOptions, Settings};
+use snappy_core::settings::{DragModifier, FocusShortcut, HistoryStep, LayoutOptions, Settings};
 use snappy_core::swap::WhenTaken;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_engine::{Engine, Input, Paths};
 use snappy_fake::{FakePlatform, FakeWindow, OverlayCall};
 use snappy_ipc::{AppState, Command, ToSettings};
-use snappy_platform::{Caption, LiveControl, OverlayScene, PlatformEvent, Remedy, WindowId, WindowSystem};
+use snappy_platform::{
+    Caption, LiveControl, MarkStyle, OverlayScene, PlatformEvent, Remedy, WindowId, WindowSystem,
+};
 
 const LEFT_ZONE: Rect = Rect::new(12.0, 37.0, 702.0, 851.0);
 const RIGHT_ZONE: Rect = Rect::new(726.0, 37.0, 702.0, 851.0);
@@ -2576,11 +2578,18 @@ fn every_save_path_refuses_a_conflict_with_its_message() {
             "Snappy + ; is already assigned to Previous workspace.",
         );
         refused(
-            Command::SetWorkspaceStepShortcut {
-                step: snappy_core::settings::WorkspaceStep::TakeAlong,
+            Command::SetFocusShortcut {
+                shortcut: FocusShortcut::SelectWindow,
                 chord: Some(snappy("Space")),
             },
             "Snappy + Space is already assigned to Move to the nearest empty zone.",
+        );
+        refused(
+            Command::SetHistoryShortcut {
+                step: HistoryStep::Undo,
+                chord: Some(snappy("KeyK")),
+            },
+            "Snappy + K is already assigned to Focus down.",
         );
         refused(
             Command::SetHistoryShortcut {
@@ -2762,7 +2771,7 @@ fn a_swap_undo_that_cannot_land_returns_both_windows_and_keeps_the_entry() {
         assert_eq!(
             (status.message.as_str(), status.is_error),
             (
-                "An app could not restore the swap. Undo is available to retry.",
+                "An app could not restore its window. Undo is available to retry.",
                 true
             )
         );
@@ -3025,8 +3034,18 @@ fn focused(engine: &Engine<FakePlatform>) -> Option<WindowId> {
     engine.with_platform(|p| p.focused)
 }
 
+/// The frames the main display outlines, in either style.
 fn marks(engine: &Engine<FakePlatform>) -> Vec<Rect> {
-    engine.with_platform(|p| p.marks.get("main").cloned().unwrap_or_default())
+    marked(engine).into_iter().map(|(frame, _)| frame).collect()
+}
+
+fn marked(engine: &Engine<FakePlatform>) -> Vec<(Rect, MarkStyle)> {
+    engine.with_platform(|p| {
+        p.marks
+            .get("main")
+            .map(|windows| windows.iter().map(|mark| (mark.frame, mark.style)).collect())
+            .unwrap_or_default()
+    })
 }
 
 fn active(engine: &Engine<FakePlatform>) -> String {
@@ -3107,11 +3126,15 @@ fn sending_the_last_window_away_leaves_focus_alone() {
 }
 
 #[test]
-fn a_window_taken_along_goes_to_the_workspace_switched_to_by_number() {
+fn a_selected_window_goes_along_to_the_workspace_switched_to_by_number() {
     scenario(|| async {
         let engine = default_workspaces("take-by-number", two_zoned_windows());
         press_default(&engine, "Enter").await;
-        assert_eq!(marks(&engine), [LEFT_ZONE], "the carried window is outlined");
+        assert_eq!(
+            marked(&engine),
+            [(LEFT_ZONE, MarkStyle::Selected)],
+            "the selected window is outlined"
+        );
 
         press_default(&engine, "Digit3").await;
         assert_eq!(active(&engine), "workspace-3");
@@ -3122,13 +3145,13 @@ fn a_window_taken_along_goes_to_the_workspace_switched_to_by_number() {
         assert!(marks(&engine).is_empty(), "arrived windows lose their outline");
 
         press_default(&engine, "Digit1").await;
-        assert!(is_parked(&engine, 1), "the set was emptied by the switch");
+        assert!(is_parked(&engine, 1), "the switch emptied the selection");
         assert_eq!(frame_of(&engine, 2), RIGHT_ZONE);
     });
 }
 
 #[test]
-fn two_windows_taken_along_go_to_the_next_workspace_and_the_last_picked_up_gets_focus() {
+fn two_selected_windows_go_along_to_the_next_workspace_and_the_last_selected_gets_focus() {
     scenario(|| async {
         let engine = default_workspaces("take-two-by-step", four_windows());
         let frames: Vec<Rect> = (1..=4).map(|window| frame_of(&engine, window)).collect();
@@ -3152,7 +3175,7 @@ fn two_windows_taken_along_go_to_the_next_workspace_and_the_last_picked_up_gets_
 }
 
 #[test]
-fn taking_a_carried_window_along_again_puts_it_down() {
+fn selecting_a_selected_window_again_unselects_it() {
     scenario(|| async {
         let engine = default_workspaces("put-down", two_zoned_windows());
         press_default(&engine, "Enter").await;
@@ -3167,7 +3190,7 @@ fn taking_a_carried_window_along_again_puts_it_down() {
 }
 
 #[test]
-fn a_carried_window_that_closes_leaves_the_set() {
+fn a_selected_window_that_closes_leaves_the_selection() {
     scenario(|| async {
         let engine = default_workspaces("carried-closed", two_zoned_windows());
         press_default(&engine, "Enter").await;
@@ -3190,7 +3213,7 @@ fn a_carried_window_that_closes_leaves_the_set() {
 }
 
 #[test]
-fn a_carried_windows_outline_follows_it_and_survives_a_switch_to_the_same_workspace() {
+fn a_selected_windows_outline_follows_it_and_survives_a_switch_to_the_same_workspace() {
     scenario(|| async {
         let engine = default_workspaces("carried-moves", two_zoned_windows());
         press_default(&engine, "Enter").await;
@@ -3200,7 +3223,7 @@ fn a_carried_windows_outline_follows_it_and_survives_a_switch_to_the_same_worksp
         assert_eq!(marks(&engine), [moved]);
 
         press_default(&engine, "Digit1").await;
-        assert_eq!(marks(&engine), [moved], "already there: still carried");
+        assert_eq!(marks(&engine), [moved], "already there: still selected");
 
         event(
             &engine,
@@ -3220,7 +3243,7 @@ fn a_carried_windows_outline_follows_it_and_survives_a_switch_to_the_same_worksp
 }
 
 #[test]
-fn quitting_forgets_carried_windows_and_moves_none_of_them() {
+fn quitting_forgets_the_selection_and_moves_none_of_it() {
     scenario(|| async {
         let engine = default_workspaces("carried-quit", two_zoned_windows());
         press_default(&engine, "Enter").await;
@@ -3233,36 +3256,106 @@ fn quitting_forgets_carried_windows_and_moves_none_of_them() {
 }
 
 #[test]
-fn taking_along_does_nothing_while_workspaces_are_off_or_paused() {
+fn selecting_works_with_workspaces_off_and_backslash_clears_the_selection() {
     scenario(|| async {
-        let engine = live_engine("take-along-off", two_zoned_windows());
-        assert!(
-            !engine.with_platform(|p| p
-                .registered
-                .iter()
-                .any(|(_, combo)| *combo == snappy("Enter").combo())),
-            "with workspaces off, Snappy + Return stays the app's"
+        let engine = live_engine("select-without-workspaces", two_zoned_windows());
+        assert!(!engine.settings().workspaces.enabled);
+        press_default(&engine, "Enter").await;
+        focus(&engine, 2);
+        press_default(&engine, "Enter").await;
+        assert_eq!(
+            marked(&engine),
+            [
+                (LEFT_ZONE, MarkStyle::Selected),
+                (RIGHT_ZONE, MarkStyle::Selected)
+            ]
         );
 
-        let engine = default_workspaces("take-along-paused", two_zoned_windows());
-        engine.with_platform(|p| p.on_managed_desktop = false);
-        event(&engine, PlatformEvent::NativeDesktopChanged);
-        press_default(&engine, "Enter").await;
+        press_default(&engine, "Backslash").await;
         assert!(marks(&engine).is_empty());
-        let status = engine.status().unwrap();
         assert_eq!(
-            (status.message.as_str(), status.is_error, status.notify),
-            (
-                "Paused on another macOS desktop. Return to the original desktop to resume.",
-                false,
-                false
-            )
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (LEFT_ZONE, RIGHT_ZONE),
+            "clearing moves nothing"
         );
     });
 }
 
 #[test]
-fn pausing_on_another_desktop_puts_carried_windows_down() {
+fn a_macos_file_clearing_with_delete_loads_clearing_with_backslash_and_delete_is_refused() {
+    scenario(|| async {
+        let name = "clear-with-delete";
+        let paths = paths(name);
+        let mut written =
+            serde_json::to_value(Settings::defaults(snappy_core::keys::Platform::MacOs)).unwrap();
+        written["navigation"]["clearSelection"] = serde_json::to_value(snappy("Backspace")).unwrap();
+        std::fs::create_dir_all(paths.settings.parent().unwrap()).unwrap();
+        std::fs::write(&paths.settings, serde_json::to_vec(&written).unwrap()).unwrap();
+
+        let engine = Engine::new(two_zoned_windows(), paths);
+        engine.start();
+        command(&engine, Command::SetSnapping { enabled: true });
+        assert!(engine.status().is_none_or(|status| !status.is_error));
+        assert_eq!(
+            engine
+                .settings()
+                .navigation
+                .clear_selection
+                .map(|chord| chord.combo()),
+            Some(snappy("Backslash").combo())
+        );
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [LEFT_ZONE]);
+        press_default(&engine, "Backslash").await;
+        assert!(marks(&engine).is_empty());
+
+        command(
+            &engine,
+            Command::SetFocusShortcut {
+                shortcut: FocusShortcut::ClearSelection,
+                chord: Some(snappy("Backspace")),
+            },
+        );
+        let status = engine.status().unwrap();
+        assert!(status.is_error);
+        assert!(
+            status
+                .message
+                .ends_with("macOS reserves Control + Option + Command + Delete; it never reaches apps."),
+            "{}",
+            status.message
+        );
+        assert_eq!(
+            engine
+                .settings()
+                .navigation
+                .clear_selection
+                .map(|chord| chord.combo()),
+            Some(snappy("Backslash").combo())
+        );
+    });
+}
+
+#[test]
+fn losing_live_control_clears_the_selection_and_its_shortcuts() {
+    scenario(|| async {
+        let engine = live_engine("select-live-off", two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [LEFT_ZONE]);
+        command(&engine, Command::SetSnapping { enabled: false });
+        assert!(marks(&engine).is_empty());
+        assert!(
+            !engine.with_platform(|p| p
+                .registered
+                .iter()
+                .any(|(_, combo)| *combo == snappy("Enter").combo())),
+            "with live control off, Snappy + Return stays the app's"
+        );
+    });
+}
+
+#[test]
+fn changing_desktops_clears_the_selection() {
     scenario(|| async {
         let engine = default_workspaces("carried-paused", two_zoned_windows());
         press_default(&engine, "Enter").await;
@@ -3277,7 +3370,7 @@ fn pausing_on_another_desktop_puts_carried_windows_down() {
 }
 
 #[test]
-fn sending_a_carried_window_away_puts_it_down() {
+fn sending_one_selected_window_away_empties_the_selection() {
     scenario(|| async {
         let engine = default_workspaces("carried-sent", two_zoned_windows());
         press_default(&engine, "Enter").await;
@@ -3292,9 +3385,37 @@ fn sending_a_carried_window_away_puts_it_down() {
 }
 
 #[test]
-fn the_debug_log_records_taking_along_and_sending() {
+fn send_and_stay_sends_the_whole_selection_and_focuses_what_is_left() {
     scenario(|| async {
-        let name = "take-along-log";
+        let engine = default_workspaces("send-selection", four_windows());
+        for window in [2, 4] {
+            focus(&engine, window);
+            press_default(&engine, "Enter").await;
+        }
+        focus(&engine, 3);
+        focus(&engine, 1);
+
+        press_default(&engine, "Slash").await;
+        assert_eq!(active(&engine), "workspace-1", "the send stays");
+        assert!(is_parked(&engine, 2) && is_parked(&engine, 4));
+        assert!(!is_parked(&engine, 1) && !is_parked(&engine, 3));
+        assert_eq!(window_counts(&engine)["workspace-2"], 2);
+        assert!(marks(&engine).is_empty(), "sending empties the selection");
+        assert_eq!(focused(&engine), Some(WindowId(1)));
+
+        press_default(&engine, "Slash").await;
+        assert!(
+            is_parked(&engine, 1),
+            "without a selection the focused window goes"
+        );
+        assert!(!is_parked(&engine, 3));
+    });
+}
+
+#[test]
+fn the_debug_log_records_the_selection_and_sending() {
+    scenario(|| async {
+        let name = "selection-log";
         let engine = default_workspaces(name, two_zoned_windows());
         engine.force_debug_log();
         press_default(&engine, "Enter").await;
@@ -3302,12 +3423,17 @@ fn the_debug_log_records_taking_along_and_sending() {
         press_default(&engine, "Enter").await;
         press_default(&engine, "Digit2").await;
         press_default(&engine, "Period").await;
+        press_default(&engine, "Enter").await;
+        press_default(&engine, "Backslash").await;
+        press_default(&engine, "KeyL").await;
         let log = std::fs::read_to_string(paths_kept(name).log_dir.join("debug.jsonl")).unwrap();
         for event in [
-            "takeAlongPickedUp",
-            "takeAlongPutDown",
-            "takeAlongArrived",
+            "selectionAdded",
+            "selectionRemoved",
+            "selectionCarried",
+            "selectionCleared",
             "workspaceSend",
+            "focusMove",
         ] {
             assert!(
                 log.contains(&format!("\"event\":\"{event}\"")),
@@ -3456,38 +3582,251 @@ fn relaunched(name: &str, platform: FakePlatform) -> Engine<FakePlatform> {
     engine
 }
 
-#[test]
-fn launch_recovery_returns_windows_by_identity_and_leaves_user_moved_ones() {
-    scenario(|| async {
-        let name = "recovery-identity";
-        let mut platform = crashed_with_window_one_parked(name).await;
-        std::fs::remove_file(paths_kept(name).membership()).unwrap();
-        let moved = RIGHT_ZONE.with_origin(Point::new(500.0, 300.0));
-        platform.windows.get_mut(&WindowId(2)).unwrap().frame = moved;
+/// Like `relaunched`, with the debug log on from the start.
+fn relaunched_logging(name: &str, platform: FakePlatform) -> Engine<FakePlatform> {
+    let engine = Engine::new(platform, paths_kept(name));
+    engine.force_debug_log();
+    engine.start();
+    engine
+}
 
-        let engine = relaunched(name, platform);
-        assert_eq!(frame_of(&engine, 1), LEFT_ZONE);
-        assert_eq!(frame_of(&engine, 2), moved);
-        assert_eq!(writes_to(&engine, 2), 0);
-        assert!(!paths_kept(name).journal().exists());
+/// The debug log's records of `event` so far.
+fn logged(name: &str, event: &str) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(paths_kept(name).log_dir.join("debug.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|record| record["event"] == event)
+        .collect()
+}
+
+/// Every write and bounds-change bracket to any window so far.
+fn all_writes(engine: &Engine<FakePlatform>) -> Vec<(WindowId, &'static str)> {
+    engine.with_platform(|p| p.writes.clone())
+}
+
+/// Stop the way installing a new build does. Returns the platform as the next launch finds
+/// it, with its writes cleared.
+fn stopped_for_restart(engine: &Engine<FakePlatform>) -> FakePlatform {
+    engine.with_platform(|p| p.writes.clear());
+    engine.handle(Input::Platform(PlatformEvent::RestartRequested));
+    assert_eq!(all_writes(engine), [], "stopping moves nothing");
+    let mut platform = engine.with_platform(|p| p.clone());
+    platform.writes.clear();
+    platform
+}
+
+#[test]
+fn a_restart_keeps_every_window_in_its_workspace_and_moves_nothing() {
+    scenario(|| async {
+        let name = "restart-keeps";
+        let engine = live_engine(name, two_zoned_windows());
+        enable_workspaces(&engine);
+        event(&engine, PlatformEvent::HotKey(send_to(&engine, 2)));
+        settle(&engine).await;
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 3)));
+        settle(&engine).await;
+        assert!(is_parked(&engine, 1) && is_parked(&engine, 2));
+        let parked = (frame_of(&engine, 1), frame_of(&engine, 2));
+        let platform = stopped_for_restart(&engine);
+        assert!(paths_kept(name).journal().exists(), "the journal stays");
+
+        let engine = relaunched_logging(name, platform);
         assert!(app_state(&engine).workspaces.running);
+        assert_eq!(all_writes(&engine), [], "the launch moves nothing");
+        assert_eq!((frame_of(&engine, 1), frame_of(&engine, 2)), parked);
+        assert_eq!(active(&engine), "workspace-3");
+        let counts = window_counts(&engine);
+        assert_eq!(
+            (
+                counts["workspace-1"],
+                counts["workspace-2"],
+                counts["workspace-3"]
+            ),
+            (1, 1, 0)
+        );
+        let started = logged(name, "workspacesStarted");
+        let started = started.last().unwrap();
+        assert_eq!(
+            started["rejoined"],
+            serde_json::json!({ "workspace-1": 1, "workspace-2": 1 })
+        );
+        assert_eq!(
+            (&started["staleJournal"], &started["returned"]),
+            (&serde_json::json!(0), &serde_json::json!(0))
+        );
+
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 1)));
+        settle(&engine).await;
+        assert_eq!(frame_of(&engine, 2), RIGHT_ZONE);
+        assert!(is_parked(&engine, 1));
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 2)));
+        settle(&engine).await;
+        assert_eq!(frame_of(&engine, 1), LEFT_ZONE);
+        assert!(is_parked(&engine, 2));
     });
 }
 
 #[test]
-fn launch_recovery_matches_the_only_window_at_the_parked_position() {
+fn quitting_after_a_restart_still_returns_parked_windows() {
+    scenario(|| async {
+        let name = "restart-then-quit";
+        let engine = live_engine(name, two_zoned_windows());
+        enable_workspaces(&engine);
+        event(&engine, PlatformEvent::HotKey(send_to(&engine, 2)));
+        settle(&engine).await;
+        let platform = stopped_for_restart(&engine);
+
+        let engine = relaunched(name, platform);
+        assert!(is_parked(&engine, 1));
+        event(&engine, PlatformEvent::QuitRequested);
+        assert_eq!(frame_of(&engine, 1), LEFT_ZONE);
+        assert_eq!(frame_of(&engine, 2), RIGHT_ZONE);
+        assert!(!paths_kept(name).journal().exists());
+    });
+}
+
+#[test]
+fn a_crash_leaves_parked_windows_parked_for_the_next_launch_and_user_moved_ones_alone() {
+    scenario(|| async {
+        let name = "recovery-identity";
+        let mut platform = crashed_with_window_one_parked(name).await;
+        std::fs::remove_file(paths_kept(name).membership()).unwrap();
+        let parked = platform.windows[&WindowId(1)].frame;
+        let moved = RIGHT_ZONE.with_origin(Point::new(500.0, 300.0));
+        platform.windows.get_mut(&WindowId(2)).unwrap().frame = moved;
+
+        let engine = relaunched(name, platform);
+        assert!(app_state(&engine).workspaces.running);
+        assert_eq!(frame_of(&engine, 1), parked, "rejoined from the journal alone");
+        assert_eq!(frame_of(&engine, 2), moved);
+        assert_eq!(all_writes(&engine), []);
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+        assert!(paths_kept(name).journal().exists(), "window 1 is still parked");
+
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 2)));
+        settle(&engine).await;
+        assert_eq!(frame_of(&engine, 1), LEFT_ZONE, "back at its saved frame");
+    });
+}
+
+#[test]
+fn a_restart_finds_a_parked_window_whose_token_changed_by_its_parked_position() {
     scenario(|| async {
         let name = "recovery-position";
         let mut platform = crashed_with_window_one_parked(name).await;
         let parked = platform.windows.remove(&WindowId(1)).unwrap();
+        let parked_frame = parked.frame;
         platform.stacking.retain(|id| *id != WindowId(1));
         platform.open(7, parked);
         platform.open(8, FakeWindow::new("com.example.editor", 100, FLOATING));
 
         let engine = relaunched(name, platform);
-        assert_eq!(frame_of(&engine, 7), LEFT_ZONE);
+        assert_eq!(frame_of(&engine, 7), parked_frame);
         assert_eq!(frame_of(&engine, 8), FLOATING);
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 2)));
+        settle(&engine).await;
+        assert_eq!(frame_of(&engine, 7), LEFT_ZONE);
+        assert!(
+            is_parked(&engine, 8),
+            "a window it didn't know joined workspace 1"
+        );
+    });
+}
+
+#[test]
+fn a_window_parked_for_the_workspace_showing_at_launch_comes_back() {
+    scenario(|| async {
+        let name = "recovery-active";
+        let platform = crashed_with_window_one_parked(name).await;
+        let file = paths_kept(name).settings;
+        let mut settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        settings["workspaces"]["activeId"] = "workspace-2".into();
+        std::fs::write(&file, settings.to_string()).unwrap();
+
+        let engine = relaunched(name, platform);
+        assert_eq!(active(&engine), "workspace-2");
+        assert_eq!(frame_of(&engine, 1), LEFT_ZONE);
+        assert_eq!(
+            frame_of(&engine, 2),
+            RIGHT_ZONE,
+            "left alone, in the workspace showing"
+        );
+        assert_eq!(window_counts(&engine)["workspace-2"], 2);
         assert!(!paths_kept(name).journal().exists());
+    });
+}
+
+#[test]
+fn a_process_id_reused_by_another_launch_never_takes_over_a_parked_window() {
+    scenario(|| async {
+        let name = "recovery-reused-pid";
+        let mut platform = crashed_with_window_one_parked(name).await;
+        // The editor quit, and a new launch got the same process ID and a window at the
+        // spot where the old one was parked.
+        let window = platform.windows.get_mut(&WindowId(1)).unwrap();
+        window.launch_time = 2.0;
+        let stranded = window.frame;
+
+        let engine = relaunched_logging(name, platform);
+        assert!(app_state(&engine).workspaces.running);
+        assert!(
+            !is_parked(&engine, 1),
+            "brought on screen like any stranded window"
+        );
+        assert_eq!(frame_of(&engine, 1).size(), stranded.size());
+        assert_eq!(window_counts(&engine)["workspace-2"], 0);
+        assert!(!paths_kept(name).journal().exists());
+        let started = logged(name, "workspacesStarted");
+        let started = started.last().unwrap();
+        assert_eq!(started["staleJournal"], 1);
+        assert_eq!(started["staleMembership"], 1);
+        assert_eq!(started["rejoined"], serde_json::json!({}));
+    });
+}
+
+#[test]
+fn a_restart_keeps_a_parked_tab_group_together() {
+    scenario(|| async {
+        let name = "restart-tabs";
+        let engine = visited_tabs(name, TABBED);
+        press_default(&engine, "Slash").await;
+        assert!(is_parked(&engine, 3));
+        let parked = frame_of(&engine, 3);
+        let platform = stopped_for_restart(&engine);
+
+        let engine = relaunched(name, platform);
+        assert_eq!(all_writes(&engine), []);
+        assert_eq!(frame_of(&engine, 3), parked);
+        assert_eq!(window_counts(&engine)["workspace-2"], 1, "the group counts once");
+        assert_eq!(window_counts(&engine)["workspace-1"], 1);
+
+        press_default(&engine, "Digit2").await;
+        assert_eq!(frame_of(&engine, 3), TABBED);
+        pick_tab(&engine, 1);
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+        press_default(&engine, "Digit1").await;
+        assert!(is_parked(&engine, 1), "the tab showing now parks with its group");
+        assert_eq!(remembered_workspaces(name)[&1], "workspace-2");
+    });
+}
+
+#[test]
+fn the_selection_is_not_kept_across_a_restart() {
+    scenario(|| async {
+        let name = "restart-selection";
+        let engine = default_workspaces(name, two_zoned_windows());
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [LEFT_ZONE]);
+        let platform = stopped_for_restart(&engine);
+
+        let engine = relaunched(name, platform);
+        assert_eq!(marks(&engine), []);
+        press_default(&engine, "Quote").await;
+        assert!(
+            is_parked(&engine, 1) && is_parked(&engine, 2),
+            "nothing selected goes along"
+        );
     });
 }
 
@@ -3789,7 +4128,28 @@ fn desktop_parking_quitting_brings_every_window_back() {
 }
 
 #[test]
-fn desktop_parking_launch_recovery_brings_windows_back_from_the_parking_desktop() {
+fn desktop_parking_a_restart_leaves_windows_on_the_parking_desktop() {
+    scenario(|| async {
+        let name = "desktop-restart";
+        let engine = window_one_on_the_parking_desktop(name).await;
+        let platform = stopped_for_restart(&engine);
+
+        let engine = relaunched(name, platform);
+        assert!(app_state(&engine).workspaces.running);
+        assert!(on_parking_desktop(&engine, 1));
+        assert_eq!(all_writes(&engine), []);
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 2)));
+        settle(&engine).await;
+        assert!(!on_parking_desktop(&engine, 1));
+        assert!(on_parking_desktop(&engine, 2));
+        assert_eq!(frame_of(&engine, 1), LEFT_ZONE);
+    });
+}
+
+#[test]
+fn desktop_parking_quitting_brings_windows_back_from_the_parking_desktop_at_their_saved_frame() {
     scenario(|| async {
         let name = "desktop-recovery";
         let engine = window_one_on_the_parking_desktop(name).await;
@@ -3800,10 +4160,11 @@ fn desktop_parking_launch_recovery_brings_windows_back_from_the_parking_desktop(
         platform.writes.clear();
 
         let engine = relaunched(name, platform);
+        assert!(on_parking_desktop(&engine, 1), "a crash leaves it parked");
+        engine.shutdown();
         assert!(!on_parking_desktop(&engine, 1));
         assert_eq!(frame_of(&engine, 1), LEFT_ZONE, "at its saved frame");
         assert!(!paths_kept(name).journal().exists());
-        assert!(app_state(&engine).workspaces.running);
     });
 }
 
@@ -4084,5 +4445,549 @@ fn a_remedy_the_platform_no_longer_offers_is_not_applied() {
             },
         );
         assert!(engine.with_platform(|p| p.remedies.is_empty()));
+    });
+}
+
+/// Window 1 in the middle of the main display, focused, with a window on each side of it:
+/// 2 to the left, 3 to the right, 4 above, and 5 below.
+fn around_a_center() -> FakePlatform {
+    let mut fake = FakePlatform::default();
+    let frames = [
+        (2, Rect::new(60.0, 375.0, 240.0, 150.0)),
+        (3, Rect::new(1140.0, 375.0, 240.0, 150.0)),
+        (4, Rect::new(600.0, 60.0, 240.0, 150.0)),
+        (5, Rect::new(600.0, 700.0, 240.0, 150.0)),
+        (1, Rect::new(600.0, 375.0, 240.0, 150.0)),
+    ];
+    for (id, frame) in frames {
+        fake.open(id, FakeWindow::new("com.example.editor", 100, frame));
+    }
+    fake
+}
+
+fn frontmost(engine: &Engine<FakePlatform>) -> WindowId {
+    engine.with_platform(|p| p.stacking[0])
+}
+
+#[test]
+fn focus_shortcuts_focus_and_raise_the_nearest_window_in_each_direction() {
+    scenario(|| async {
+        let engine = live_engine("focus-directions", around_a_center());
+        for (key, expected) in [("KeyL", 3), ("KeyJ", 2), ("KeyI", 4), ("KeyK", 5)] {
+            focus(&engine, 1);
+            press_default(&engine, key).await;
+            assert_eq!(focused(&engine), Some(WindowId(expected)), "{key}");
+            assert_eq!(frontmost(&engine), WindowId(expected), "{key} raises it");
+        }
+        assert_eq!(
+            frame_of(&engine, 1),
+            Rect::new(600.0, 375.0, 240.0, 150.0),
+            "nothing moves"
+        );
+    });
+}
+
+#[test]
+fn a_focus_shortcut_with_nothing_that_way_leaves_focus_and_says_so_quietly() {
+    scenario(|| async {
+        let engine = live_engine("focus-nothing-there", around_a_center());
+        focus(&engine, 3);
+        press_default(&engine, "KeyL").await;
+        assert_eq!(focused(&engine), Some(WindowId(3)), "focus never wraps around");
+        let status = engine.status().unwrap();
+        assert_eq!(
+            (status.message.as_str(), status.is_error, status.notify),
+            ("No window to the right.", false, false)
+        );
+        assert!(marks(&engine).is_empty());
+    });
+}
+
+#[test]
+fn with_nothing_focused_focus_moves_from_the_middle_of_the_display_under_the_pointer() {
+    scenario(|| async {
+        let engine = live_engine("focus-from-pointer", around_a_center());
+        engine.with_platform(|p| p.focused = None);
+        press_default(&engine, "KeyL").await;
+        assert_eq!(
+            focused(&engine),
+            Some(WindowId(3)),
+            "window 1 sits on the middle, not past it"
+        );
+    });
+}
+
+#[test]
+fn equally_near_windows_go_to_the_one_focused_most_recently() {
+    scenario(|| async {
+        let mut fake = FakePlatform::default();
+        let window =
+            |x: f64, y: f64| FakeWindow::new("com.example.editor", 100, Rect::new(x, y, 240.0, 150.0));
+        fake.open(2, window(700.0, 225.0));
+        fake.open(3, window(700.0, 525.0));
+        fake.open(1, window(100.0, 375.0));
+        let engine = default_workspaces("focus-ties", fake);
+        for (order, expected) in [([2, 3], 3), ([3, 2], 2)] {
+            for window in order {
+                focus(&engine, window);
+            }
+            focus(&engine, 1);
+            press_default(&engine, "KeyL").await;
+            assert_eq!(focused(&engine), Some(WindowId(expected)));
+        }
+    });
+}
+
+/// The focus moves the debug log recorded.
+fn logged_focus_moves(name: &str) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(paths_kept(name).log_dir.join("debug.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|record| record["event"] == "focusMove")
+        .collect()
+}
+
+/// Window 1 focused in the left zone, window 2 in the right zone, and window 3 floating
+/// between them, a little lower, where the nearest window by center would be it.
+fn zoned_with_a_floating_window_between() -> FakePlatform {
+    let mut fake = two_zoned_windows();
+    let between = Rect::new(570.0, 400.0, 300.0, 200.0);
+    fake.open(3, FakeWindow::new("com.example.notes", 300, between));
+    fake.focused = Some(WindowId(1));
+    fake
+}
+
+#[test]
+fn with_windows_in_zones_focus_moves_between_zones_past_a_floating_window() {
+    scenario(|| async {
+        let name = "focus-zones";
+        let engine = live_engine(name, zoned_with_a_floating_window_between());
+        engine.force_debug_log();
+        press_default(&engine, "KeyL").await;
+        assert_eq!(focused(&engine), Some(WindowId(2)));
+        press_default(&engine, "KeyJ").await;
+        assert_eq!(focused(&engine), Some(WindowId(1)));
+        press_default(&engine, "KeyK").await;
+        assert_eq!(
+            focused(&engine),
+            Some(WindowId(1)),
+            "the floating window below is skipped"
+        );
+        assert_eq!(status_text(&engine), "No window below.");
+
+        let moves = logged_focus_moves(name);
+        assert_eq!(moves.len(), 3);
+        assert!(moves.iter().all(|record| record["mode"] == "zones"), "{moves:?}");
+        assert_eq!(
+            moves[0]["zone"],
+            serde_json::json!({ "display": "main", "zone": "halves-1" })
+        );
+        assert_eq!(moves[2]["zone"], serde_json::Value::Null);
+    });
+}
+
+#[test]
+fn from_a_floating_focused_window_focus_goes_to_the_zone_ahead() {
+    scenario(|| async {
+        let engine = live_engine("focus-from-floating", zoned_with_a_floating_window_between());
+        for (key, expected) in [("KeyL", 2), ("KeyJ", 1)] {
+            focus(&engine, 3);
+            press_default(&engine, key).await;
+            assert_eq!(focused(&engine), Some(WindowId(expected)), "{key}");
+        }
+    });
+}
+
+#[test]
+fn of_windows_stacked_in_a_zone_focus_goes_to_the_most_recently_focused() {
+    scenario(|| async {
+        let mut fake = two_zoned_windows();
+        fake.open(4, FakeWindow::new("com.example.notes", 300, RIGHT_ZONE));
+        let engine = default_workspaces("focus-stacked", fake);
+        for (order, expected) in [([2, 4], 4), ([4, 2], 2)] {
+            for window in order {
+                focus(&engine, window);
+            }
+            focus(&engine, 1);
+            press_default(&engine, "KeyL").await;
+            assert_eq!(focused(&engine), Some(WindowId(expected)));
+        }
+    });
+}
+
+#[test]
+fn focus_moves_between_zones_across_displays_skipping_empty_ones() {
+    scenario(|| async {
+        let mut fake = FakePlatform::default();
+        fake.displays.push(side_display());
+        fake.open(2, FakeWindow::new("com.example.browser", 200, side_third(1)));
+        fake.open(1, FakeWindow::new("com.example.editor", 100, LEFT_ZONE));
+        let engine = live_engine("focus-across-displays", fake);
+        thirds_on_the_side(&engine);
+        press_default(&engine, "KeyL").await;
+        assert_eq!(focused(&engine), Some(WindowId(2)));
+        press_default(&engine, "KeyJ").await;
+        assert_eq!(focused(&engine), Some(WindowId(1)));
+    });
+}
+
+#[test]
+fn with_no_window_in_a_zone_focus_moves_by_window_centers() {
+    scenario(|| async {
+        let name = "focus-windows-mode";
+        let engine = live_engine(name, around_a_center());
+        engine.force_debug_log();
+        focus(&engine, 1);
+        press_default(&engine, "KeyL").await;
+        assert_eq!(focused(&engine), Some(WindowId(3)));
+        let moves = logged_focus_moves(name);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0]["mode"], "windows");
+        assert_eq!(moves[0]["zone"], serde_json::Value::Null);
+    });
+}
+
+#[test]
+fn the_newly_focused_window_flashes_an_outline_of_its_own_that_then_goes() {
+    scenario(|| async {
+        let engine = live_engine("focus-flash", around_a_center());
+        let right = frame_of(&engine, 3);
+        let middle = frame_of(&engine, 1);
+        event(
+            &engine,
+            PlatformEvent::HotKey(hotkey_id(&engine, &snappy("KeyL"))),
+        );
+        assert_eq!(marked(&engine), [(right, MarkStyle::Focused)]);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(marked(&engine), [(right, MarkStyle::Focused)], "still showing");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(marks(&engine).is_empty(), "gone after about 400 ms");
+
+        press_default(&engine, "Enter").await;
+        event(
+            &engine,
+            PlatformEvent::HotKey(hotkey_id(&engine, &snappy("KeyJ"))),
+        );
+        assert_eq!(
+            marked(&engine),
+            [(right, MarkStyle::Selected), (middle, MarkStyle::Focused)]
+        );
+        settle(&engine).await;
+        event(
+            &engine,
+            PlatformEvent::HotKey(hotkey_id(&engine, &snappy("KeyL"))),
+        );
+        assert_eq!(
+            marked(&engine),
+            [(right, MarkStyle::Focused)],
+            "the flash shows over the selection"
+        );
+        settle(&engine).await;
+        assert_eq!(marked(&engine), [(right, MarkStyle::Selected)]);
+    });
+}
+
+/// Two floating windows over the halves layout: 1 nearer the right zone, 2 nearer the left.
+fn two_floating_windows() -> FakePlatform {
+    let mut fake = FakePlatform::default();
+    let window = |app: &str, pid: u32, x: f64| FakeWindow::new(app, pid, Rect::new(x, 300.0, 300.0, 200.0));
+    fake.open(2, window("com.example.browser", 200, 100.0));
+    fake.open(1, window("com.example.editor", 100, 800.0));
+    fake
+}
+
+#[test]
+fn snappy_space_places_the_selection_into_empty_zones_as_one_undo_step() {
+    scenario(|| async {
+        let name = "place-selection";
+        let engine = live_engine(name, two_floating_windows());
+        engine.force_debug_log();
+        let before = (frame_of(&engine, 1), frame_of(&engine, 2));
+        press_default(&engine, "Enter").await;
+        focus(&engine, 2);
+        press_default(&engine, "Enter").await;
+
+        press_nearest_empty(&engine);
+        settle(&engine).await;
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (RIGHT_ZONE, LEFT_ZONE)
+        );
+        assert!(marks(&engine).is_empty(), "placed windows leave the selection");
+        assert_eq!(status_text(&engine), "Snapped 2 windows.");
+        let snaps = logged_snaps(name);
+        assert_eq!(snaps.len(), 2, "each move is logged as a snap");
+        assert!(snaps.iter().all(|snap| snap["outcome"] == "snapped"));
+
+        undo(&engine);
+        settle(&engine).await;
+        assert_eq!((frame_of(&engine, 1), frame_of(&engine, 2)), before);
+
+        press_nearest_empty(&engine);
+        settle(&engine).await;
+        assert_eq!(
+            frame_of(&engine, 2),
+            LEFT_ZONE,
+            "without a selection, Space moves only the focused window"
+        );
+        assert_eq!(frame_of(&engine, 1), before.0);
+    });
+}
+
+#[test]
+fn selected_windows_that_dont_fit_stay_selected_and_the_status_says_how_many() {
+    scenario(|| async {
+        let mut fake = two_floating_windows();
+        let middle = Rect::new(620.0, 350.0, 200.0, 200.0);
+        fake.open(3, FakeWindow::new("com.example.notes", 300, middle));
+        let engine = live_engine("place-overflow", fake);
+        for window in [1, 2, 3] {
+            focus(&engine, window);
+            press_default(&engine, "Enter").await;
+        }
+
+        press_nearest_empty(&engine);
+        settle(&engine).await;
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2), frame_of(&engine, 3)),
+            (RIGHT_ZONE, LEFT_ZONE, middle)
+        );
+        assert_eq!(marked(&engine), [(middle, MarkStyle::Selected)]);
+        let status = engine.status().unwrap();
+        assert_eq!(
+            (status.message.as_str(), status.is_error, status.notify),
+            ("1 window didn't fit.", false, false)
+        );
+    });
+}
+
+const TABBED: Rect = Rect::new(200.0, 150.0, 640.0, 420.0);
+const TERMINAL: u32 = 300;
+
+/// An editor window, 4, and a Terminal window with three native tabs, 1 to 3, the last
+/// opened showing. Each tab is a window of its own, as macOS makes them.
+fn tabbed_terminal(frame: Rect) -> FakePlatform {
+    let mut fake = FakePlatform::default();
+    let editor = Rect::new(900.0, 300.0, 400.0, 300.0);
+    fake.open(4, FakeWindow::new("com.example.editor", 100, editor));
+    fake.open(1, FakeWindow::new("com.apple.Terminal", TERMINAL, frame));
+    fake.add_tab(2, WindowId(1));
+    fake.add_tab(3, WindowId(2));
+    fake
+}
+
+/// Click a tab, which shows and focuses it.
+fn pick_tab(engine: &Engine<FakePlatform>, tab: u64) {
+    engine.with_platform(|p| p.select_tab(WindowId(tab)));
+    terminal_focused(engine);
+}
+
+fn terminal_focused(engine: &Engine<FakePlatform>) {
+    event(
+        engine,
+        PlatformEvent::FocusChanged {
+            pid: TERMINAL,
+            by_activation: false,
+        },
+    );
+}
+
+/// Workspaces on with every tab of the Terminal window visited once, so each is a member,
+/// and tab 3 showing again.
+fn visited_tabs(name: &str, frame: Rect) -> Engine<FakePlatform> {
+    let engine = default_workspaces(name, tabbed_terminal(frame));
+    for tab in [1, 2, 3] {
+        pick_tab(&engine, tab);
+    }
+    engine
+}
+
+/// The workspace the membership file gives each window.
+fn remembered_workspaces(name: &str) -> BTreeMap<u64, String> {
+    let file = std::fs::read(paths_kept(name).membership()).unwrap();
+    serde_json::from_slice::<Vec<serde_json::Value>>(&file)
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            let window = entry["key"]["window"].as_str().unwrap().parse().unwrap();
+            (window, entry["workspaceId"].as_str().unwrap().to_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn a_selected_tabbed_window_takes_every_tab_along_and_torn_out_tabs_stay_there() {
+    scenario(|| async {
+        let name = "tabs-carried";
+        let engine = visited_tabs(name, TABBED);
+        engine.force_debug_log();
+        press_default(&engine, "Enter").await;
+        assert_eq!(marks(&engine), [TABBED], "the shown tab is outlined");
+
+        press_default(&engine, "Quote").await;
+        assert_eq!(active(&engine), "workspace-2");
+        assert_eq!(frame_of(&engine, 3), TABBED, "the group keeps its frame");
+        assert!(is_parked(&engine, 4));
+        assert_eq!(
+            window_counts(&engine)["workspace-2"],
+            1,
+            "a tab group counts once"
+        );
+        let remembered = remembered_workspaces(name);
+        for tab in [1, 2, 3] {
+            assert_eq!(remembered[&tab], "workspace-2", "tab {tab}");
+        }
+        assert_eq!(
+            writes_to(&engine, 1) + writes_to(&engine, 2),
+            0,
+            "hidden tabs never move"
+        );
+
+        // Drag a hidden tab out, then the shown one, which shows tab 2 in its place.
+        let torn = Rect::new(80.0, 120.0, 500.0, 360.0);
+        engine.with_platform(|p| p.tear_out(WindowId(1), torn));
+        terminal_focused(&engine);
+        let torn_too = Rect::new(700.0, 400.0, 500.0, 360.0);
+        engine.with_platform(|p| p.tear_out(WindowId(3), torn_too));
+        terminal_focused(&engine);
+        assert_eq!(frame_of(&engine, 2), TABBED);
+
+        press_default(&engine, "Digit1").await;
+        assert!(
+            [1, 2, 3].into_iter().all(|tab| is_parked(&engine, tab)),
+            "every torn-out tab stays with workspace 2"
+        );
+        assert_eq!(frame_of(&engine, 4), Rect::new(900.0, 300.0, 400.0, 300.0));
+
+        press_default(&engine, "Digit2").await;
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2), frame_of(&engine, 3)),
+            (torn, TABBED, torn_too)
+        );
+        assert_eq!(window_counts(&engine)["workspace-2"], 3);
+
+        let log = std::fs::read_to_string(paths_kept(name).log_dir.join("debug.jsonl")).unwrap();
+        let carried = log
+            .lines()
+            .find(|line| line.contains("\"event\":\"selectionCarried\""))
+            .unwrap();
+        assert!(carried.contains("\"tabs\":{\"3\":[1,2]}"), "{carried}");
+    });
+}
+
+#[test]
+fn sending_a_tabbed_window_sends_every_tab_and_hidden_tabs_never_move() {
+    scenario(|| async {
+        let engine = visited_tabs("tabs-sent", TABBED);
+        press_default(&engine, "Slash").await;
+        assert_eq!(active(&engine), "workspace-1");
+        assert!(is_parked(&engine, 3));
+        assert_eq!(
+            focused(&engine),
+            Some(WindowId(4)),
+            "focus stays on this workspace"
+        );
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+        assert_eq!(writes_to(&engine, 1) + writes_to(&engine, 2), 0);
+
+        press_default(&engine, "Digit2").await;
+        assert_eq!(frame_of(&engine, 3), TABBED);
+        pick_tab(&engine, 1);
+        assert_eq!(frame_of(&engine, 1), TABBED);
+        press_default(&engine, "Digit1").await;
+        assert!(is_parked(&engine, 1), "the tab showing now parks the group");
+        assert_eq!(
+            writes_to(&engine, 3),
+            2,
+            "tab 3, hidden now, moved only while it showed"
+        );
+    });
+}
+
+#[test]
+fn a_new_tab_joins_its_groups_workspace_even_while_the_group_is_hidden() {
+    scenario(|| async {
+        let engine = visited_tabs("tabs-new", TABBED);
+        press_default(&engine, "Slash").await;
+        assert!(is_parked(&engine, 3));
+        let parked = frame_of(&engine, 3);
+
+        // The app opens a tab in the hidden window: it shows where the group is parked.
+        engine.with_platform(|p| {
+            p.add_tab(5, WindowId(3));
+        });
+        event(&engine, PlatformEvent::WindowCreated { pid: TERMINAL });
+        assert_eq!(frame_of(&engine, 5), parked, "Snappy leaves it parked");
+        assert_eq!(window_counts(&engine)["workspace-1"], 1);
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+
+        press_default(&engine, "Digit2").await;
+        assert_eq!(
+            frame_of(&engine, 5),
+            TABBED,
+            "it comes back as the group's shown tab"
+        );
+    });
+}
+
+#[test]
+fn a_restart_puts_tabs_remembered_in_other_workspaces_with_their_shown_tab() {
+    scenario(|| async {
+        let name = "tabs-restart";
+        let mut fake = FakePlatform::default();
+        fake.open(1, FakeWindow::new("com.apple.Terminal", TERMINAL, TABBED));
+        fake.add_tab(2, WindowId(1));
+        for window in fake.windows.values_mut() {
+            window.state.minimized = true;
+        }
+        let engine = started(name, fake);
+        engine.force_debug_log();
+        let saved = |window: u64, workspace: &str| {
+            serde_json::json!({
+                "key": { "pid": TERMINAL, "launchTime": 1.0, "window": window.to_string() },
+                "workspaceId": workspace,
+                "frame": TABBED,
+                "parkedOrigin": null,
+            })
+        };
+        let entries = serde_json::json!([saved(2, "workspace-2"), saved(1, "workspace-1")]);
+        let membership = paths_kept(name).membership();
+        std::fs::create_dir_all(membership.parent().unwrap()).unwrap();
+        std::fs::write(&membership, entries.to_string()).unwrap();
+
+        command(&engine, Command::SetWorkspacesEnabled { enabled: true });
+        assert!(app_state(&engine).workspaces.running);
+        let remembered = remembered_workspaces(name);
+        assert_eq!(
+            (remembered[&1].as_str(), remembered[&2].as_str()),
+            ("workspace-2", "workspace-2")
+        );
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+        assert_eq!(window_counts(&engine)["workspace-1"], 0);
+        let log = std::fs::read_to_string(paths_kept(name).log_dir.join("debug.jsonl")).unwrap();
+        assert!(log.contains("\"event\":\"tabsUnified\""), "{log}");
+    });
+}
+
+#[test]
+fn a_tab_group_is_selected_as_one_and_only_its_shown_tab_counts_as_a_zone_occupant() {
+    scenario(|| async {
+        let engine = visited_tabs("tabs-selected", LEFT_ZONE);
+        press_default(&engine, "Enter").await;
+        pick_tab(&engine, 1);
+        assert_eq!(marks(&engine), [LEFT_ZONE], "one outline, on the tab showing");
+        press_default(&engine, "Enter").await;
+        assert!(marks(&engine).is_empty(), "the group's other tab unselects it");
+
+        place(&engine, 4, RIGHT_ZONE);
+        focus(&engine, 4);
+        press_default(&engine, "ArrowLeft").await;
+        assert_eq!(
+            frame_of(&engine, 4),
+            LEFT_ZONE,
+            "the hidden tabs don't crowd the zone"
+        );
+        assert_eq!(frame_of(&engine, 1), RIGHT_ZONE, "the shown tab swaps");
     });
 }

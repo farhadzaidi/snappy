@@ -1,7 +1,9 @@
 //! One daemon per session: a lock file holding the daemon's process ID. A
 //! second launch sends that process `SIGUSR1`, which opens the settings window.
 //! `SIGTERM`, from `kill` or the session ending, quits the way the tray's Quit does, so
-//! parked windows come back first.
+//! parked windows come back first. `SIGUSR2` stops for a restart, as when installing a new
+//! build: windows stay where they are, and the next launch puts them back in their
+//! workspaces.
 
 use std::ffi::{c_int, c_void};
 use std::fs::{File, OpenOptions, TryLockError};
@@ -16,6 +18,7 @@ use snappy_platform::PlatformEvent;
 
 const LOCK_NAME: &str = "snappy.lock";
 const SIGUSR1: c_int = 10;
+const SIGUSR2: c_int = 12;
 const SIGTERM: c_int = 15;
 /// `SIG_ERR` as `signal` returns it.
 const SIGNAL_ERROR: usize = usize::MAX;
@@ -106,6 +109,7 @@ fn signal_event(signum: c_int) -> Option<PlatformEvent> {
     match signum {
         SIGUSR1 => Some(PlatformEvent::OpenSettingsRequested),
         SIGTERM => Some(PlatformEvent::QuitRequested),
+        SIGUSR2 => Some(PlatformEvent::RestartRequested),
         _ => None,
     }
 }
@@ -127,7 +131,7 @@ fn listen(events: Sender<PlatformEvent>) -> std::io::Result<()> {
                 }
             }
         })?;
-    for signum in [SIGUSR1, SIGTERM] {
+    for signum in [SIGUSR1, SIGUSR2, SIGTERM] {
         // SAFETY: the handler only performs an atomic load and `write`.
         let previous = unsafe { signal(signum, on_signal as extern "C" fn(c_int) as usize) };
         if previous == SIGNAL_ERROR {
@@ -165,8 +169,9 @@ mod tests {
     }
 
     #[test]
-    fn sigterm_quits_like_the_tray_quit() {
+    fn sigterm_quits_like_the_tray_quit_and_sigusr2_stops_for_a_restart() {
         assert_eq!(signal_event(SIGTERM), Some(PlatformEvent::QuitRequested));
+        assert_eq!(signal_event(SIGUSR2), Some(PlatformEvent::RestartRequested));
         assert_eq!(signal_event(SIGUSR1), Some(PlatformEvent::OpenSettingsRequested));
         assert_eq!(signal_event(0), None);
     }

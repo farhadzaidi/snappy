@@ -174,7 +174,7 @@ impl Overlays {
     /// Outlines `marks` on `display` above every window, or hides the outlines when there
     /// are none.
     pub fn mark(&mut self, display: &str, marks: &OverlayMarks, scale: f64) {
-        if marks.frames.is_empty() {
+        if marks.windows.is_empty() {
             if let Some(surface) = self.marks.get_mut(display) {
                 hide_window(surface.window);
                 surface.drawn = None;

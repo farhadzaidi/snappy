@@ -109,6 +109,20 @@ impl Daemon {
         Ok(())
     }
 
+    /// Stop the daemon the way installing a new build does, leaving every window where it
+    /// is, then start it again.
+    pub fn restart(&self) -> Result<(), String> {
+        processes::request_restart(&self.app)?;
+        let started = Instant::now();
+        while self.is_running() {
+            if started.elapsed() > LAUNCH_TIMEOUT {
+                return Err("the daemon didn't stop for the restart".to_owned());
+            }
+            pause(100);
+        }
+        self.start()
+    }
+
     /// The daemon's process ID while it runs.
     pub fn pid(&self) -> Option<i32> {
         processes::pid()
@@ -148,6 +162,7 @@ pub fn daemon_pid() -> Option<i32> {
 /// Finding and stopping the daemon by its process name.
 #[cfg(unix)]
 mod processes {
+    use std::path::Path;
     use std::process::Command;
 
     const PROCESS: &str = "snappy";
@@ -155,6 +170,18 @@ mod processes {
     /// SIGTERM, which the daemon handles like the menu's Quit.
     pub fn request_quit() {
         let _ = Command::new("pkill").args(["-TERM", "-x", PROCESS]).status();
+    }
+
+    /// SIGUSR2, which stops the daemon for a restart.
+    pub fn request_restart(_app: &Path) -> Result<(), String> {
+        let status = Command::new("pkill")
+            .args(["-USR2", "-x", PROCESS])
+            .status()
+            .map_err(|error| error.to_string())?;
+        status
+            .success()
+            .then_some(())
+            .ok_or_else(|| format!("pkill exited with {status}"))
     }
 
     pub fn kill() {
@@ -174,6 +201,7 @@ mod processes {
 
 #[cfg(windows)]
 mod processes {
+    use std::path::Path;
     use std::process::Command;
 
     const IMAGE: &str = "snappy.exe";
@@ -183,6 +211,18 @@ mod processes {
         if let Some(pid) = pid().and_then(|pid| u32::try_from(pid).ok()) {
             snappy_windows::reference::request_quit(pid);
         }
+    }
+
+    /// The daemon's own `--stop-for-restart`, which waits for it to exit.
+    pub fn request_restart(app: &Path) -> Result<(), String> {
+        let status = Command::new(app)
+            .arg("--stop-for-restart")
+            .status()
+            .map_err(|error| error.to_string())?;
+        status
+            .success()
+            .then_some(())
+            .ok_or_else(|| format!("snappy --stop-for-restart exited with {status}"))
     }
 
     pub fn kill() {

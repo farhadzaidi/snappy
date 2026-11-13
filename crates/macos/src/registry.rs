@@ -62,6 +62,15 @@ impl<E: Eq + Hash + Clone> Registry<E> {
         self.entries.get(&id).cloned()
     }
 
+    /// Every tracked window of a process.
+    pub fn windows_of(&self, pid: i32) -> Vec<(WindowId, E)> {
+        self.entries
+            .iter()
+            .filter(|(_, entry)| entry.pid == pid)
+            .map(|(id, entry)| (*id, entry.element.clone()))
+            .collect()
+    }
+
     pub fn remove(&mut self, id: WindowId) {
         if let Some(entry) = self.entries.remove(&id) {
             self.ids.remove(&entry.element);

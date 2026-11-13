@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 
+use snappy_core::error::WindowError;
 use snappy_core::geometry::Rect;
 use snappy_platform::{RecoveryKey, WindowId, WindowInfo};
 use x11rb::cookie::Cookie;
@@ -44,6 +45,20 @@ impl WindowRecord {
             (Some(ALL_DESKTOPS), _) | (None, _) | (_, None) => true,
             (Some(desktop), Some(current)) => desktop == current,
         }
+    }
+
+    /// Eligible, judging a window on a desktop out of view by everything but its allowed
+    /// actions: window managers such as Xfwm4 withdraw moving and resizing from those
+    /// windows, the ones on the parking desktop included, until their desktop shows.
+    pub fn check(&self, current_desktop: Option<u32>) -> Result<(), WindowError> {
+        if self.on_desktop(current_desktop) {
+            return self.facts.check();
+        }
+        WindowFacts {
+            fixed: false,
+            ..self.facts.clone()
+        }
+        .check()
     }
 
     pub fn is_visible(&self, current_desktop: Option<u32>) -> bool {
@@ -246,6 +261,15 @@ mod tests {
         assert!(record(Some(ALL_DESKTOPS), false).is_visible(Some(3)));
         assert!(record(None, false).is_visible(Some(3)));
         assert!(!record(Some(0), true).is_visible(Some(0)));
+    }
+
+    #[test]
+    fn windows_on_a_desktop_out_of_view_stay_eligible_without_move_and_resize_actions() {
+        let mut parked = record(Some(4), false);
+        parked.facts.in_client_list = true;
+        parked.facts.fixed = true;
+        assert!(parked.check(Some(4)).is_err(), "fixed where it shows");
+        assert!(parked.check(Some(0)).is_ok(), "on the parking desktop");
     }
 
     #[test]

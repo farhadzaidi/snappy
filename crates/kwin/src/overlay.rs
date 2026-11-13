@@ -28,7 +28,7 @@ use snappy_core::geometry::{Point, Rect};
 use snappy_linux::journal;
 use snappy_linux::overlay_image::{pixel_size, render_mark_rows, render_rows, to_argb};
 use snappy_linux::wayland::{Arg, Connection, Message};
-use snappy_platform::{OverlayMarks, OverlayScene, OverlayZone};
+use snappy_platform::{MarkedWindow, OverlayMarks, OverlayScene, OverlayZone};
 
 const COMPOSITOR: &str = "wl_compositor";
 const COMPOSITOR_VERSION: u32 = 4;
@@ -161,10 +161,13 @@ impl Content {
             Content::Zones(scene) => Content::Zones(scaled(scene, factor)),
             Content::Marks(marks) => Content::Marks(OverlayMarks {
                 work_area: scaled_rect(marks.work_area, factor),
-                frames: marks
-                    .frames
+                windows: marks
+                    .windows
                     .iter()
-                    .map(|frame| scaled_rect(*frame, factor))
+                    .map(|mark| MarkedWindow {
+                        frame: scaled_rect(mark.frame, factor),
+                        style: mark.style,
+                    })
                     .collect(),
             }),
         }
@@ -416,7 +419,7 @@ impl Session {
     /// when there are none.
     fn mark(&mut self, display: &str, target: &Target, marks: &OverlayMarks) -> io::Result<()> {
         let key = key(display, Layer::Marks);
-        if marks.frames.is_empty() {
+        if marks.windows.is_empty() {
             return self.conceal(&key);
         }
         self.draw_on(&key, target, &Content::Marks(marks.clone()), OPAQUE)
@@ -800,7 +803,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
 
-    use snappy_platform::Caption;
+    use snappy_platform::{Caption, MarkStyle};
 
     use super::*;
 
@@ -1026,14 +1029,21 @@ mod tests {
             work_area: area,
             zones: Vec::new(),
         };
-        let marks = |frames: Vec<Rect>| OverlayMarks {
+        let marks = |windows: Vec<MarkedWindow>| OverlayMarks {
             work_area: area,
-            frames,
+            windows,
+        };
+        let outlined = |style| MarkedWindow {
+            frame: Rect::new(20.0, 10.0, 80.0, 60.0),
+            style,
         };
 
         session.prepare("main", &target, &scene).unwrap();
         session
-            .mark("main", &target, &marks(vec![Rect::new(20.0, 10.0, 80.0, 60.0)]))
+            .mark("main", &target, &marks(vec![outlined(MarkStyle::Selected)]))
+            .unwrap();
+        session
+            .mark("main", &target, &marks(vec![outlined(MarkStyle::Focused)]))
             .unwrap();
         session.show("main", &target, &scene).unwrap();
         session.hide().unwrap();
@@ -1043,7 +1053,7 @@ mod tests {
 
         assert_eq!(count(&requests, ("layer_shell", GET_LAYER_SURFACE)), 2);
         assert_eq!(count(&requests, ("layer_surface", LAYER_DESTROY)), 0);
-        assert_eq!(alphas, [HIDDEN, OPAQUE, OPAQUE, HIDDEN, HIDDEN]);
+        assert_eq!(alphas, [HIDDEN, OPAQUE, OPAQUE, OPAQUE, HIDDEN, HIDDEN]);
     }
 
     #[test]

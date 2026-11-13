@@ -83,7 +83,7 @@ thread_local! {
 pub fn mark(display: &str, marks: &OverlayMarks, mtm: MainThreadMarker) {
     MARKS.with(|surfaces| {
         let mut surfaces = surfaces.borrow_mut();
-        if marks.frames.is_empty() && !surfaces.contains_key(display) {
+        if marks.windows.is_empty() && !surfaces.contains_key(display) {
             return;
         }
         let height = primary_height(mtm);

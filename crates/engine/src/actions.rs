@@ -1,6 +1,6 @@
 //! Global shortcut actions: zones and moving between zones (swapping with the occupant or
 //! stacking on it, as the settings say), moving to the nearest empty zone, layout
-//! selection, undo and redo, and workspaces.
+//! selection, undo and redo, and workspaces. Focus and the selection are in `selection`.
 
 use std::rc::Rc;
 
@@ -18,7 +18,7 @@ use snappy_platform::{Display, Platform, WindowInfo};
 use crate::core::{Core, PendingNavigation};
 use crate::drag::{swap_source, zone_slots};
 use crate::ops::{Shared, SnapRequest, SwapMove, run_redo, run_snap, run_swap, run_undo};
-use crate::workspaces;
+use crate::{selection, workspaces};
 
 pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
     let (action, combo) = {
@@ -42,7 +42,6 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         HotKeyAction::NextWorkspace => workspaces::cycle(shared, 1),
         HotKeyAction::SendToPreviousWorkspace => workspaces::send_and_stay(shared, -1),
         HotKeyAction::SendToNextWorkspace => workspaces::send_and_stay(shared, 1),
-        HotKeyAction::TakeAlong => workspaces::take_along(&mut shared.core.borrow_mut()),
         HotKeyAction::SwitchWorkspace(target) => workspaces::request_switch(shared, &target, false),
         HotKeyAction::SendToWorkspace(target) => workspaces::send_focused(shared, &target, false),
         HotKeyAction::SendAndSwitch(target) => workspaces::send_focused(shared, &target, true),
@@ -52,7 +51,24 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         HotKeyAction::SelectLayout(layout) => select_layout_under_pointer(shared, &layout),
         HotKeyAction::Navigate(direction) => move_focused(shared, Target::Direction(direction)),
         HotKeyAction::Zone => move_focused(shared, Target::Zone(combo)),
-        HotKeyAction::NearestEmptyZone => move_to_nearest_empty(shared),
+        HotKeyAction::NearestEmptyZone => fill_empty_zones(shared),
+        HotKeyAction::FocusWindow(direction) => selection::focus_toward(shared, direction),
+        HotKeyAction::SelectWindow => selection::toggle(&mut shared.core.borrow_mut()),
+        HotKeyAction::ClearSelection => selection::clear(&mut shared.core.borrow_mut(), "cleared"),
+    }
+}
+
+/// The selection into empty zones, or without one, the focused window into the nearest.
+fn fill_empty_zones<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
+    let has_selection = {
+        let mut core = shared.core.borrow_mut();
+        selection::prune(&mut core);
+        !core.selection.is_empty()
+    };
+    if has_selection {
+        selection::place(shared);
+    } else {
+        move_to_nearest_empty(shared);
     }
 }
 

@@ -4,11 +4,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::keys::{Combo, KeyChord, Platform, reserved_app_commands};
+use crate::keys::{Combo, KeyChord, Platform, chords_the_system_keeps, reserved_app_commands};
 use crate::layout::Layout;
 use crate::navigate::Direction;
 use crate::settings::{
-    HistoryStep, LayoutOptions, NEAREST_EMPTY_TITLE, Navigation, Settings, WorkspaceStep, Workspaces,
+    FocusShortcut, HistoryStep, LayoutOptions, NEAREST_EMPTY_TITLE, Navigation, Settings, WorkspaceStep,
+    Workspaces,
 };
 
 /// What a registered shortcut does.
@@ -16,19 +17,23 @@ use crate::settings::{
 pub enum HotKeyAction {
     PreviousWorkspace,
     NextWorkspace,
-    /// Send the focused window to the previous workspace and stay.
+    /// Send the focused window, or the selection, to the previous workspace and stay.
     SendToPreviousWorkspace,
-    /// Send the focused window to the next workspace and stay.
+    /// Send the focused window, or the selection, to the next workspace and stay.
     SendToNextWorkspace,
-    /// Pick up or put down the focused window, to go along with the next switch.
-    TakeAlong,
     SwitchWorkspace(String),
     SendToWorkspace(String),
     SendAndSwitch(String),
     /// Move the focused window to the neighboring zone.
     Navigate(Direction),
-    /// Move the focused window into the nearest empty zone.
+    /// Move the focused window into the nearest empty zone, or the selection into empty
+    /// zones.
     NearestEmptyZone,
+    /// Focus the next window in a direction.
+    FocusWindow(Direction),
+    /// Add the focused window to the selection, or take it out.
+    SelectWindow,
+    ClearSelection,
     SelectLayout(String),
     /// A zone chord, resolved against the focused window's display layout.
     Zone,
@@ -43,7 +48,17 @@ impl HotKeyAction {
             WorkspaceStep::Next => HotKeyAction::NextWorkspace,
             WorkspaceStep::SendPrevious => HotKeyAction::SendToPreviousWorkspace,
             WorkspaceStep::SendNext => HotKeyAction::SendToNextWorkspace,
-            WorkspaceStep::TakeAlong => HotKeyAction::TakeAlong,
+        }
+    }
+
+    fn of_focus(shortcut: FocusShortcut) -> Self {
+        match shortcut {
+            FocusShortcut::FocusUp => HotKeyAction::FocusWindow(Direction::Up),
+            FocusShortcut::FocusLeft => HotKeyAction::FocusWindow(Direction::Left),
+            FocusShortcut::FocusDown => HotKeyAction::FocusWindow(Direction::Down),
+            FocusShortcut::FocusRight => HotKeyAction::FocusWindow(Direction::Right),
+            FocusShortcut::SelectWindow => HotKeyAction::SelectWindow,
+            FocusShortcut::ClearSelection => HotKeyAction::ClearSelection,
         }
     }
 
@@ -102,6 +117,9 @@ pub fn desired_hotkeys(settings: &Settings, display_ids: &[String], snapping_liv
         if let Some(chord) = &settings.navigation.nearest_empty {
             add(chord, HotKeyAction::NearestEmptyZone);
         }
+        for (shortcut, chord) in settings.navigation.focus_shortcuts() {
+            add(chord, HotKeyAction::of_focus(shortcut));
+        }
         for layout in settings.enabled_layouts() {
             if let Some(chord) = settings.options(layout).select_shortcut {
                 add(&chord, HotKeyAction::SelectLayout(layout.id.clone()));
@@ -145,11 +163,32 @@ pub fn conflict_with_layout(
     layout_conflict(settings, Some((layout, options)), platform)
 }
 
-fn reserved_owners(platform: Platform) -> BTreeMap<Combo, String> {
-    reserved_app_commands(platform)
+/// Who holds a chord already.
+#[derive(Debug, Clone)]
+enum Owner {
+    /// A binding or a standard app command, by name.
+    Named(String),
+    /// The OS, which never passes the chord on.
+    System(&'static str),
+}
+
+impl Owner {
+    fn conflict(&self, chord: &KeyChord, platform: Platform) -> String {
+        match self {
+            Owner::Named(name) => format!("{} is already assigned to {name}.", chord.long_label(platform)),
+            Owner::System(message) => (*message).to_owned(),
+        }
+    }
+}
+
+fn reserved_owners(platform: Platform) -> BTreeMap<Combo, Owner> {
+    let app_commands = reserved_app_commands(platform)
         .into_iter()
-        .map(|combo| (combo, "a standard app command".to_owned()))
-        .collect()
+        .map(|combo| (combo, Owner::Named("a standard app command".to_owned())));
+    let kept = chords_the_system_keeps(platform)
+        .into_iter()
+        .map(|kept| (kept.combo, Owner::System(kept.message)));
+    app_commands.chain(kept).collect()
 }
 
 /// Navigation and window-history chords must differ from each other and the reserved
@@ -159,7 +198,8 @@ fn global_conflict(settings: &Settings, platform: Platform) -> Option<String> {
     claim_all(&mut owners, global_names(settings).into_iter(), platform)
 }
 
-/// The chords registered whatever the workspaces do: navigation, then window history.
+/// The chords registered whatever the workspaces do: navigation (focus and selection
+/// included), then window history.
 fn global_names(settings: &Settings) -> Vec<(String, &KeyChord)> {
     let navigation = settings
         .navigation
@@ -170,18 +210,26 @@ fn global_names(settings: &Settings) -> Vec<(String, &KeyChord)> {
         .nearest_empty
         .iter()
         .map(|chord| (NEAREST_EMPTY_TITLE.to_owned(), chord));
+    let focus = settings
+        .navigation
+        .focus_shortcuts()
+        .map(|(shortcut, chord)| (shortcut.title().to_owned(), chord));
     let history = settings
         .history
         .chords()
         .map(|(step, chord)| (step.title().to_owned(), chord));
-    navigation.chain(nearest_empty).chain(history).collect()
+    navigation
+        .chain(nearest_empty)
+        .chain(focus)
+        .chain(history)
+        .collect()
 }
 
 /// The reserved chords and the global chords, by owner.
-fn global_owners(settings: &Settings, platform: Platform) -> BTreeMap<Combo, String> {
+fn global_owners(settings: &Settings, platform: Platform) -> BTreeMap<Combo, Owner> {
     let mut owners = reserved_owners(platform);
     for (name, chord) in global_names(settings) {
-        owners.insert(chord.combo(), name);
+        owners.insert(chord.combo(), Owner::Named(name));
     }
     owners
 }
@@ -224,18 +272,15 @@ fn workspace_conflict(settings: &Settings, platform: Platform) -> Option<String>
 
 /// Give each chord to its owner, reporting the first chord someone already owns.
 fn claim_all<'a>(
-    owners: &mut BTreeMap<Combo, String>,
+    owners: &mut BTreeMap<Combo, Owner>,
     claims: impl Iterator<Item = (String, &'a KeyChord)>,
     platform: Platform,
 ) -> Option<String> {
     for (name, chord) in claims {
         if let Some(owner) = owners.get(&chord.combo()) {
-            return Some(format!(
-                "{} is already assigned to {owner}.",
-                chord.long_label(platform)
-            ));
+            return Some(owner.conflict(chord, platform));
         }
-        owners.insert(chord.combo(), name);
+        owners.insert(chord.combo(), Owner::Named(name));
     }
     None
 }
@@ -250,12 +295,9 @@ fn layout_conflict(
     let mut taken = global_owners(settings, platform);
     if settings.workspaces.enabled {
         for (name, chord) in workspace_names(&settings.workspaces) {
-            taken.entry(chord.combo()).or_insert(name);
+            taken.entry(chord.combo()).or_insert(Owner::Named(name));
         }
     }
-    let taken_message = |chord: &KeyChord, owner: &str| {
-        format!("{} is already assigned to {owner}.", chord.long_label(platform))
-    };
 
     let replaced_id = replacement.map(|(layout, _)| layout.id.as_str());
     let mut layouts: Vec<(&Layout, LayoutOptions)> = settings
@@ -289,7 +331,7 @@ fn layout_conflict(
                 ));
             }
             if let Some(owner) = taken.get(&chord.combo()) {
-                return Some(taken_message(chord, owner));
+                return Some(owner.conflict(chord, platform));
             }
         }
         if let Some(chord) = &options.select_shortcut {
@@ -297,7 +339,7 @@ fn layout_conflict(
                 return Some(format!("{} already selects {owner}.", chord.long_label(platform)));
             }
             if let Some(owner) = taken.get(&chord.combo()) {
-                return Some(taken_message(chord, owner));
+                return Some(owner.conflict(chord, platform));
             }
             selections.insert(chord.combo(), &layout.name);
         }
@@ -348,6 +390,14 @@ pub fn unused_navigation_defaults(settings: &Settings) -> Navigation {
     {
         navigation.nearest_empty = None;
     }
+    for shortcut in FocusShortcut::ALL {
+        if navigation
+            .focus_shortcut(shortcut)
+            .is_some_and(|chord| used.contains(&chord.combo()))
+        {
+            navigation.set_focus_shortcut(shortcut, None);
+        }
+    }
     navigation
 }
 
@@ -391,12 +441,12 @@ mod tests {
     #[test]
     fn zone_chords_are_unique_within_a_layout() {
         let mut settings = Settings::defaults(MAC);
-        with_zone(&mut settings, "halves-0", snappy("KeyK"));
+        with_zone(&mut settings, "halves-0", snappy("KeyM"));
         let halves = preset("halves").unwrap();
         let mut options = settings.options(halves);
-        options.zone_shortcuts.insert("halves-1".into(), snappy("KeyK"));
+        options.zone_shortcuts.insert("halves-1".into(), snappy("KeyM"));
         let conflict = conflict_with_layout(&settings, halves, &options, MAC).unwrap();
-        assert_eq!(conflict, "Halves uses Snappy + K for more than one zone.");
+        assert_eq!(conflict, "Halves uses Snappy + M for more than one zone.");
     }
 
     #[test]
@@ -411,8 +461,8 @@ mod tests {
         );
 
         let mut settings = Settings::defaults(MAC);
-        with_zone(&mut settings, "rows-0", snappy("KeyK"));
-        with_selection(&mut settings, "halves", snappy("KeyK"));
+        with_zone(&mut settings, "rows-0", snappy("KeyM"));
+        with_selection(&mut settings, "halves", snappy("KeyM"));
         assert!(
             first_conflict(&settings, MAC)
                 .unwrap()
@@ -456,8 +506,8 @@ mod tests {
     #[test]
     fn disabled_layouts_reserve_nothing() {
         let mut settings = Settings::defaults(MAC);
-        with_selection(&mut settings, "halves", snappy("KeyK"));
-        with_zone(&mut settings, "rows-0", snappy("KeyK"));
+        with_selection(&mut settings, "halves", snappy("KeyM"));
+        with_zone(&mut settings, "rows-0", snappy("KeyM"));
         assert!(first_conflict(&settings, MAC).is_some());
         for preset in crate::layout::presets() {
             let mut options = settings.options(preset);
@@ -522,8 +572,8 @@ mod tests {
         settings.workspaces.enabled = true;
         let displays = vec!["d".to_owned()];
         settings.history.undo = Some(snappy("KeyU"));
-        with_zone(&mut settings, "focus-0", snappy("KeyK"));
-        with_zone(&mut settings, "focus-1", snappy("KeyL"));
+        with_zone(&mut settings, "focus-0", snappy("KeyM"));
+        with_zone(&mut settings, "focus-1", snappy("KeyN"));
         let paused = desired_hotkeys(&settings, &displays, false);
         assert!(paused.iter().all(|hotkey| matches!(
             hotkey.action,
@@ -531,12 +581,11 @@ mod tests {
                 | HotKeyAction::NextWorkspace
                 | HotKeyAction::SendToPreviousWorkspace
                 | HotKeyAction::SendToNextWorkspace
-                | HotKeyAction::TakeAlong
                 | HotKeyAction::SwitchWorkspace(_)
                 | HotKeyAction::SendToWorkspace(_)
                 | HotKeyAction::SendAndSwitch(_)
         )));
-        assert_eq!(paused.len(), 5 + 3);
+        assert_eq!(paused.len(), 4 + 3);
         let live = desired_hotkeys(&settings, &displays, true);
         let zones = live
             .iter()
@@ -547,7 +596,130 @@ mod tests {
     }
 
     #[test]
-    fn send_and_take_along_chords_check_the_same_rules_as_other_workspace_chords() {
+    fn focus_and_selection_shortcuts_register_whenever_live_control_is_on() {
+        let settings = Settings::defaults(MAC);
+        assert!(!settings.workspaces.enabled);
+        let actions = |live: bool| -> Vec<(Combo, HotKeyAction)> {
+            desired_hotkeys(&settings, &["d".to_owned()], live)
+                .into_iter()
+                .filter(|hotkey| {
+                    matches!(
+                        hotkey.action,
+                        HotKeyAction::FocusWindow(_)
+                            | HotKeyAction::SelectWindow
+                            | HotKeyAction::ClearSelection
+                    )
+                })
+                .map(|hotkey| (hotkey.chord.combo(), hotkey.action))
+                .collect()
+        };
+        assert!(actions(false).is_empty());
+        let mut live = actions(true);
+        live.sort_by_key(|(combo, _)| combo.code.clone());
+        assert_eq!(
+            live,
+            [
+                (snappy("Backslash").combo(), HotKeyAction::ClearSelection),
+                (snappy("Enter").combo(), HotKeyAction::SelectWindow),
+                (snappy("KeyI").combo(), HotKeyAction::FocusWindow(Direction::Up)),
+                (snappy("KeyJ").combo(), HotKeyAction::FocusWindow(Direction::Left)),
+                (snappy("KeyK").combo(), HotKeyAction::FocusWindow(Direction::Down)),
+                (
+                    snappy("KeyL").combo(),
+                    HotKeyAction::FocusWindow(Direction::Right)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn focus_and_selection_chords_conflict_with_other_shortcuts() {
+        let mut settings = Settings::defaults(MAC);
+        settings.navigation.focus_up = settings.navigation.up.clone();
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + ↑ is already assigned to Move window up.")
+        );
+
+        let mut settings = Settings::defaults(MAC);
+        settings.history.undo = Some(snappy("KeyJ"));
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + J is already assigned to Focus left.")
+        );
+
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.items[1].send_and_switch_shortcut = settings.navigation.select_window.clone();
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + ↩ is already assigned to Select window.")
+        );
+
+        let mut settings = Settings::defaults(MAC);
+        with_zone(&mut settings, "halves-0", snappy("Backslash"));
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + \\ is already assigned to Clear selection.")
+        );
+
+        let mut settings = Settings::defaults(MAC);
+        settings.navigation.clear_selection = settings.navigation.nearest_empty.clone();
+        assert_eq!(
+            first_conflict(&settings, MAC).as_deref(),
+            Some("Snappy + Space is already assigned to Move to the nearest empty zone.")
+        );
+    }
+
+    #[test]
+    fn macos_refuses_the_snappy_key_with_delete_wherever_it_is_assigned() {
+        let refusal = "macOS reserves Control + Option + Command + Delete; it never reaches apps.";
+        let delete = snappy("Backspace");
+
+        let mut settings = Settings::defaults(MAC);
+        settings.navigation.clear_selection = Some(delete.clone());
+        assert_eq!(first_conflict(&settings, MAC).as_deref(), Some(refusal));
+
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.items[0].send_shortcut = Some(delete.clone());
+        assert_eq!(first_conflict(&settings, MAC).as_deref(), Some(refusal));
+
+        let mut settings = Settings::defaults(MAC);
+        with_zone(&mut settings, "halves-0", delete.clone());
+        assert_eq!(first_conflict(&settings, MAC).as_deref(), Some(refusal));
+
+        let mut settings = Settings::defaults(MAC);
+        with_zone(
+            &mut settings,
+            "halves-0",
+            KeyChord::snappy("Backspace", [Modifier::Shift]),
+        );
+        assert_eq!(
+            first_conflict(&settings, MAC),
+            None,
+            "only the exact chord is kept"
+        );
+
+        for platform in [Platform::Windows, Platform::Linux] {
+            let mut settings = Settings::defaults(platform);
+            settings.navigation.clear_selection = Some(delete.clone());
+            assert_eq!(first_conflict(&settings, platform), None, "{platform:?}");
+        }
+    }
+
+    #[test]
+    fn navigation_defaults_skip_focus_and_selection_chords_in_use() {
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.items[2].send_shortcut = Some(snappy("Enter"));
+        settings.history.redo = Some(snappy("KeyL"));
+        let navigation = unused_navigation_defaults(&settings);
+        assert_eq!(navigation.select_window, None);
+        assert_eq!(navigation.focus_right, None);
+        assert_eq!(navigation.focus_left, Navigation::defaults().focus_left);
+        assert_eq!(navigation.clear_selection, Navigation::defaults().clear_selection);
+    }
+
+    #[test]
+    fn send_chords_check_the_same_rules_as_other_workspace_chords() {
         let mut settings = Settings::defaults(MAC);
         settings.workspaces.send_next = settings.workspaces.previous.clone();
         assert_eq!(
@@ -570,14 +742,7 @@ mod tests {
         );
 
         let mut settings = Settings::defaults(MAC);
-        settings.workspaces.items[1].send_and_switch_shortcut = settings.workspaces.take_along.clone();
-        assert_eq!(
-            first_conflict(&settings, MAC).as_deref(),
-            Some("Snappy + ↩ is already assigned to Take along.")
-        );
-
-        let mut settings = Settings::defaults(MAC);
-        settings.workspaces.take_along = settings.navigation.nearest_empty.clone();
+        settings.workspaces.send_previous = settings.navigation.nearest_empty.clone();
         assert_eq!(
             first_conflict(&settings, MAC).as_deref(),
             Some("Snappy + Space is already assigned to Move to the nearest empty zone.")
@@ -610,7 +775,10 @@ mod tests {
         let registered = actions(&settings);
         assert!(registered.contains(&HotKeyAction::SendToPreviousWorkspace));
         assert!(registered.contains(&HotKeyAction::SendToNextWorkspace));
-        assert!(registered.contains(&HotKeyAction::TakeAlong));
+        assert!(
+            !registered.contains(&HotKeyAction::SelectWindow),
+            "selecting needs live control"
+        );
         for id in ["workspace-1", "workspace-2", "workspace-3"] {
             assert!(registered.contains(&HotKeyAction::SwitchWorkspace(id.to_owned())));
         }

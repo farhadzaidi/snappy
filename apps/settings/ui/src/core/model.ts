@@ -89,15 +89,21 @@ export interface Settings {
     next: KeyChord | null;
     sendPrevious: KeyChord | null;
     sendNext: KeyChord | null;
-    takeAlong: KeyChord | null;
     items: Workspace[];
   };
   history: Record<HistoryStep, KeyChord | null>;
   debugLog: boolean;
 }
 
-/** Move-between-zones shortcuts, and the one that moves to the nearest empty zone. */
-export type Navigation = Record<Direction, KeyChord | null> & { nearestEmpty: KeyChord | null };
+/**
+ * Move-between-zones shortcuts, the one that moves to the nearest empty zone, and the ones
+ * that move focus between windows and change the selection.
+ */
+export type Navigation = Record<Direction, KeyChord | null> &
+  Record<FocusShortcut, KeyChord | null> & { nearestEmpty: KeyChord | null };
+
+export type FocusShortcut =
+  "focusUp" | "focusLeft" | "focusDown" | "focusRight" | "selectWindow" | "clearSelection";
 
 export interface Display {
   id: string;
@@ -165,6 +171,7 @@ export type Command =
   | { kind: "setShortcutsEnabled"; enabled: boolean }
   | { kind: "setNavigationShortcut"; direction: Direction; chord: KeyChord | null }
   | { kind: "setNearestEmptyShortcut"; chord: KeyChord | null }
+  | { kind: "setFocusShortcut"; shortcut: FocusShortcut; chord: KeyChord | null }
   | { kind: "applyLayout"; display: string; layout: string }
   | { kind: "saveLayout"; layout: Layout; options: LayoutOptions; display: string }
   | { kind: "deleteLayout"; layout: string }
@@ -189,7 +196,7 @@ export type Command =
   | { kind: "exportSettings"; path: string }
   | { kind: "dismissStatus" };
 
-export type WorkspaceStep = "previous" | "next" | "sendPrevious" | "sendNext" | "takeAlong";
+export type WorkspaceStep = "previous" | "next" | "sendPrevious" | "sendNext";
 
 export type HistoryStep = "undo" | "redo";
 

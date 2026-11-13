@@ -8,7 +8,7 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{KeyChord, Mods};
 use snappy_core::layout::{Spacing, preset, zone_frame};
 use snappy_core::navigate::Direction;
-use snappy_core::settings::{Settings, Workspace, WorkspaceStep};
+use snappy_core::settings::{FocusShortcut, Settings, Workspace, WorkspaceStep};
 use snappy_platform::Display;
 
 use crate::fixture::Fixture;
@@ -106,14 +106,35 @@ pub const ALL: &[(&str, Scenario)] = &[
         send_and_stay_batch,
     ),
     (
-        "a_window_taken_along_goes_to_the_workspace_switched_to_by_number",
-        take_along_by_number,
+        "a_selected_window_goes_along_to_the_workspace_switched_to_by_number",
+        select_along_by_number,
     ),
     (
-        "two_windows_taken_along_go_to_the_next_workspace",
-        take_two_along_by_step,
+        "two_selected_windows_go_along_to_the_next_workspace",
+        select_two_along_by_step,
     ),
-    ("taking_a_carried_window_along_again_puts_it_down", put_down),
+    ("selecting_a_selected_window_again_unselects_it", unselect),
+    (
+        "a_tabbed_window_taken_along_keeps_every_tab_there_once_they_are_dragged_out",
+        tabs_along,
+    ),
+    ("focus_shortcuts_move_focus_between_windows", focus_directions),
+    (
+        "focus_shortcuts_move_between_zoned_windows_past_a_floating_one",
+        focus_zones,
+    ),
+    (
+        "space_places_two_selected_floating_windows_into_empty_zones",
+        place_selection,
+    ),
+    (
+        "selecting_works_with_workspaces_off_and_clearing_removes_the_outlines",
+        select_without_workspaces,
+    ),
+    (
+        "restarting_keeps_every_window_in_its_workspace_and_quitting_still_returns_them",
+        restart_keeps_workspaces,
+    ),
     ("quitting_returns_parked_windows", quit_returns_windows),
     ("full_screen_windows_are_never_moved", full_screen_refused),
 ];
@@ -239,7 +260,7 @@ impl<'a> Context<'a> {
             .map(|(_, elapsed)| elapsed)
     }
 
-    /// Fail unless `id` is on screen at `before`, as a window taken along stays.
+    /// Fail unless `id` is on screen at `before`, as a selected window taken along stays.
     fn stayed(&mut self, id: &str, before: Rect) -> Result<(), String> {
         let after = self.fixture.frame(id)?;
         if self.is_parked(after) || !near(after, before) {
@@ -249,7 +270,7 @@ impl<'a> Context<'a> {
     }
 
     /// Wait until the daemon shows, or no longer shows, the surface over the work area
-    /// that outlines the windows being taken along.
+    /// that outlines the selected windows.
     fn wait_outlines(&self, shown: bool) -> Result<(), String> {
         let started = Instant::now();
         loop {
@@ -261,7 +282,7 @@ impl<'a> Context<'a> {
             }
             if started.elapsed() > SETTLE_TIMEOUT {
                 return Err(if shown {
-                    "the window taken along has no outline".to_owned()
+                    "the selected window has no outline".to_owned()
                 } else {
                     "the outline stayed on screen".to_owned()
                 });
@@ -461,6 +482,25 @@ impl<'a> Context<'a> {
             .step(step)
             .cloned()
             .ok_or_else(|| format!("{} has no shortcut", step.title()))
+    }
+
+    fn focus_key(&self, shortcut: FocusShortcut) -> Result<KeyChord, String> {
+        self.settings
+            .navigation
+            .focus_shortcut(shortcut)
+            .cloned()
+            .ok_or_else(|| format!("{} has no shortcut", shortcut.title()))
+    }
+
+    /// Select the windows `ids`, focusing each in turn, and wait for their outlines.
+    fn select(&mut self, ids: &[&str]) -> Result<(), String> {
+        let select = self.focus_key(FocusShortcut::SelectWindow)?;
+        for id in ids {
+            self.focus(id)?;
+            self.press(&select)?;
+            pause(300);
+        }
+        self.wait_outlines(true)
     }
 }
 
@@ -785,6 +825,61 @@ fn move_here_and_switch(context: &mut Context) -> Result<Outcome, String> {
     Ok(Outcome::default())
 }
 
+/// Stopping the daemon the way installing a new build does, then starting it again, moves
+/// nothing: the window sent to workspace 2 stays parked, the other stays on screen, the
+/// first workspace stays active, and the new daemon switches both as before. Quitting
+/// afterwards still brings the parked window back.
+fn restart_keeps_workspaces(context: &mut Context) -> Result<Outcome, String> {
+    context.open("kept", side_by_side(&context.display, 0))?;
+    let kept = context.fixture.frame("kept")?;
+    context.open("away", side_by_side(&context.display, 2))?;
+    let away = context.fixture.frame("away")?;
+    context.press(&context.send_key(2)?)?;
+    context.wait_parked("away")?;
+    let parked = context.fixture.frame("away")?;
+
+    let seen = context.logged("workspacesStarted").len();
+    context.begin();
+    context.daemon.restart()?;
+    let elapsed = context.began.elapsed().as_secs_f64() * 1000.0;
+    context.stayed("kept", kept)?;
+    let still = context.fixture.frame("away")?;
+    if !context.is_parked(still) || !near(still, parked) {
+        return Err(format!(
+            "the parked window moved to {} during the restart",
+            describe(still)
+        ));
+    }
+    if context.active_workspace()? != "workspace-1" {
+        return Err("the restart changed the active workspace".to_owned());
+    }
+    let started = context.logged("workspacesStarted");
+    let rejoined = started
+        .get(seen..)
+        .and_then(<[_]>::last)
+        .map(|record| record["rejoined"]["workspace-2"].clone())
+        .unwrap_or_default();
+    if rejoined != 1 {
+        return Err(format!(
+            "Snappy logged {rejoined} windows rejoining workspace 2, not 1"
+        ));
+    }
+
+    context.press(&context.switch_key(2)?)?;
+    context.wait_shown("away", away)?;
+    context.wait_parked("kept")?;
+    context.wait_active("workspace-2")?;
+    context.press(&context.switch_key(1)?)?;
+    context.wait_shown("kept", kept)?;
+    context.wait_parked("away")?;
+    context.wait_active("workspace-1")?;
+
+    context.daemon.quit()?;
+    context.wait_shown("away", away)?;
+    context.daemon.start()?;
+    Ok(timed(elapsed))
+}
+
 fn quit_returns_windows(context: &mut Context) -> Result<Outcome, String> {
     context.open("quit", floating(&context.display, 240.0))?;
     let before = context.fixture.frame("quit")?;
@@ -977,6 +1072,11 @@ fn send_and_stay_batch(context: &mut Context) -> Result<Outcome, String> {
         context.open(id, side_by_side(&context.display, index))?;
         frames.push(context.fixture.frame(id)?);
     }
+    // A window's first focus can come before Snappy can enroll it, which leaves it out of
+    // the focus order, so each is focused again once all are open.
+    for id in ids {
+        context.focus(id)?;
+    }
     let send = context.step_key(WorkspaceStep::SendNext)?;
     let mut slowest: f64 = 0.0;
     for id in ids.iter().rev() {
@@ -998,14 +1098,14 @@ fn send_and_stay_batch(context: &mut Context) -> Result<Outcome, String> {
     Ok(timed(slowest))
 }
 
-/// A window picked up with the take-along key is outlined, then comes along, where it was,
-/// when the Snappy key and 3 switch to the third workspace.
-fn take_along_by_number(context: &mut Context) -> Result<Outcome, String> {
+/// A selected window is outlined, then comes along, where it was, when the Snappy key and
+/// 3 switch to the third workspace.
+fn select_along_by_number(context: &mut Context) -> Result<Outcome, String> {
     context.open("along", floating(&context.display, 120.0))?;
     let before = context.fixture.frame("along")?;
-    context.press(&context.step_key(WorkspaceStep::TakeAlong)?)?;
+    context.press(&context.focus_key(FocusShortcut::SelectWindow)?)?;
     context.wait_outlines(true)?;
-    screenshot(&context.out.join("take_along_outline.png"));
+    screenshot(&context.out.join("selection_outline.png"));
 
     context.press(&context.switch_key(3)?)?;
     context.wait_active("workspace-3")?;
@@ -1020,21 +1120,15 @@ fn take_along_by_number(context: &mut Context) -> Result<Outcome, String> {
     Ok(timed(elapsed))
 }
 
-/// Two of three windows picked up go along to the next workspace; the third stays behind.
-fn take_two_along_by_step(context: &mut Context) -> Result<Outcome, String> {
+/// Two of three windows selected go along to the next workspace; the third stays behind.
+fn select_two_along_by_step(context: &mut Context) -> Result<Outcome, String> {
     let ids = ["pair-a", "pair-b", "pair-left"];
     let mut frames = Vec::new();
     for (index, id) in ids.iter().enumerate() {
         context.open(id, side_by_side(&context.display, index))?;
         frames.push(context.fixture.frame(id)?);
     }
-    let take_along = context.step_key(WorkspaceStep::TakeAlong)?;
-    for id in &ids[..2] {
-        context.focus(id)?;
-        context.press(&take_along)?;
-        pause(300);
-    }
-    context.wait_outlines(true)?;
+    context.select(&ids[..2])?;
 
     context.press(&context.step_key(WorkspaceStep::Next)?)?;
     context.wait_active("workspace-2")?;
@@ -1054,21 +1148,323 @@ fn take_two_along_by_step(context: &mut Context) -> Result<Outcome, String> {
     Ok(timed(elapsed))
 }
 
-/// Pressing the take-along key again puts the window down: its outline goes, and it stays
+/// A window with three native tabs is selected and taken along to the next workspace, then
+/// two tabs are dragged out into windows of their own. All three windows stay with that
+/// workspace: they park together on switching back and return together. Only macOS makes
+/// each tab a window of its own, and so the bug this guards against is macOS's.
+fn tabs_along(context: &mut Context) -> Result<Outcome, String> {
+    if !cfg!(target_os = "macos") {
+        return Ok(Outcome::skipped(
+            "Only macOS makes each native tab a window of its own.",
+        ));
+    }
+    let outcome = tabs_along_and_out(context);
+    context.press(&context.switch_key(1)?)?;
+    context.wait_active("workspace-1")?;
+    outcome
+}
+
+fn tabs_along_and_out(context: &mut Context) -> Result<Outcome, String> {
+    let ids = ["tab-a", "tab-b", "tab-c"];
+    context.open(ids[0], floating(&context.display, 60.0))?;
+    // Each new tab shows and takes focus, so Snappy meets every tab.
+    for id in &ids[1..] {
+        context.fixture.tab(id, ids[0])?;
+        context.opened.push((*id).to_owned());
+        pause(500);
+    }
+    let group = context.fixture.frame("tab-c")?;
+    context.press(&context.focus_key(FocusShortcut::SelectWindow)?)?;
+    context.wait_outlines(true)?;
+
+    context.press(&context.step_key(WorkspaceStep::Next)?)?;
+    context.wait_active("workspace-2")?;
+    let elapsed = context.began.elapsed().as_secs_f64() * 1000.0;
+    pause(600);
+    context.stayed("tab-c", group)?;
+    let carried = context.logged("selectionCarried");
+    let tabs = carried
+        .last()
+        .map(|record| record["tabs"].clone())
+        .unwrap_or_default();
+    let along = tabs
+        .as_object()
+        .and_then(|groups| groups.values().next())
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if along != 2 {
+        return Err(format!("the hidden tabs didn't go along: {tabs}"));
+    }
+
+    let area = context.display.work_area;
+    let spots = [
+        Point::new(area.x + 40.0, area.max_y() - group.height - 40.0),
+        Point::new(
+            area.max_x() - group.width - 40.0,
+            area.max_y() - group.height - 40.0,
+        ),
+    ];
+    for (id, at) in ids.iter().zip(spots) {
+        context.fixture.tear_out(id, at)?;
+        pause(600);
+    }
+    let mut frames = Vec::new();
+    for id in ids {
+        let frame = context.fixture.frame(id)?;
+        if context.is_parked(frame) {
+            return Err(format!("{id} isn't on screen after the tabs came apart"));
+        }
+        frames.push(frame);
+    }
+
+    context.press(&context.switch_key(1)?)?;
+    context.wait_active("workspace-1")?;
+    for id in ids {
+        context.wait_parked(id)?;
+    }
+    context.press(&context.switch_key(2)?)?;
+    context.wait_active("workspace-2")?;
+    for (id, frame) in ids.iter().zip(frames) {
+        context.wait_shown(id, frame)?;
+    }
+    Ok(timed(elapsed))
+}
+
+/// Pressing the select key again unselects the window: its outline goes, and it stays
 /// behind at the next switch.
-fn put_down(context: &mut Context) -> Result<Outcome, String> {
+fn unselect(context: &mut Context) -> Result<Outcome, String> {
     context.open("down", floating(&context.display, 160.0))?;
     let before = context.fixture.frame("down")?;
-    let take_along = context.step_key(WorkspaceStep::TakeAlong)?;
-    context.press(&take_along)?;
+    let select = context.focus_key(FocusShortcut::SelectWindow)?;
+    context.press(&select)?;
     context.wait_outlines(true)?;
-    context.press(&take_along)?;
+    context.press(&select)?;
     context.wait_outlines(false)?;
 
     context.press(&context.switch_key(2)?)?;
     let elapsed = context.wait_parked("down")?;
     context.press(&context.switch_key(1)?)?;
     context.wait_shown("down", before)?;
+    Ok(timed(elapsed))
+}
+
+/// Three windows side by side and a fourth below the middle one. Focus goes right, down,
+/// up, right, and left, each press starting from the window the one before focused, and
+/// ends on the middle window, which the right zone's shortcut then moves. Other apps'
+/// windows, such as a test VM's terminal, would be in the way, so this runs on the third
+/// workspace, which holds none.
+fn focus_directions(context: &mut Context) -> Result<Outcome, String> {
+    context.press(&context.switch_key(3)?)?;
+    context.wait_active("workspace-3")?;
+    let outcome = focus_around(context);
+    context.press(&context.switch_key(1)?)?;
+    context.wait_active("workspace-1")?;
+    outcome
+}
+
+fn focus_around(context: &mut Context) -> Result<Outcome, String> {
+    let ids = ["focus-a", "focus-b", "focus-c"];
+    let mut frames = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        context.open(id, side_by_side(&context.display, index))?;
+        frames.push(context.fixture.frame(id)?);
+    }
+    let middle = frames[1];
+    let area = context.display.work_area;
+    let below = Rect::new(middle.x, middle.max_y() + 40.0, middle.width, area.height * 0.25);
+    context.open("focus-d", below)?;
+    frames.push(context.fixture.frame("focus-d")?);
+    context.focus("focus-a")?;
+
+    let seen = context.logged("focusMove").len();
+    let presses = [
+        FocusShortcut::FocusRight,
+        FocusShortcut::FocusDown,
+        FocusShortcut::FocusUp,
+        FocusShortcut::FocusRight,
+        FocusShortcut::FocusLeft,
+    ];
+    context.begin();
+    for shortcut in presses {
+        let key = context.focus_key(shortcut)?;
+        context.input.chord(&key.combo())?;
+        pause(400);
+    }
+    let elapsed = context.began.elapsed().as_secs_f64() * 1000.0;
+    let moves: Vec<(Option<u64>, Option<u64>)> = context
+        .logged("focusMove")
+        .iter()
+        .skip(seen)
+        .map(|record| (record["from"].as_u64(), record["to"].as_u64()))
+        .collect();
+    if moves.len() != presses.len() {
+        return Err(format!(
+            "Snappy logged {} focus moves, not {}",
+            moves.len(),
+            presses.len()
+        ));
+    }
+    let to: Vec<Option<u64>> = moves.iter().map(|(_, to)| *to).collect();
+    if to.iter().any(Option::is_none) {
+        return Err(format!("a focus move found no window: {moves:?}"));
+    }
+    let followed = moves.windows(2).all(|pair| pair[1].0 == pair[0].1);
+    let back_to_middle =
+        to[0] == to[2] && to[2] == to[4] && to[1] != to[0] && to[3] != to[0] && to[1] != to[3];
+    if !followed || !back_to_middle {
+        return Err(format!("focus went {moves:?}"));
+    }
+
+    context.press(&context.zone_key(1)?)?;
+    context.wait_in("focus-b", context.zone(1)?)?;
+    for (id, before) in ["focus-a", "focus-c", "focus-d"]
+        .iter()
+        .zip([frames[0], frames[2], frames[3]])
+    {
+        context.stayed(id, before)?;
+    }
+    Ok(timed(elapsed))
+}
+
+/// Windows in both zones and a third floating between them, a little lower, so it is the
+/// nearest window by center both right of and below the left one. Focus goes right, left,
+/// and down from the left window, then right and left from the floating one, and reaches
+/// only the zoned windows; the right zone's shortcut then swaps the left window into it,
+/// so focus really ended there. Runs on the third workspace, as `focus_directions` does.
+fn focus_zones(context: &mut Context) -> Result<Outcome, String> {
+    context.press(&context.switch_key(3)?)?;
+    context.wait_active("workspace-3")?;
+    let outcome = focus_between_zones(context);
+    context.press(&context.switch_key(1)?)?;
+    context.wait_active("workspace-1")?;
+    outcome
+}
+
+fn focus_between_zones(context: &mut Context) -> Result<Outcome, String> {
+    let (left, right) = two_zoned(context, "zone-a", "zone-b")?;
+    let area = context.display.work_area;
+    let (width, height) = (area.width * 0.3, area.height * 0.3);
+    let between = Rect::new(
+        area.mid_x() - width / 2.0,
+        area.mid_y() + area.height * 0.05 - height / 2.0,
+        width,
+        height,
+    );
+    let floating = context.open("zone-f", between)?;
+    context.focus("zone-a")?;
+
+    let seen = context.logged("focusMove").len();
+    let press = |context: &mut Context, shortcut| -> Result<(), String> {
+        let key = context.focus_key(shortcut)?;
+        context.input.chord(&key.combo())?;
+        pause(400);
+        Ok(())
+    };
+    context.begin();
+    for shortcut in [
+        FocusShortcut::FocusRight,
+        FocusShortcut::FocusLeft,
+        FocusShortcut::FocusDown,
+    ] {
+        press(context, shortcut)?;
+    }
+    context.focus("zone-f")?;
+    press(context, FocusShortcut::FocusRight)?;
+    press(context, FocusShortcut::FocusLeft)?;
+    let elapsed = context.began.elapsed().as_secs_f64() * 1000.0;
+
+    let moves: Vec<serde_json::Value> = context.logged("focusMove").into_iter().skip(seen).collect();
+    let to: Vec<Option<u64>> = moves.iter().map(|record| record["to"].as_u64()).collect();
+    let from: Vec<Option<u64>> = moves.iter().map(|record| record["from"].as_u64()).collect();
+    let described = || format!("focus went {:?} from {:?}", to, from);
+    if moves.len() != 5 {
+        return Err(format!(
+            "Snappy logged {} focus moves, not 5: {}",
+            moves.len(),
+            described()
+        ));
+    }
+    if moves.iter().any(|record| record["mode"] != "zones") {
+        return Err(format!("not every focus move went by zones: {moves:?}"));
+    }
+    let (a, b, f) = (from[0], to[0], from[3]);
+    let distinct = a.is_some() && b.is_some() && f.is_some() && a != b && f != a && f != b;
+    if !distinct || to != [b, a, None, b, a] {
+        return Err(described());
+    }
+
+    context.press(&context.zone_key(1)?)?;
+    context.wait_in("zone-a", right)?;
+    context.wait_in("zone-b", left)?;
+    context.stayed("zone-f", floating)?;
+    Ok(timed(elapsed))
+}
+
+/// Two floating windows, selected, go into the two empty zones nearest them with one press
+/// of the nearest-empty-zone key, and leave the selection.
+fn place_selection(context: &mut Context) -> Result<Outcome, String> {
+    let area = context.display.work_area;
+    let size = |x: f64, y: f64| {
+        Rect::new(
+            area.x + area.width * x,
+            area.y + y,
+            area.width * 0.3,
+            area.height * 0.4,
+        )
+    };
+    context.open("place-left", size(0.08, 100.0))?;
+    context.open("place-right", size(0.6, 160.0))?;
+    context.select(&["place-left", "place-right"])?;
+
+    let seen = context.snaps().len();
+    context.press(&context.nearest_empty_key()?)?;
+    let left = context.wait_in("place-left", context.zone(0)?)?;
+    let right = context.wait_in("place-right", context.zone(1)?)?;
+    context.wait_outlines(false)?;
+    pause(200);
+    let outcomes: Vec<String> = context
+        .snaps()
+        .iter()
+        .skip(seen)
+        .map(|record| record["outcome"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    if outcomes != ["snapped", "snapped"] {
+        return Err(format!("Snappy logged the moves as {outcomes:?}"));
+    }
+    Ok(timed(left.max(right)))
+}
+
+/// With workspaces off, the select key still outlines windows, and the clear key takes
+/// every outline away without moving anything. Restarts the daemon without workspaces,
+/// then with the run's settings again.
+fn select_without_workspaces(context: &mut Context) -> Result<Outcome, String> {
+    let mut without = context.settings.clone();
+    without.workspaces.enabled = false;
+    context.daemon.quit()?;
+    context.daemon.write_settings(&without)?;
+    context.daemon.start()?;
+    let outcome = select_and_clear(context);
+    context.close_all();
+    context.daemon.quit()?;
+    context.daemon.write_settings(context.settings)?;
+    context.daemon.start()?;
+    outcome
+}
+
+fn select_and_clear(context: &mut Context) -> Result<Outcome, String> {
+    let ids = ["solo-a", "solo-b"];
+    let mut frames = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        context.open(id, side_by_side(&context.display, index))?;
+        frames.push(context.fixture.frame(id)?);
+    }
+    context.select(&ids)?;
+    context.press(&context.focus_key(FocusShortcut::ClearSelection)?)?;
+    context.wait_outlines(false)?;
+    let elapsed = context.began.elapsed().as_secs_f64() * 1000.0;
+    for (id, before) in ids.iter().zip(frames) {
+        context.stayed(id, before)?;
+    }
     Ok(timed(elapsed))
 }
 

@@ -5,8 +5,8 @@ use snappy_platform::{OverlayMarks, OverlayScene};
 
 use super::canvas::{Canvas, Mask};
 use super::style::{
-    CAPTION_WEIGHT, MARK_BORDER, MARK_BORDER_WIDTH, MARK_CORNER_RADIUS, NUMBER_WEIGHT, SHADOW_BLUR,
-    SHADOW_COLOR, TEXT_COLOR, placement, zone_style,
+    CAPTION_WEIGHT, MARK_BORDER_WIDTH, MARK_CORNER_RADIUS, NUMBER_WEIGHT, SHADOW_BLUR, SHADOW_COLOR,
+    TEXT_COLOR, mark_border, placement, zone_style,
 };
 
 /// Rendered text, as coverage masks.
@@ -62,13 +62,14 @@ pub fn paint(canvas: &mut Canvas, scene: &OverlayScene, scale: f64, accent: u32,
 /// area's origin.
 pub fn paint_marks(canvas: &mut Canvas, marks: &OverlayMarks, scale: f64) {
     let origin = marks.work_area.origin();
-    for frame in &marks.frames {
+    for mark in &marks.windows {
+        let frame = mark.frame;
         let local = Rect::new(frame.x - origin.x, frame.y - origin.y, frame.width, frame.height);
         canvas.stroke_rounded(
             local,
             MARK_CORNER_RADIUS * scale,
             MARK_BORDER_WIDTH * scale,
-            MARK_BORDER,
+            mark_border(mark.style),
         );
     }
 }
@@ -101,7 +102,7 @@ fn label(
 
 #[cfg(test)]
 mod tests {
-    use snappy_platform::{Caption, OverlayZone};
+    use snappy_platform::{Caption, MarkStyle, MarkedWindow, OverlayZone};
 
     use super::*;
 
@@ -124,18 +125,33 @@ mod tests {
     }
 
     #[test]
-    fn marked_windows_are_outlined_inside_their_frames_and_nothing_else_is_drawn() {
+    fn marked_windows_are_outlined_inside_their_frames_in_their_styles_colors() {
         let marks = OverlayMarks {
             work_area: Rect::new(100.0, 50.0, 200.0, 100.0),
-            frames: vec![Rect::new(120.0, 60.0, 100.0, 80.0)],
+            windows: vec![
+                MarkedWindow {
+                    frame: Rect::new(120.0, 60.0, 80.0, 80.0),
+                    style: MarkStyle::Selected,
+                },
+                MarkedWindow {
+                    frame: Rect::new(210.0, 60.0, 80.0, 80.0),
+                    style: MarkStyle::Focused,
+                },
+            ],
         };
         let mut pixels = vec![0u32; 200 * 100];
         let mut canvas = Canvas::new(200, 100, &mut pixels);
         paint_marks(&mut canvas, &marks, 1.0);
-        // The frame starts at local (20, 10); its border covers columns 20 to 22.
-        assert_eq!(canvas.pixel(21, 50) >> 24, 0xff);
+        // The first frame starts at local (20, 10); its border covers columns 20 to 22.
+        let red = |pixel: u32| (pixel >> 16) & 0xff;
+        let selected = canvas.pixel(21, 50);
+        assert_eq!(selected >> 24, 0xff);
+        assert!(red(selected) < 0x10, "mint: {selected:08x}");
+        let focused = canvas.pixel(111, 50);
+        assert_eq!(focused >> 24, 0xff);
+        assert!(red(focused) > 0xf0, "orange: {focused:08x}");
         assert_eq!(canvas.pixel(18, 50), 0, "nothing outside the frame");
-        assert_eq!(canvas.pixel(70, 50), 0, "the window shows through");
+        assert_eq!(canvas.pixel(60, 50), 0, "the window shows through");
     }
 
     #[test]

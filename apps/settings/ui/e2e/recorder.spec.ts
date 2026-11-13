@@ -15,8 +15,8 @@ test("recording captures a combination between begin and end", async ({ page }) 
   await expect(recorder(page)).toHaveText("Press shortcut…");
   expect((await sentCommands(page)).at(-1)).toEqual({ kind: "beginRecording" });
 
-  await page.keyboard.press("Control+Alt+Meta+KeyJ");
-  await expect(recorder(page)).toHaveText("Snappy + J");
+  await page.keyboard.press("Control+Alt+Meta+KeyM");
+  await expect(recorder(page)).toHaveText("Snappy + M");
   const commands = (await sentCommands(page)).map((command) => command.kind);
   expect(commands.slice(-4)).toEqual([
     "beginRecording",
@@ -27,7 +27,7 @@ test("recording captures a combination between begin and end", async ({ page }) 
   expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
     kind: "setNavigationShortcut",
     direction: "left",
-    chord: { code: "KeyJ", mods: ["snappy"] },
+    chord: { code: "KeyM", mods: ["snappy"] },
   });
 });
 

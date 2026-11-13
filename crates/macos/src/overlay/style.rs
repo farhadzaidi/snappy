@@ -2,7 +2,7 @@
 //! Rectangles here are relative to the overlay's top-left corner, y down.
 
 use snappy_core::geometry::Rect;
-use snappy_platform::OverlayZone;
+use snappy_platform::{MarkStyle, OverlayZone};
 
 pub const CORNER_RADIUS: f64 = 16.0;
 pub const ZONE_INSET: f64 = 1.0;
@@ -24,6 +24,8 @@ pub enum Tint {
     Accent,
     /// `systemMint`.
     Mint,
+    /// `systemOrange`.
+    Orange,
     White,
 }
 
@@ -121,8 +123,18 @@ pub fn place_zone(zone: &OverlayZone, work_area: Rect) -> ZonePlacement {
     }
 }
 
-/// A marked window's outline: the swap source's border, drawn inside the window's frame.
+/// A selected window's outline: the swap source's border, drawn inside the window's frame.
 pub const MARK_BORDER: Paint = Paint::new(Tint::Mint, 1.0);
+/// The brief outline of a window a focus shortcut just focused, in a color of its own so
+/// it never reads as selected.
+pub const FOCUS_BORDER: Paint = Paint::new(Tint::Orange, 1.0);
+
+pub fn mark_border(style: MarkStyle) -> Paint {
+    match style {
+        MarkStyle::Selected => MARK_BORDER,
+        MarkStyle::Focused => FOCUS_BORDER,
+    }
+}
 pub const MARK_BORDER_WIDTH: f64 = 3.0;
 /// Close to the corners of macOS's own windows.
 pub const MARK_CORNER_RADIUS: f64 = 10.0;
@@ -153,14 +165,13 @@ mod tests {
             Rect::new(100.0, 25.0, 1000.0, 800.0),
         );
         assert_eq!(path, Rect::new(201.5, 176.5, 597.0, 397.0));
-        assert_eq!(
-            MARK_BORDER,
-            zone_style(&OverlayZone {
-                swap_source: true,
-                ..zone()
-            })
-            .border
-        );
+        let swap_source = zone_style(&OverlayZone {
+            swap_source: true,
+            ..zone()
+        })
+        .border;
+        assert_eq!(mark_border(MarkStyle::Selected), swap_source);
+        assert_eq!(mark_border(MarkStyle::Focused).tint, Tint::Orange);
     }
 
     fn zone() -> OverlayZone {

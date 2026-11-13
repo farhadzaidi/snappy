@@ -15,6 +15,7 @@ test("the groups appear in order, each with its line under the title", async ({ 
   expect(titles).toEqual([
     "Snapping",
     "Move between zones",
+    "Focus and selection",
     "Workspaces",
     "Window history",
     "Startup & access",
@@ -128,35 +129,113 @@ test("the nearest-empty-zone default is Snappy + Space on Windows and Linux too"
   }
 });
 
-test("the workspaces group shows the step, send, and take-along shortcuts", async ({ page }) => {
+test("the workspaces group shows the step and send shortcuts", async ({ page }) => {
   const workspaces = group(page, "Workspaces");
   const recorder = (name: string) => workspaces.getByRole("button", { name, exact: true });
-  await expect(workspaces.locator(".recorder-button")).toHaveCount(5);
+  await expect(workspaces.locator(".recorder-button")).toHaveCount(4);
   await expect(recorder("Previous workspace")).toHaveText("Snappy + ;");
   await expect(recorder("Next workspace")).toHaveText("Snappy + '");
   await expect(recorder("Send window to previous workspace")).toHaveText("Snappy + .");
   await expect(recorder("Send window to next workspace")).toHaveText("Snappy + /");
-  await expect(recorder("Take along")).toHaveText("Snappy + ↩");
+  await expect(workspaces.getByText("Take along")).toHaveCount(0);
 });
 
-test("the take-along shortcut can be changed and refuses a chord in use", async ({ page }) => {
-  const takeAlong = group(page, "Workspaces").getByRole("button", { name: "Take along", exact: true });
-  await takeAlong.click();
+test("the focus and selection group shows its shortcuts", async ({ page }) => {
+  const focus = group(page, "Focus and selection");
+  await expect(focus).toContainText(
+    "Move focus to the next window in a direction, from zone to zone when windows are in zones.",
+  );
+  await expect(focus.locator(".recorder-button")).toHaveText([
+    "Snappy + I",
+    "Snappy + J",
+    "Snappy + K",
+    "Snappy + L",
+    "Snappy + ↩",
+    "Snappy + \\",
+  ]);
+  for (const name of [
+    "Focus up",
+    "Focus left",
+    "Focus down",
+    "Focus right",
+    "Select window",
+    "Clear selection",
+  ]) {
+    await expect(focus.getByRole("button", { name, exact: true })).toBeVisible();
+  }
+});
+
+test("the select shortcut can be changed and refuses a chord in use", async ({ page }) => {
+  const select = group(page, "Focus and selection").getByRole("button", {
+    name: "Select window",
+    exact: true,
+  });
+  await select.click();
   await page.keyboard.press("Control+Alt+Meta+KeyT");
-  await expect(takeAlong).toHaveText("Snappy + T");
-  expect(await lastCommandOf(page, "setWorkspaceStepShortcut")).toMatchObject({
-    step: "takeAlong",
+  await expect(select).toHaveText("Snappy + T");
+  expect(await lastCommandOf(page, "setFocusShortcut")).toEqual({
+    kind: "setFocusShortcut",
+    shortcut: "selectWindow",
     chord: { code: "KeyT", mods: ["snappy"] },
   });
 
-  await takeAlong.click();
-  await page.keyboard.press("Control+Alt+Meta+Slash");
-  await expect(toast(page)).toContainText("Snappy + / is already assigned to Send window to next workspace.");
+  await select.click();
+  await page.keyboard.press("Control+Alt+Meta+Space");
+  await expect(toast(page)).toContainText(
+    "Snappy + Space is already assigned to Move to the nearest empty zone.",
+  );
   await page.keyboard.press("Escape");
-  await expect(takeAlong).toHaveText("Snappy + T");
+  await expect(select).toHaveText("Snappy + T");
 });
 
-test("the workspace defaults use the Snappy key on Windows and Linux too", async ({ page }) => {
+test("clearing the selection refuses the Snappy key with Delete on macOS", async ({ page }) => {
+  const clear = group(page, "Focus and selection").getByRole("button", {
+    name: "Clear selection",
+    exact: true,
+  });
+  await clear.click();
+  await page.keyboard.press("Control+Alt+Meta+Backspace");
+  await expect(toast(page)).toContainText(
+    "macOS reserves Control + Option + Command + Delete; it never reaches apps.",
+  );
+  await page.keyboard.press("Escape");
+  await expect(clear).toHaveText("Snappy + \\");
+  expect(await lastCommandOf(page, "probeShortcut")).toBeUndefined();
+  expect(await lastCommandOf(page, "setFocusShortcut")).toBeUndefined();
+});
+
+test("clearing the selection can use the Snappy key with Backspace on Windows", async ({ page }) => {
+  await openApp(page, "windows");
+  await showPage(page, "Settings");
+  const clear = group(page, "Focus and selection").getByRole("button", {
+    name: "Clear selection",
+    exact: true,
+  });
+  await clear.click();
+  await page.keyboard.press("Control+Alt+Meta+Backspace");
+  await expect(clear).toHaveText("Snappy + ⌫");
+  expect(await lastCommandOf(page, "setFocusShortcut")).toEqual({
+    kind: "setFocusShortcut",
+    shortcut: "clearSelection",
+    chord: { code: "Backspace", mods: ["snappy"] },
+  });
+});
+
+test("a focus shortcut can be cleared", async ({ page }) => {
+  const right = group(page, "Focus and selection").getByRole("button", { name: "Focus right", exact: true });
+  await right.click();
+  await page.keyboard.press("Backspace");
+  await expect(right).toHaveText("Record shortcut");
+  expect(await lastCommandOf(page, "setFocusShortcut")).toEqual({
+    kind: "setFocusShortcut",
+    shortcut: "focusRight",
+    chord: null,
+  });
+});
+
+test("the workspace, focus, and selection defaults use the Snappy key on Windows and Linux too", async ({
+  page,
+}) => {
   for (const platform of ["windows", "linux"] as const) {
     await openApp(page, platform);
     await showPage(page, "Settings");
@@ -165,7 +244,14 @@ test("the workspace defaults use the Snappy key on Windows and Linux too", async
       "Snappy + '",
       "Snappy + .",
       "Snappy + /",
+    ]);
+    await expect(group(page, "Focus and selection").locator(".recorder-button")).toHaveText([
+      "Snappy + I",
+      "Snappy + J",
+      "Snappy + K",
+      "Snappy + L",
       "Snappy + ↩",
+      "Snappy + \\",
     ]);
   }
 });
@@ -239,10 +325,18 @@ test("the help popover explains snapping", async ({ page }) => {
   await expect(help).toContainText("Shift ⇧ + Command ⌘");
   await expect(help).toContainText("Snappy key");
   await expect(help).toContainText("Control + Option + Command");
-  await expect(help).toContainText("Switch to workspace 1–9Snappy + 1–9");
-  await expect(help).toContainText("Send window to previous or next workspaceSnappy + . /");
-  await expect(help).toContainText("Take window alongSnappy + Return");
+  await expect(help).toContainText("Switch to workspace 1–9, taking the selection alongSnappy + 1–9");
+  await expect(help).toContainText(
+    "Send the window or selection to the previous or next workspaceSnappy + . /",
+  );
   await expect(help).toContainText("Move to the neighboring zoneSnappy + ← → ↑ ↓");
+  await expect(help).toContainText("Focus the window up, left, down, or rightSnappy + I J K L");
+  await expect(help).toContainText("Select or unselect the windowSnappy + Return");
+  await expect(help).toContainText("Clear the selectionSnappy + \\");
+  await expect(help).toContainText(
+    "Move to the nearest empty zone, or the selection into empty zonesSnappy + Space",
+  );
+  await expect(help).not.toContainText("Take window along");
   await expect(help).not.toContainText("Default zone shortcuts");
   await expect(help).not.toContainText("Swap with the keyboard");
   await expect(help).not.toContainText("Hold Shift with a zone or arrow shortcut");

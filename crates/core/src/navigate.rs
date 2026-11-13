@@ -40,7 +40,7 @@ impl Direction {
     }
 
     /// +1 when travel increases the coordinate, -1 when it decreases it.
-    fn sign(self) -> f64 {
+    pub(crate) fn sign(self) -> f64 {
         match self {
             Direction::Right | Direction::Down => 1.0,
             Direction::Left | Direction::Up => -1.0,
@@ -48,17 +48,17 @@ impl Direction {
     }
 
     /// Position along the direction of travel.
-    fn along(self, point: Point) -> f64 {
+    pub(crate) fn along(self, point: Point) -> f64 {
         if self.is_horizontal() { point.x } else { point.y }
     }
 
     /// Position across the direction of travel.
-    fn across(self, point: Point) -> f64 {
+    pub(crate) fn across(self, point: Point) -> f64 {
         if self.is_horizontal() { point.y } else { point.x }
     }
 
     /// A rectangle's extent across the direction of travel.
-    fn cross_span(self, rect: Rect) -> (f64, f64) {
+    pub(crate) fn cross_span(self, rect: Rect) -> (f64, f64) {
         if self.is_horizontal() {
             (rect.min_y(), rect.max_y())
         } else {
@@ -108,20 +108,41 @@ pub fn destination<'a>(
     let origin = frames[start];
     let (low, high) = direction.cross_span(origin);
     let anchor = direction.across(window.center()).clamp(low, high);
+    let others = frames
+        .iter()
+        .enumerate()
+        .filter(|&(index, _)| index != start)
+        .map(|(index, frame)| (index, *frame));
+    next_zone(direction, origin, anchor, others).map(|index| &layout.zones[index])
+}
 
-    (0..frames.len())
-        .filter(|&index| index != start)
-        .filter(|&index| {
-            (direction.along(frames[index].center()) - direction.along(origin.center())) * direction.sign()
+/// The zone of `zones` to go to from `origin` in `direction`, by its index, or `None`
+/// when no zone lies that way.
+///
+/// `origin` is the zone being left, or a point as a rectangle of no size. Only zones whose
+/// centers lie past its center count. Zones beside it, sharing its span across the
+/// direction, beat any other, the one with the least gap first; the rest go by distance
+/// between centers. `anchor`, a position across the direction, then picks among equals,
+/// and the lowest index wins a full tie.
+pub(crate) fn next_zone(
+    direction: Direction,
+    origin: Rect,
+    anchor: f64,
+    zones: impl IntoIterator<Item = (usize, Rect)>,
+) -> Option<usize> {
+    zones
+        .into_iter()
+        .filter(|(_, frame)| {
+            (direction.along(frame.center()) - direction.along(origin.center())) * direction.sign()
                 > AHEAD_THRESHOLD
         })
-        .map(|index| (index, rank(direction, origin, frames[index], anchor, index)))
+        .map(|(index, frame)| (index, rank(direction, origin, frame, anchor, index)))
         .min_by(|a, b| a.1.cmp(&b.1))
-        .map(|(index, _)| &layout.zones[index])
+        .map(|(index, _)| index)
 }
 
 /// The zone the window overlaps most; nearer centers, then earlier zones, break ties.
-fn starting_zone(window: Rect, frames: &[Rect]) -> Option<usize> {
+pub(crate) fn starting_zone(window: Rect, frames: &[Rect]) -> Option<usize> {
     let squared_distance = |frame: Rect| {
         let (dx, dy) = (window.mid_x() - frame.mid_x(), window.mid_y() - frame.mid_y());
         dx * dx + dy * dy
@@ -176,7 +197,13 @@ impl Ord for Rank {
 fn rank(direction: Direction, origin: Rect, candidate: Rect, anchor: f64, index: usize) -> Rank {
     let (origin_low, origin_high) = direction.cross_span(origin);
     let (low, high) = direction.cross_span(candidate);
-    let misaligned = origin_high.min(high) - origin_low.max(low) <= ALIGNED_THRESHOLD;
+    // A point shares no span with anything, so it is beside a zone it lies well inside of.
+    let shared = if origin_high <= origin_low {
+        (origin_low - low).min(high - origin_high)
+    } else {
+        origin_high.min(high) - origin_low.max(low)
+    };
+    let misaligned = shared <= ALIGNED_THRESHOLD;
     let (dx, dy) = (
         candidate.mid_x() - origin.mid_x(),
         candidate.mid_y() - origin.mid_y(),

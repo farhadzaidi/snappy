@@ -12,7 +12,7 @@ use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction};
 use snappy_core::geometry::Rect;
 use snappy_platform::OverlayMarks;
 
-use super::style::{MARK_BORDER, MARK_BORDER_WIDTH, MARK_CORNER_RADIUS, mark_path};
+use super::style::{MARK_BORDER_WIDTH, MARK_CORNER_RADIUS, mark_border, mark_path};
 use super::surface::{color, layer_rect, make_panel};
 use crate::coords::flip_rect;
 use crate::displays::to_cg_rect;
@@ -50,21 +50,21 @@ impl MarkSurface {
             self.panel.setFrame_display(to_cg_rect(frame), false);
             self.work_area = Some(marks.work_area);
         }
-        while self.outlines.len() > marks.frames.len() {
+        while self.outlines.len() > marks.windows.len() {
             if let Some(layer) = self.outlines.pop() {
                 layer.removeFromSuperlayer();
             }
         }
-        while self.outlines.len() < marks.frames.len() {
+        while self.outlines.len() < marks.windows.len() {
             let layer = CAShapeLayer::new();
             layer.setFillColor(None);
-            layer.setStrokeColor(Some(&color(MARK_BORDER)));
             layer.setLineWidth(MARK_BORDER_WIDTH);
             self.root.addSublayer(&layer);
             self.outlines.push(layer);
         }
-        for (layer, frame) in self.outlines.iter().zip(&marks.frames) {
-            let path = mark_path(*frame, marks.work_area);
+        for (layer, mark) in self.outlines.iter().zip(&marks.windows) {
+            layer.setStrokeColor(Some(&color(mark_border(mark.style))));
+            let path = mark_path(mark.frame, marks.work_area);
             layer.setFrame(layer_rect(path, marks.work_area.height));
             let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(path.width, path.height));
             // SAFETY: a null transform means identity.
@@ -75,7 +75,7 @@ impl MarkSurface {
         }
 
         CATransaction::commit();
-        if marks.frames.is_empty() {
+        if marks.windows.is_empty() {
             self.panel.orderOut(None);
         } else if !self.panel.isVisible() {
             self.panel.orderFrontRegardless();

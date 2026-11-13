@@ -10,7 +10,8 @@ use snappy_core::keys::{Combo, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
     Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
-    OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    OverlayScene, Permissions, Platform, TabGroup, Tray, TrayMenu, WindowId, WindowInfo, WindowState,
+    WindowSystem,
 };
 
 use crate::ax::{self, AxElement};
@@ -89,6 +90,10 @@ impl WindowSystem for MacPlatform {
 
     fn windows_occupying(&mut self, frames: &[Rect]) -> Result<Vec<WindowInfo>, WindowError> {
         self.windows.windows_occupying(frames)
+    }
+
+    fn tab_groups(&mut self, windows: &[WindowId]) -> Vec<TabGroup> {
+        self.windows.tab_groups(windows)
     }
 
     fn focus(&mut self, window: WindowId) {

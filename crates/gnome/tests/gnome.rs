@@ -322,8 +322,8 @@ fn floating(x: f64) -> Rect {
     Rect::new(x, 300.0, 600.0, 400.0)
 }
 
-/// Every default chord, moving between zones, to the nearest empty zone, the workspace
-/// steps, taking windows along, and switching to workspaces 1 to 9, is free in GNOME.
+/// Every default chord, moving between zones, to the nearest empty zone, focus and the
+/// selection, the workspace steps, and switching to workspaces 1 to 9, is free in GNOME.
 #[test]
 fn the_default_shortcuts_are_free() {
     let mut shell = shell!();
@@ -334,9 +334,17 @@ fn the_default_shortcuts_are_free() {
         .map(|(_, chord)| chord.clone())
         .collect();
     chords.extend(settings.navigation.nearest_empty.clone());
+    chords.extend(
+        settings
+            .navigation
+            .focus_shortcuts()
+            .map(|(_, chord)| chord.clone()),
+    );
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
-    assert_eq!(chords.len(), 5 + 5 + 9);
+    assert_eq!(chords.len(), 5 + 6 + 4 + 9);
+    let clear_selection = KeyChord::snappy("Backslash", []).combo();
+    assert!(chords.iter().any(|chord| chord.combo() == clear_selection));
     let taken: Vec<String> = chords
         .iter()
         .filter(|chord| !shell.platform.is_available(&chord.combo()))

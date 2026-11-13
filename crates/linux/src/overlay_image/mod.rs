@@ -7,7 +7,7 @@ use snappy_platform::{OverlayMarks, OverlayScene, OverlayZone};
 use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::overlay_style::{
-    self as style, BLACK, MARK_BORDER, MarkPlacement, Placement, Rgb, WHITE, place, place_mark, zone_style,
+    self as style, BLACK, MarkPlacement, Placement, Rgb, WHITE, mark_border, place, place_mark, zone_style,
 };
 
 pub mod glyphs;
@@ -42,10 +42,10 @@ pub fn render_rows(scene: &OverlayScene, scale: f64, top: u32, rows: u32) -> Opt
 /// `rows` rows of the image outlining the marked windows, like `render_rows`.
 pub fn render_mark_rows(marks: &OverlayMarks, scale: f64, top: u32, rows: u32) -> Option<Pixmap> {
     render_band(marks.work_area, top, rows, |canvas, drawn| {
-        for frame in &marks.frames {
-            let placement = place_mark(*frame, marks.work_area, scale);
+        for mark in &marks.windows {
+            let placement = place_mark(mark.frame, marks.work_area, scale);
             if placement.shape.intersection_area(drawn) > 0.0 {
-                canvas.draw_mark(&placement);
+                canvas.draw_mark(&placement, mark_border(mark.style));
             }
         }
     })
@@ -123,12 +123,12 @@ impl Canvas {
         }
     }
 
-    fn draw_mark(&mut self, placement: &MarkPlacement) {
+    fn draw_mark(&mut self, placement: &MarkPlacement, border: style::Paint) {
         self.draw_border(
             placement.shape,
             placement.corner_radius,
             placement.border_width,
-            MARK_BORDER,
+            border,
         );
     }
 
@@ -230,10 +230,10 @@ pub fn outline(scene: &OverlayScene, scale: f64) -> Vec<Rect> {
 /// `outline` does for zones. Rectangles are relative to the work area.
 pub fn mark_outline(marks: &OverlayMarks, scale: f64) -> Vec<Rect> {
     marks
-        .frames
+        .windows
         .iter()
-        .flat_map(|frame| {
-            let placement = place_mark(*frame, marks.work_area, scale);
+        .flat_map(|mark| {
+            let placement = place_mark(mark.frame, marks.work_area, scale);
             border_strips(placement.shape, placement.border_width.ceil().max(2.0))
         })
         .collect()
@@ -273,7 +273,7 @@ pub fn to_argb(data: &mut [u8], msb_first: bool) {
 
 #[cfg(test)]
 mod tests {
-    use snappy_platform::Caption;
+    use snappy_platform::{Caption, MarkStyle, MarkedWindow};
 
     use super::*;
 
@@ -435,25 +435,36 @@ mod tests {
     }
 
     #[test]
-    fn marked_windows_are_outlined_in_mint_inside_their_frames_and_nothing_else_is_drawn() {
+    fn selected_windows_are_outlined_in_mint_and_focused_ones_in_orange_inside_their_frames() {
         let marks = OverlayMarks {
             work_area: AREA,
-            frames: vec![Rect::new(2020.0, 132.0, 400.0, 300.0)],
+            windows: vec![
+                MarkedWindow {
+                    frame: Rect::new(2020.0, 132.0, 400.0, 300.0),
+                    style: MarkStyle::Selected,
+                },
+                MarkedWindow {
+                    frame: Rect::new(2520.0, 132.0, 300.0, 300.0),
+                    style: MarkStyle::Focused,
+                },
+            ],
         };
         let pixmap = render_mark_rows(&marks, 1.0, 0, 600).unwrap();
         assert_eq!((pixmap.width(), pixmap.height()), (1000, 600));
         // The frame starts at local (100, 100); its 3 px border covers columns 100 to 102.
         let border = rgba(&pixmap, 101, 250);
         assert!(close(border, [0, 199, 190, 255], 2), "{border:?}");
+        let focused = rgba(&pixmap, 601, 250);
+        assert!(close(focused, [255, 159, 10, 255], 2), "{focused:?}");
         assert_eq!(rgba(&pixmap, 98, 250), [0, 0, 0, 0], "nothing outside the frame");
         assert_eq!(rgba(&pixmap, 300, 250), [0, 0, 0, 0], "the window shows through");
 
         let strips = mark_outline(&marks, 1.0);
-        assert_eq!(strips.len(), 4);
+        assert_eq!(strips.len(), 8);
         assert_eq!(strips[0], Rect::new(100.0, 100.0, 400.0, 3.0));
         let none = OverlayMarks {
             work_area: AREA,
-            frames: Vec::new(),
+            windows: Vec::new(),
         };
         assert!(mark_outline(&none, 1.0).is_empty());
         let empty = render_mark_rows(&none, 1.0, 0, 600).unwrap();

@@ -608,8 +608,8 @@ fn registered_shortcuts_fire_on_their_keys() {
 }
 
 /// The reserved-chord audit: every default chord, moving between zones, to the nearest
-/// empty zone, the workspace steps, taking windows along, and switching to workspaces 1
-/// to 9, is free on a stock Windows 11, so Windows and the shell leave them to Snappy.
+/// empty zone, focus and the selection, the workspace steps, and switching to workspaces
+/// 1 to 9, is free on a stock Windows 11, so Windows and the shell leave them to Snappy.
 #[test]
 fn the_windows_default_shortcuts_are_free() {
     require_desktop!();
@@ -621,9 +621,17 @@ fn the_windows_default_shortcuts_are_free() {
         .map(|(_, chord)| chord.clone())
         .collect();
     chords.extend(settings.navigation.nearest_empty.clone());
+    chords.extend(
+        settings
+            .navigation
+            .focus_shortcuts()
+            .map(|(_, chord)| chord.clone()),
+    );
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
-    assert_eq!(chords.len(), 5 + 5 + 9);
+    assert_eq!(chords.len(), 5 + 6 + 4 + 9);
+    let clear_selection = KeyChord::snappy("Backslash", []).combo();
+    assert!(chords.iter().any(|chord| chord.combo() == clear_selection));
     let taken: Vec<String> = chords
         .iter()
         .filter(|chord| !session.platform.is_available(&chord.combo()))

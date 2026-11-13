@@ -579,6 +579,27 @@ pub fn reserved_app_commands(platform: Platform) -> Vec<Combo> {
     }
 }
 
+/// A chord the OS consumes before any app sees it, though registering it succeeds and
+/// nothing reports it as taken, so only this list can refuse it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptChord {
+    pub combo: Combo,
+    /// Why it can't be a shortcut, as conflicts show it.
+    pub message: &'static str,
+}
+
+/// The chords the OS keeps for itself on `platform`. macOS's window server swallows
+/// Control-Option-Command-Delete: the keyboard sends it, but no app or hotkey receives it.
+pub fn chords_the_system_keeps(platform: Platform) -> Vec<KeptChord> {
+    match platform {
+        Platform::MacOs => vec![KeptChord {
+            combo: Combo::new("Backspace", [Modifier::Ctrl, Modifier::Alt, Modifier::Meta]),
+            message: "macOS reserves Control + Option + Command + Delete; it never reaches apps.",
+        }],
+        Platform::Windows | Platform::Linux => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,5 +709,16 @@ mod tests {
         assert!(mac.contains(&Combo::new("KeyQ", [Modifier::Meta])));
         assert_eq!(mac.len(), 11);
         assert!(reserved_app_commands(Platform::Windows).contains(&Combo::new("F4", [Modifier::Alt])));
+    }
+
+    #[test]
+    fn macos_keeps_control_option_command_delete_and_other_platforms_keep_nothing() {
+        let kept: Vec<Combo> = chords_the_system_keeps(Platform::MacOs)
+            .into_iter()
+            .map(|kept| kept.combo)
+            .collect();
+        assert_eq!(kept, [Combo::new("Backspace", HYPER)]);
+        assert!(chords_the_system_keeps(Platform::Windows).is_empty());
+        assert!(chords_the_system_keeps(Platform::Linux).is_empty());
     }
 }

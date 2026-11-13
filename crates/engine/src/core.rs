@@ -10,12 +10,13 @@ use snappy_core::layout::{Layout, Spacing, zone_frame};
 use snappy_core::settings::Settings;
 use snappy_ipc::{AppState, SnappingState, Status, ToSettings, WorkspacesState};
 use snappy_platform::{
-    Capabilities, Caption, Display, LiveControl, OverlayMarks, OverlayScene, OverlayZone, Platform,
-    TrayDisplay, TrayItem, TrayMenu, WindowId,
+    Capabilities, Caption, Display, LiveControl, MarkStyle, MarkedWindow, OverlayMarks, OverlayScene,
+    OverlayZone, Platform, TrayDisplay, TrayItem, TrayMenu, WindowId,
 };
 
 use crate::debug_log::{DebugLog, Level};
 use crate::diagnostics::Diagnostics;
+use crate::selection::{self, Selection};
 use crate::store::{Paths, SettingsStore};
 use crate::workspaces::WorkspaceController;
 
@@ -68,6 +69,7 @@ pub(crate) struct Core<P> {
     pub registered: Vec<HotKey>,
     pub registration_failed: bool,
     pub workspaces: WorkspaceController,
+    pub selection: Selection,
     /// The settings app's process, so its window can be found.
     pub settings_app_pid: Option<u32>,
     pub status: Option<Status>,
@@ -110,6 +112,7 @@ impl<P: Platform> Core<P> {
             registered: Vec::new(),
             registration_failed: false,
             workspaces: WorkspaceController::default(),
+            selection: Selection::default(),
             settings_app_pid: None,
             status: None,
             status_counter: 0,
@@ -184,6 +187,8 @@ impl<P: Platform> Core<P> {
             });
             if !should_run {
                 self.end_drag();
+                // Its shortcuts go with live control, so nothing could clear its outlines.
+                selection::clear(self, "live control off");
             }
             if announce {
                 let reason = self.live_control.reason().map(str::to_owned);
@@ -319,36 +324,49 @@ impl<P: Platform> Core<P> {
         self.publish_state();
     }
 
-    /// Outline the windows being taken along on each display they show on, where they are
-    /// now. Only displays whose outlines changed are sent.
+    /// Outline the selected windows, and the window a focus shortcut just focused, on each
+    /// display they show on, where they are now. Only displays whose outlines changed are
+    /// sent.
     pub fn refresh_marks(&mut self) {
-        let carried = self.workspaces.carried.clone();
-        let platform = &mut self.platform;
-        let frames: Vec<Rect> = carried
-            .into_iter()
-            .filter_map(|window| {
-                let shown = platform.state(window).is_ok_and(|state| !state.minimized);
-                shown.then(|| platform.frame(window).ok()).flatten()
-            })
-            .collect();
+        let flash = self.selection.flash;
+        // A selected tab is outlined on its group's shown tab, the one on screen.
+        let mut wanted: Vec<(WindowId, MarkStyle)> = Vec::new();
+        for window in &self.selection.windows {
+            let shown = self.workspaces.tab_root(*window);
+            if Some(shown) != flash && !wanted.iter().any(|(marked, _)| *marked == shown) {
+                wanted.push((shown, MarkStyle::Selected));
+            }
+        }
+        wanted.extend(flash.map(|window| (window, MarkStyle::Focused)));
+        let mut marked = Vec::new();
+        for (window, style) in wanted {
+            let shown = !self.workspaces.is_inactive(window)
+                && self
+                    .platform
+                    .state(window)
+                    .is_ok_and(|state| !state.minimized && !state.on_parking_desktop);
+            if let (true, Ok(frame)) = (shown, self.platform.frame(window)) {
+                marked.push(MarkedWindow { frame, style });
+            }
+        }
         for display in self.displays.clone() {
             let marks = OverlayMarks {
                 work_area: display.work_area,
-                frames: frames
+                windows: marked
                     .iter()
                     .copied()
-                    .filter(|frame| frame.intersection_area(display.work_area) > 0.0)
+                    .filter(|mark| mark.frame.intersection_area(display.work_area) > 0.0)
                     .collect(),
             };
             let unchanged = match self.marked.get(&display.id) {
                 Some(sent) => *sent == marks,
-                None => marks.frames.is_empty(),
+                None => marks.windows.is_empty(),
             };
             if unchanged {
                 continue;
             }
             self.platform.mark(&display.id, &marks);
-            if marks.frames.is_empty() {
+            if marks.windows.is_empty() {
                 self.marked.remove(&display.id);
             } else {
                 self.marked.insert(display.id.clone(), marks);

@@ -42,11 +42,22 @@ function defaultShortcuts(platform: PlatformName): readonly { title: string; cho
   const snappy = (code: string, label: string): KeyChord => ({ code, mods: ["snappy"], label });
   return [
     { title: "Move to the neighboring zone", chord: snappy("ArrowLeft", "← → ↑ ↓") },
-    { title: "Move to the nearest empty zone", chord: snappy("Space", "Space") },
-    { title: "Switch to workspace 1–9", chord: snappy("Digit1", "1–9") },
+    { title: "Focus the window up, left, down, or right", chord: snappy("KeyI", "I J K L") },
+    {
+      title: "Select or unselect the window",
+      chord: snappy("Enter", platform === "macos" ? "Return" : "Enter"),
+    },
+    { title: "Clear the selection", chord: snappy("Backslash", "\\") },
+    {
+      title: "Move to the nearest empty zone, or the selection into empty zones",
+      chord: snappy("Space", "Space"),
+    },
+    { title: "Switch to workspace 1–9, taking the selection along", chord: snappy("Digit1", "1–9") },
     { title: "Previous or next workspace", chord: snappy("Semicolon", "; '") },
-    { title: "Send window to previous or next workspace", chord: snappy("Period", ". /") },
-    { title: "Take window along", chord: snappy("Enter", platform === "macos" ? "Return" : "Enter") },
+    {
+      title: "Send the window or selection to the previous or next workspace",
+      chord: snappy("Period", ". /"),
+    },
   ];
 }
 

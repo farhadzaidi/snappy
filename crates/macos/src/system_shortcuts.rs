@@ -1,6 +1,8 @@
 //! Shortcuts macOS keeps for itself, such as Mission Control's Control-arrow Space switching
 //! (System Settings → Keyboard → Keyboard Shortcuts). Carbon lets Snappy register the same
-//! keys, but macOS takes the presses first, so these count as unavailable.
+//! keys, but macOS takes the presses first, so these count as unavailable. The window
+//! server also swallows Control-Option-Command-Delete, which isn't listed here;
+//! `chords_the_system_keeps` in core refuses it.
 
 use objc2::runtime::AnyObject;
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults, ns_string};
@@ -196,7 +198,8 @@ mod tests {
             .map(|n| snappy_core::settings::Workspace::numbered(format!("workspace-{n}"), n))
             .collect();
         let combos = snappy_core::bindings::bound_combos(&settings);
-        assert_eq!(combos.len(), 5 + 9 + 5);
+        assert_eq!(combos.len(), 4 + 9 + 5 + 6);
+        assert!(combos.contains(&snappy_core::keys::KeyChord::snappy("Backslash", []).combo()));
         for combo in combos {
             let carbon = CarbonChord::from_combo(&combo).unwrap();
             assert!(!is_taken(carbon, &shipped), "{combo:?}");

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use snappy_core::geometry::Rect;
 use snappy_platform::{OverlayMarks as EngineMarks, OverlayScene as EngineScene};
 
-use crate::overlay_style::{MARK_BORDER, Paint, SHADOW_BLUR, SHADOW_OPACITY, place, place_mark, zone_style};
+use crate::overlay_style::{Paint, SHADOW_BLUR, SHADOW_OPACITY, mark_border, place, place_mark, zone_style};
 
 /// A frame in the desktop shell's coordinates, as its script reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -146,17 +146,17 @@ pub fn marks(marks: &EngineMarks, scale: f64) -> OverlayMarks {
     OverlayMarks {
         work_area: Frame::from(marks.work_area),
         outlines: marks
-            .frames
+            .windows
             .iter()
-            .map(|frame| {
-                let placement = place_mark(*frame, marks.work_area, scale);
+            .map(|mark| {
+                let placement = place_mark(mark.frame, marks.work_area, scale);
                 OverlayOutline {
                     x: placement.shape.x,
                     y: placement.shape.y,
                     width: placement.shape.width,
                     height: placement.shape.height,
                     radius: placement.corner_radius,
-                    border: rgba(MARK_BORDER),
+                    border: rgba(mark_border(mark.style)),
                     border_width: placement.border_width,
                 }
             })
@@ -166,15 +166,19 @@ pub fn marks(marks: &EngineMarks, scale: f64) -> OverlayMarks {
 
 #[cfg(test)]
 mod tests {
-    use snappy_platform::{Caption, OverlayZone as EngineZone};
+    use snappy_platform::{Caption, MarkStyle, MarkedWindow, OverlayZone as EngineZone};
 
     use super::*;
 
     #[test]
-    fn marked_windows_become_mint_outlines_in_the_work_area() {
+    fn selected_windows_become_mint_outlines_and_focused_ones_orange_in_the_work_area() {
+        let mark = |x: f64, style| MarkedWindow {
+            frame: Rect::new(x, 132.0, 400.0, 300.0),
+            style,
+        };
         let engine = EngineMarks {
             work_area: Rect::new(100.0, 32.0, 1000.0, 800.0),
-            frames: vec![Rect::new(300.0, 132.0, 400.0, 300.0)],
+            windows: vec![mark(300.0, MarkStyle::Selected), mark(700.0, MarkStyle::Focused)],
         };
         let marks = marks(&engine, 1.0);
         assert_eq!(marks.work_area.y, 32.0);
@@ -182,6 +186,7 @@ mod tests {
         assert_eq!((outline.x, outline.y, outline.width), (200.0, 100.0, 400.0));
         assert_eq!(outline.border, [0.0, 199.0, 190.0, 1.0]);
         assert_eq!((outline.border_width, outline.radius), (3.0, 10.0));
+        assert_eq!(marks.outlines[1].border, [255.0, 159.0, 10.0, 1.0]);
     }
 
     fn engine_scene() -> EngineScene {

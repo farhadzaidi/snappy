@@ -2,6 +2,7 @@ import { modifierLabel } from "../core/labels";
 import {
   DIRECTIONS,
   type DragModifier,
+  type FocusShortcut,
   type HistoryStep,
   type KeyChord,
   type SwapModifier,
@@ -9,6 +10,7 @@ import {
   type WorkspaceStep,
 } from "../core/model";
 import {
+  focusConflict,
   historyConflict,
   navigationConflict,
   nearestEmptyConflict,
@@ -37,6 +39,7 @@ export function SettingsPage() {
         <h1 className="page-title">Global settings</h1>
         <SnappingGroup />
         <MoveBetweenZonesGroup />
+        <FocusAndSelectionGroup />
         <WorkspaceStepsGroup />
         <WindowHistoryGroup />
         <StartupGroup />
@@ -148,22 +151,53 @@ function MoveBetweenZonesGroup() {
   );
 }
 
+const FOCUS_SHORTCUTS: readonly { shortcut: FocusShortcut; title: string }[] = [
+  { shortcut: "focusUp", title: "Focus up" },
+  { shortcut: "focusLeft", title: "Focus left" },
+  { shortcut: "focusDown", title: "Focus down" },
+  { shortcut: "focusRight", title: "Focus right" },
+  { shortcut: "selectWindow", title: "Select window" },
+  { shortcut: "clearSelection", title: "Clear selection" },
+];
+
+/** Moving focus to the next window in a direction, and selecting windows. */
+function FocusAndSelectionGroup() {
+  const { settings, platform } = useAppState();
+  const send = useSend();
+  return (
+    <Group
+      title="Focus and selection"
+      caption="Move focus to the next window in a direction, from zone to zone when windows are in zones. Select windows to move them together: the nearest-empty-zone shortcut places them into empty zones, and switching or sending to a workspace takes them along."
+    >
+      {FOCUS_SHORTCUTS.map(({ shortcut, title }) => (
+        <Row key={shortcut} label={<span className="muted">{title}</span>}>
+          <ShortcutRecorder
+            title={title}
+            chord={settings.navigation[shortcut]}
+            conflictOf={(chord: KeyChord) => focusConflict(settings, shortcut, chord, platform)}
+            onChange={(chord) => void send({ kind: "setFocusShortcut", shortcut, chord })}
+          />
+        </Row>
+      ))}
+    </Group>
+  );
+}
+
 const WORKSPACE_STEPS: readonly { step: WorkspaceStep; title: string }[] = [
   { step: "previous", title: "Previous workspace" },
   { step: "next", title: "Next workspace" },
   { step: "sendPrevious", title: "Send window to previous workspace" },
   { step: "sendNext", title: "Send window to next workspace" },
-  { step: "takeAlong", title: "Take along" },
 ];
 
-/** The shortcuts for every workspace: stepping, sending the window away, and taking it along. */
+/** The shortcuts for every workspace: stepping, and sending windows away. */
 function WorkspaceStepsGroup() {
   const { settings, platform } = useAppState();
   const send = useSend();
   return (
     <Group
       title="Workspaces"
-      caption="Go to the previous or next workspace in list order, or send the focused window there and stay. Take along picks up the focused window, or puts it down; picked-up windows come with you to the next workspace you switch to."
+      caption="Go to the previous or next workspace in list order, or send the focused window, or the selected windows, there and stay."
     >
       {WORKSPACE_STEPS.map(({ step, title }) => (
         <Row key={step} label={<span className="muted">{title}</span>}>

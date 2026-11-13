@@ -219,8 +219,8 @@ test("the shortcuts tab records zone shortcuts and selects zones", async ({ page
   const recorder = page.getByRole("button", { name: "Zone 1 shortcut", exact: true });
   await expect(recorder).toHaveText("Record shortcut");
   await recorder.click();
-  await page.keyboard.press("Control+Alt+Meta+KeyJ");
-  await expect(recorder).toHaveText("Snappy + J");
+  await page.keyboard.press("Control+Alt+Meta+KeyM");
+  await expect(recorder).toHaveText("Snappy + M");
   await page.getByRole("button", { name: "Clear all" }).click();
   await expect(recorder).toHaveText("Record shortcut");
 });

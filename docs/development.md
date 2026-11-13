@@ -35,6 +35,20 @@ tools/macos/bundle.sh                      # build and sign dist/Snappy.app
 
 macOS ties the Accessibility grant to the app's code signature. `signing-identity.sh` creates a self-signed identity, "Snappy Local Signing", in its own keychain (`~/Library/Keychains/snappy-signing.keychain-db`) whose password lives in `~/.config/snappy/signing-keychain-password`, readable only by you. `bundle.sh` unlocks that keychain itself, so builds sign without a prompt, and every build keeps the same identity, so the grant survives rebuilds. `SNAPPY_SIGN_IDENTITY` overrides the identity. Without one, builds are signed ad hoc and macOS asks for Accessibility again each time.
 
+### Installing a new build without losing workspaces
+
+Stop the running daemon for a restart, not a quit, before replacing it. Quitting (`SIGTERM`, `pkill -x snappy`, `killall Snappy`, or the menu's Quit) brings every parked window back on screen; stopping for a restart leaves every window where it is, and the new daemon puts each back in its workspace ([architecture.md](architecture.md#membership-the-journal-and-restarts)). On macOS:
+
+```sh
+pkill -USR2 -x snappy; while pgrep -x snappy >/dev/null; do sleep 0.2; done
+ditto dist/Snappy.app /Applications/Snappy.app
+open -g /Applications/Snappy.app --args --background
+```
+
+The loop waits for the old daemon to save its state and exit. `open` launches the new one through Launch Services, so macOS checks Accessibility for Snappy itself; `--background` starts it quietly, as the login item does. On Linux, `pkill -USR2 -x snappy` the same way, replace the binaries, and start `snappy --background`. On Windows, run `snappy.exe --stop-for-restart`, which returns once the daemon has exited, replace the files, and start `snappy.exe --background`.
+
+The same commands work once for upgrading from a build that can't stop for a restart yet. On macOS and Linux such a build doesn't handle `SIGUSR2`, whose default action ends the process at once without running Quit, so its journal stays: it lists each parked window with its workspace, home frame, and parked position under the same recovery keys, and the new build picks it up as after a crash. Windows on the active workspace join it as visible windows always do. On Windows, `--stop-for-restart` fails against such a build; end it once with `taskkill /F /IM snappy.exe` instead, which also skips Quit.
+
 ### Windows
 
 ```sh

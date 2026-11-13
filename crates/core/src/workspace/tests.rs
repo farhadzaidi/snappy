@@ -460,3 +460,176 @@ fn focus_after_a_send_goes_to_the_most_recently_focused_window_left() {
     assert_eq!(session.focus_recent(&mut io), None);
     assert_eq!(io.focused, None);
 }
+
+const TABBED: Rect = Rect::new(100.0, 100.0, 600.0, 400.0);
+
+/// Window 1 shows a tab group whose hidden tabs are 2 and 3, all in workspace one, and
+/// window 4 stands alone. The hidden tabs' frames are stale, as macOS leaves them.
+fn tabbed_session(io: &mut FakeIo) -> Session {
+    io.frames.insert(WindowId(1), TABBED);
+    io.frames.insert(WindowId(2), Rect::new(40.0, 60.0, 600.0, 400.0));
+    io.frames.insert(WindowId(3), Rect::new(40.0, 60.0, 600.0, 400.0));
+    io.frames
+        .insert(WindowId(4), Rect::new(800.0, 200.0, 500.0, 300.0));
+    let mut session = session_with(io, &[(1, "one"), (2, "one"), (3, "one"), (4, "one")]);
+    session.update_tabs(&[group(1, &[2, 3])], &[]);
+    session
+}
+
+fn group(shown: u64, hidden: &[u64]) -> Tabs {
+    Tabs {
+        shown: WindowId(shown),
+        hidden: hidden.iter().map(|id| WindowId(*id)).collect(),
+    }
+}
+
+fn workspace_of(session: &Session, id: u64) -> &str {
+    &session.member(WindowId(id)).unwrap().workspace
+}
+
+#[test]
+fn carrying_a_tab_carries_its_whole_group_without_moving_the_hidden_tabs() {
+    let mut io = FakeIo::default();
+    let mut session = tabbed_session(&mut io);
+
+    session
+        .switch_carrying("two", &[WindowId(1)], &[DISPLAY], true, &mut io)
+        .unwrap();
+    for id in [1, 2, 3] {
+        assert_eq!(workspace_of(&session, id), "two", "tab {id}");
+    }
+    assert_eq!(workspace_of(&session, 4), "one");
+    assert_eq!(io.moves, [WindowId(4)], "only the window left behind is parked");
+    assert_eq!(io.origin(1), TABBED.origin());
+    assert_eq!(io.focused, Some(WindowId(1)));
+}
+
+#[test]
+fn a_selected_tab_its_app_has_since_hidden_carries_its_group() {
+    let mut io = FakeIo::default();
+    let mut session = tabbed_session(&mut io);
+
+    session
+        .switch_carrying("two", &[WindowId(3)], &[DISPLAY], true, &mut io)
+        .unwrap();
+    for id in [1, 2, 3] {
+        assert_eq!(workspace_of(&session, id), "two", "tab {id}");
+    }
+    assert_eq!(io.focused, Some(WindowId(1)), "focus goes to the shown tab");
+}
+
+#[test]
+fn switching_away_parks_only_the_shown_tab_and_journals_only_it() {
+    let mut io = FakeIo::default();
+    let mut session = tabbed_session(&mut io);
+    session.send(WindowId(4), "two", &[DISPLAY], &mut io).unwrap();
+    io.moves.clear();
+    io.journals.clear();
+
+    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
+    assert_eq!(io.moves, [WindowId(4), WindowId(1)]);
+    assert!(io.origin(1).x > 1400.0);
+    assert_eq!(
+        io.origin(2),
+        Point::new(40.0, 60.0),
+        "hidden tabs stay where they are"
+    );
+    let journaled: Vec<WindowId> = io
+        .journals
+        .last()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.window)
+        .collect();
+    assert_eq!(journaled, [WindowId(1)]);
+    assert_eq!(
+        session.member(WindowId(2)).unwrap().parked,
+        session.member(WindowId(1)).unwrap().parked,
+        "hidden tabs follow their shown tab"
+    );
+
+    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    assert_eq!(io.origin(1), TABBED.origin());
+    let journaled: Vec<WindowId> = session.journal().iter().map(|entry| entry.window).collect();
+    assert_eq!(journaled, [WindowId(4)]);
+}
+
+#[test]
+fn sending_a_tab_sends_its_whole_group() {
+    let mut io = FakeIo::default();
+    let mut session = tabbed_session(&mut io);
+
+    session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
+    for id in [1, 2, 3] {
+        assert_eq!(workspace_of(&session, id), "two", "tab {id}");
+    }
+    assert_eq!(io.moves, [WindowId(1)]);
+    assert!(io.origin(1).x > 1400.0);
+}
+
+#[test]
+fn tabs_found_in_other_workspaces_join_their_shown_tab() {
+    let mut io = FakeIo::default();
+    io.frames.insert(WindowId(1), TABBED);
+    io.frames.insert(WindowId(2), TABBED);
+    let mut session = session_with(&mut io, &[(1, "two"), (2, "one")]);
+
+    let moved = session.update_tabs(&[group(1, &[2])], &[]);
+    assert_eq!(moved, [WindowId(2)]);
+    assert_eq!(workspace_of(&session, 2), "two");
+    assert_eq!(session.tab_root(WindowId(2)), WindowId(1));
+    assert!(
+        session.update_tabs(&[group(1, &[2])], &[]).is_empty(),
+        "nothing left to unify"
+    );
+}
+
+#[test]
+fn a_torn_out_tab_keeps_its_groups_workspace_and_moves_on_its_own() {
+    let mut io = FakeIo::default();
+    let mut session = tabbed_session(&mut io);
+    session
+        .switch_carrying("two", &[WindowId(1)], &[DISPLAY], true, &mut io)
+        .unwrap();
+
+    // Tab 3 is dragged out: the platform now reports 1 with only 2 behind it.
+    io.frames
+        .insert(WindowId(3), Rect::new(700.0, 300.0, 600.0, 400.0));
+    let everyone = [WindowId(1), WindowId(2), WindowId(3), WindowId(4)];
+    session.update_tabs(&[group(1, &[2])], &everyone);
+    assert!(!session.is_hidden_tab(WindowId(3)));
+    assert_eq!(workspace_of(&session, 3), "two");
+
+    io.moves.clear();
+    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    assert_eq!(io.moves, [WindowId(4), WindowId(1), WindowId(3)]);
+    assert!(
+        io.origin(3).x > 1400.0,
+        "the torn-out tab parks with workspace two"
+    );
+}
+
+#[test]
+fn a_tab_group_counts_once_and_is_never_focused_through_a_hidden_tab() {
+    let mut io = FakeIo::default();
+    let mut session = tabbed_session(&mut io);
+    session.note_focus(WindowId(4));
+    session.note_focus(WindowId(2));
+
+    assert_eq!(session.window_count("one"), 2);
+    assert_eq!(session.focus_recent(&mut io), Some(WindowId(1)));
+    assert_eq!(io.focused, Some(WindowId(1)));
+}
+
+#[test]
+fn a_hidden_tab_is_never_contained_or_returned_on_its_own() {
+    let mut io = FakeIo::default();
+    let mut session = tabbed_session(&mut io);
+    session.send(WindowId(1), "two", &[DISPLAY], &mut io).unwrap();
+    io.moves.clear();
+
+    assert_eq!(session.contain(WindowId(2), &[DISPLAY], &mut io), Ok(false));
+    assert!(session.restore_all(&[AREA], &mut io));
+    assert_eq!(io.moves, [WindowId(1)]);
+    assert_eq!(session.member(WindowId(2)).unwrap().parked, None);
+}

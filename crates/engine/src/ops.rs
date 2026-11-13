@@ -443,7 +443,7 @@ fn level_of(failed: bool) -> Level {
 }
 
 /// Settle steps for the debug log: stage, frame, and elapsed milliseconds.
-fn debug_steps(steps: &[snappy_core::bounds::BoundsStep]) -> serde_json::Value {
+pub(crate) fn debug_steps(steps: &[snappy_core::bounds::BoundsStep]) -> serde_json::Value {
     steps
         .iter()
         .map(|step| serde_json::json!([step.stage, step.frame, (step.elapsed_ms * 10.0).round() / 10.0]))

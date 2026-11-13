@@ -13,16 +13,19 @@ It runs as a small background program with a menu bar item (a notification-area 
   | Snappy + | Does |
   |---|---|
   | ← → ↑ ↓ | Move the focused window to the neighboring zone |
-  | Space | Move it into the nearest empty zone |
-  | 1 to 9 | Switch to workspace 1 to 9 |
-  | `;` `'` | Go to the previous or next workspace |
-  | `.` `/` | Send the focused window to the previous or next workspace, and stay |
-  | Return | Take the focused window along to the next workspace you switch to |
+  | I J K L | Focus the next window up, left, down, or right |
+  | Return | Select the focused window, or unselect it |
+  | `\` | Clear the selection |
+  | Space | Move the focused window into the nearest empty zone; with a selection, move the selected windows into empty zones |
+  | 1 to 9 | Switch to workspace 1 to 9, taking the selection along |
+  | `;` `'` | Go to the previous or next workspace, taking the selection along |
+  | `.` `/` | Send the focused window, or the selection, to the previous or next workspace, and stay |
 
   Anything else is a shortcut you assign: each zone, each layout (applied to the display under the pointer), sending to a particular workspace, and undo and redo of window moves. You can change or clear any shortcut.
+- **Keyboard focus.** Snappy + I, J, K, or L focuses and raises the next window in that direction, on any display, and outlines it in orange for a moment so you can see where focus went. While any window is in a zone, focus moves from zone to zone the way the arrows move a window, skipping empty zones and windows that aren't in a zone; of several windows in one zone, the one used last gets focus. With no window in a zone, focus goes to the nearest window.
 - **Swaps.** A window moved into a zone another window fills, by shortcut or by drag, trades places with it. A swap trades zones: when the moving window isn't in a zone, the other window goes to the zone under the moving window's center, and takes its exact spot only when that zone can't take it. The "When the zone is taken" setting can make it stack on top instead, and holding the extra key (Command on macOS, Ctrl elsewhere) during a drag does the opposite of the setting for that drop.
-- **Workspaces.** Groups of windows, one visible at a time. Switching hides the other groups' windows and brings the chosen group back exactly where it was. Each workspace can use its own layouts, and windows survive a crash or restart.
-- **Take along.** Snappy + Return picks up the focused window, and an outline shows it is picked up; pick up as many as you like. The next workspace switch, however you make it, brings them all along, where they are, and the last one picked up gets focus. Pressing Snappy + Return on a picked-up window puts it down.
+- **Workspaces.** Groups of windows, one visible at a time. Switching hides the other groups' windows and brings the chosen group back exactly where it was. Each workspace can use its own layouts. When Snappy restarts while your apps keep running, after an update or a crash, every window stays in its workspace and nothing moves; quitting brings hidden windows back.
+- **Selection.** Snappy + Return selects the focused window, and a mint outline shows it is selected; select as many as you like, with or without workspaces. Snappy + Space puts the selected windows that aren't in a zone into empty zones, on the display under the pointer first, pairing windows and zones so they travel least, as one step of undo. The next workspace switch, however you make it, brings the selection along, where it is, and the last window selected gets focus; Snappy + `.` and `/` send the whole selection away instead. Snappy + Return on a selected window unselects it, and Snappy + `\` clears the selection.
 - **Layout editor.** Draw, cut, move, and resize zones on a canvas shaped like your display, with snapping guides, pixel-exact coordinate fields, and undo.
 - **Debug log.** An opt-in record of what Snappy saw, decided, and did, for finding out why a window or shortcut didn't behave as expected.
 
@@ -67,6 +70,16 @@ open /Applications/Snappy.app
 ```
 
 Allow Snappy in System Settings → Privacy & Security → Accessibility when asked. Snapping starts as soon as access is granted.
+
+To install a newer build over a running Snappy without bringing every workspace's windows onto the screen, stop it for a restart first:
+
+```sh
+pkill -USR2 -x snappy; while pgrep -x snappy >/dev/null; do sleep 0.2; done
+ditto dist/Snappy.app /Applications/Snappy.app
+open -g /Applications/Snappy.app --args --background
+```
+
+This also works the first time, over a Snappy too old to know the request: `SIGUSR2` ends it at once without bringing windows back, and the new build reads the windows it left hidden. Linux and Windows have the same: see [development.md](docs/development.md#installing-a-new-build-without-losing-workspaces).
 
 ### Linux
 

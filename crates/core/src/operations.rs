@@ -177,6 +177,77 @@ pub async fn snap(
     }
 }
 
+/// One window of a group snap and where it goes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GroupMove {
+    pub window: WindowId,
+    pub frame: Rect,
+    pub work_area: Rect,
+}
+
+/// Snap each window to its frame in turn, as one step of history: undo returns every
+/// window that moved. A window that fails goes back where it was and the others still
+/// move; a cancellation stops, keeping a way back for windows that already moved. Returns
+/// each window's outcome in order.
+pub async fn snap_group(
+    ops: &mut impl WindowOps,
+    history: &mut UndoHistory,
+    moves: &[GroupMove],
+    cancel: &CancelToken,
+) -> Vec<Result<Placement, WindowError>> {
+    let mut undo_to = Vec::new();
+    let mut outcomes = Vec::new();
+    for planned in moves {
+        let outcome = snap_one(ops, planned, cancel, &mut undo_to).await;
+        outcomes.push(outcome);
+    }
+    if !undo_to.is_empty() {
+        history.record(undo_to);
+    }
+    outcomes
+}
+
+async fn snap_one(
+    ops: &mut impl WindowOps,
+    planned: &GroupMove,
+    cancel: &CancelToken,
+    undo_to: &mut Vec<Move>,
+) -> Result<Placement, WindowError> {
+    cancel.check()?;
+    if !planned.frame.is_usable(1.0) {
+        return Err(WindowError::InvalidFrame);
+    }
+    let window = planned.window;
+    let before = ops.read(window)?;
+    let way_back = Move {
+        window,
+        original: before,
+        work_area: None,
+    };
+    match ops
+        .settle(window, planned.frame, Some(planned.work_area), cancel)
+        .await
+    {
+        Ok(actual) => {
+            undo_to.push(way_back);
+            Ok(Placement {
+                requested: planned.frame,
+                actual,
+            })
+        }
+        Err(WindowError::Cancelled) => {
+            if ops.read(window).is_ok_and(|now| now != before) {
+                undo_to.push(way_back);
+            }
+            Err(WindowError::Cancelled)
+        }
+        Err(error) => {
+            let _ = ops.settle(window, before, None, &CancelToken::default()).await;
+            Err(error)
+        }
+    }
+}
+
 /// Exchange `dragged` (which started at `original` in `source`) with `occupant` in
 /// `destination`. `protected` names windows recovery must not touch.
 pub async fn swap(
@@ -335,8 +406,8 @@ async fn replay(
         let restored = match ops.settle(m.window, m.original, m.work_area, cancel).await {
             Ok(frame) if near(frame, m.original) => Ok(()),
             Ok(_) => Err(WindowError::refused(match which {
-                Replay::Undo => "An app could not restore the swap. Undo is available to retry.",
-                Replay::Redo => "An app could not redo the swap. Redo is available to retry.",
+                Replay::Undo => "An app could not restore its window. Undo is available to retry.",
+                Replay::Redo => "An app could not move its window again. Redo is available to retry.",
             })),
             Err(error) => Err(error),
         };
@@ -500,6 +571,64 @@ mod tests {
         .unwrap();
         assert_eq!(ops.frame(1), LEFT);
         block_on(undo(&mut ops, &mut history, &cancel, &unprotected)).unwrap();
+        assert_eq!(ops.frame(1), start);
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn a_group_snap_is_one_undo_step_for_every_window_it_moved() {
+        let first = Rect::new(300.0, 200.0, 500.0, 400.0);
+        let second = Rect::new(500.0, 300.0, 400.0, 300.0);
+        let refusing = Rect::new(100.0, 100.0, 300.0, 300.0);
+        let mut ops = FakeOps::new(&[(1, first), (2, second), (3, refusing)]);
+        ops.failing.insert(WindowId(3));
+        let mut history = UndoHistory::default();
+        let cancel = CancelToken::default();
+        let moves = [
+            GroupMove {
+                window: WindowId(1),
+                frame: LEFT,
+                work_area: AREA,
+            },
+            GroupMove {
+                window: WindowId(3),
+                frame: LEFT,
+                work_area: AREA,
+            },
+            GroupMove {
+                window: WindowId(2),
+                frame: RIGHT,
+                work_area: AREA,
+            },
+        ];
+        let outcomes = block_on(snap_group(&mut ops, &mut history, &moves, &cancel));
+        assert!(outcomes[0].is_ok() && outcomes[1].is_err() && outcomes[2].is_ok());
+        assert_eq!(
+            (ops.frame(1), ops.frame(2), ops.frame(3)),
+            (LEFT, RIGHT, refusing)
+        );
+        assert_eq!(history.len(), 1);
+        assert_eq!(history.next_windows(Replay::Undo), [WindowId(1), WindowId(2)]);
+
+        block_on(undo(&mut ops, &mut history, &cancel, &unprotected)).unwrap();
+        assert_eq!((ops.frame(1), ops.frame(2)), (first, second));
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn a_cancelled_group_snap_moves_no_more_windows() {
+        let start = Rect::new(300.0, 200.0, 500.0, 400.0);
+        let mut ops = FakeOps::new(&[(1, start)]);
+        let mut history = UndoHistory::default();
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        let moves = [GroupMove {
+            window: WindowId(1),
+            frame: LEFT,
+            work_area: AREA,
+        }];
+        let outcomes = block_on(snap_group(&mut ops, &mut history, &moves, &cancel));
+        assert_eq!(outcomes, [Err(WindowError::Cancelled)]);
         assert_eq!(ops.frame(1), start);
         assert!(history.is_empty());
     }

@@ -3,12 +3,14 @@
 //! Rectangles are relative to the overlay's top-left corner, which is the work area's.
 
 use snappy_core::geometry::{Point, Rect};
-use snappy_platform::OverlayZone;
+use snappy_platform::{MarkStyle, OverlayZone};
 
 /// Linux overlays use the documented default accent, not a system one: X11 has none to
 /// read, and GNOME 46 has none either.
 pub const ACCENT: Rgb = Rgb(0x00, 0x7A, 0xFF);
 pub const MINT: Rgb = Rgb(0x00, 0xC7, 0xBE);
+/// macOS's system orange.
+pub const ORANGE: Rgb = Rgb(0xFF, 0x9F, 0x0A);
 pub const WHITE: Rgb = Rgb(0xFF, 0xFF, 0xFF);
 pub const BLACK: Rgb = Rgb(0x00, 0x00, 0x00);
 
@@ -64,11 +66,24 @@ pub fn zone_style(zone: &OverlayZone) -> ZoneStyle {
     }
 }
 
-/// A marked window's outline: the swap source's border, drawn inside the window's frame.
+/// A selected window's outline: the swap source's border, drawn inside the window's frame.
 pub const MARK_BORDER: Paint = Paint {
     color: MINT,
     alpha: 1.0,
 };
+/// The brief outline of a window a focus shortcut just focused, in a color of its own so
+/// it never reads as selected.
+pub const FOCUS_BORDER: Paint = Paint {
+    color: ORANGE,
+    alpha: 1.0,
+};
+
+pub fn mark_border(style: MarkStyle) -> Paint {
+    match style {
+        MarkStyle::Selected => MARK_BORDER,
+        MarkStyle::Focused => FOCUS_BORDER,
+    }
+}
 pub const MARK_BORDER_WIDTH: f64 = 3.0;
 /// Close to the corners of the desktops' own windows.
 pub const MARK_CORNER_RADIUS: f64 = 10.0;
@@ -227,12 +242,14 @@ mod tests {
     }
 
     #[test]
-    fn a_marked_window_is_outlined_like_the_swap_source_inside_its_frame() {
+    fn a_selected_window_is_outlined_like_the_swap_source_inside_its_frame() {
         let source = zone_style(&OverlayZone {
             swap_source: true,
             ..zone()
         });
-        assert_eq!(MARK_BORDER, source.border);
+        assert_eq!(mark_border(MarkStyle::Selected), source.border);
+        assert_ne!(mark_border(MarkStyle::Focused).color, MINT);
+        assert_ne!(mark_border(MarkStyle::Focused).color, ACCENT);
         assert_eq!(MARK_BORDER_WIDTH, source.border_width);
         let mark = place_mark(
             Rect::new(300.0, 200.0, 600.0, 400.0),

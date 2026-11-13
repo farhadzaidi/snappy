@@ -29,6 +29,15 @@ pub struct JournalEntry {
     pub prior_parked: Option<Point>,
 }
 
+/// The tabs of one window, where the app makes each tab a window of its own and shows only
+/// the selected one, as macOS does. A group moves, hides, and changes workspace as one
+/// window: its shown tab. The hidden tabs keep stale frames and never move themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tabs {
+    pub shown: WindowId,
+    pub hidden: Vec<WindowId>,
+}
+
 /// What a session needs from the platform and the store.
 pub trait WorkspaceIo {
     fn frame(&mut self, window: WindowId) -> Result<Rect, WindowError>;
@@ -56,6 +65,8 @@ pub struct Session {
     policy: ParkingPolicy,
     /// Work areas after a display change; incoming windows are kept reachable inside them.
     work_areas: Option<Vec<Rect>>,
+    /// Members hidden as tabs, and the shown tab each sits behind.
+    tabs: BTreeMap<WindowId, WindowId>,
 }
 
 type Members = BTreeMap<WindowId, Member>;
@@ -69,6 +80,7 @@ impl Session {
             recent: Vec::new(),
             policy,
             work_areas: None,
+            tabs: BTreeMap::new(),
         }
     }
 
@@ -84,10 +96,11 @@ impl Session {
         self.members.get(&window)
     }
 
+    /// Windows in `workspace`, counting a tab group once.
     pub fn window_count(&self, workspace: &str) -> usize {
         self.members
-            .values()
-            .filter(|member| member.workspace == workspace)
+            .iter()
+            .filter(|(window, member)| member.workspace == workspace && !self.is_hidden_tab(**window))
             .count()
     }
 
@@ -107,6 +120,86 @@ impl Session {
         self.members.remove(&window);
         self.last_focused.retain(|_, focused| *focused != window);
         self.recent.retain(|focused| *focused != window);
+        self.tabs
+            .retain(|hidden, shown| *hidden != window && *shown != window);
+    }
+
+    /// Whether `window` is a tab hidden behind another member.
+    pub fn is_hidden_tab(&self, window: WindowId) -> bool {
+        self.tabs.contains_key(&window)
+    }
+
+    /// The window that stands for `window`'s tab group: the shown tab it sits behind, else
+    /// `window` itself.
+    pub fn tab_root(&self, window: WindowId) -> WindowId {
+        self.tabs.get(&window).copied().unwrap_or(window)
+    }
+
+    /// The members hidden as tabs behind `shown`.
+    pub fn tabs_behind(&self, shown: WindowId) -> Vec<WindowId> {
+        self.tabs
+            .iter()
+            .filter(|(_, lead)| **lead == shown)
+            .map(|(hidden, _)| *hidden)
+            .collect()
+    }
+
+    /// Replace what is known about the tab groups of the `refreshed` members with
+    /// `groups`, then put every hidden tab where its shown tab is: in its workspace, with
+    /// its frame and parking, so a group never spans workspaces. Returns the hidden tabs
+    /// that changed workspace.
+    pub fn update_tabs(&mut self, groups: &[Tabs], refreshed: &[WindowId]) -> Vec<WindowId> {
+        self.tabs
+            .retain(|hidden, shown| !refreshed.contains(hidden) && !refreshed.contains(shown));
+        for group in groups {
+            if !self.members.contains_key(&group.shown) {
+                continue;
+            }
+            self.tabs.remove(&group.shown);
+            for hidden in &group.hidden {
+                if *hidden != group.shown && self.members.contains_key(hidden) {
+                    self.tabs.insert(*hidden, group.shown);
+                }
+            }
+        }
+
+        let mut moved = Vec::new();
+        for (hidden, shown) in self.tabs.clone() {
+            let Some(lead) = self.members.get(&shown).cloned() else {
+                continue;
+            };
+            if let Some(member) = self.members.get_mut(&hidden)
+                && *member != lead
+            {
+                if member.workspace != lead.workspace {
+                    moved.push(hidden);
+                }
+                *member = lead;
+            }
+        }
+        self.forget_focus_elsewhere();
+        moved
+    }
+
+    /// Give every hidden tab in `next` its shown tab's place.
+    fn follow_tabs(&self, next: &mut Members) {
+        for (hidden, shown) in &self.tabs {
+            if let Some(lead) = next.get(shown).cloned()
+                && next.contains_key(hidden)
+            {
+                next.insert(*hidden, lead);
+            }
+        }
+    }
+
+    /// A workspace's last focused window must still belong to it.
+    fn forget_focus_elsewhere(&mut self) {
+        let members = &self.members;
+        self.last_focused.retain(|workspace, window| {
+            members
+                .get(window)
+                .is_some_and(|member| member.workspace == *workspace)
+        });
     }
 
     pub fn note_focus(&mut self, window: WindowId) {
@@ -117,6 +210,11 @@ impl Session {
         }
     }
 
+    /// Member windows in the order they were last focused, the most recent first.
+    pub fn recently_focused(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.recent.iter().rev().copied()
+    }
+
     /// Focus the active workspace's most recently focused window that can take focus,
     /// which is its frontmost, else its first one that can. Returns the window focused, or
     /// `None` when the workspace has none left.
@@ -125,7 +223,7 @@ impl Session {
             .recent
             .iter()
             .rev()
-            .copied()
+            .map(|window| self.tab_root(*window))
             .find(|window| self.can_focus(*window, io));
         let window = recent.or_else(|| {
             self.members
@@ -143,6 +241,7 @@ impl Session {
         for (window, member) in self.members.iter_mut() {
             if member.workspace == self.active
                 && member.parked.is_none()
+                && !self.tabs.contains_key(window)
                 && let Ok(frame) = io.frame(*window)
             {
                 member.frame = frame;
@@ -152,7 +251,7 @@ impl Session {
 
     /// The parked windows, for writing the journal.
     pub fn journal(&self) -> Vec<JournalEntry> {
-        journal_of(&self.members, &BTreeMap::new())
+        journal_of(&self.members, &self.tabs, &BTreeMap::new())
     }
 
     /// Show `target` and park the active workspace. Returns whether
@@ -169,7 +268,7 @@ impl Session {
 
     /// Like `switch_to`, except that the active workspace's visible `carried` windows join
     /// `target` where they are instead of being parked, and the last of them that can take
-    /// focus gets it.
+    /// focus gets it. A carried tab carries its whole group.
     pub fn switch_carrying(
         &mut self,
         target: &str,
@@ -181,9 +280,20 @@ impl Session {
         if target == self.active {
             return Ok(true);
         }
+        let mut roots: Vec<WindowId> = Vec::new();
+        for window in carried {
+            let root = self.tab_root(*window);
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        let carried = roots.as_slice();
         let mut next = self.members.clone();
         let mut arriving = Vec::new();
         for (window, member) in next.iter_mut() {
+            if self.tabs.contains_key(window) {
+                continue;
+            }
             if member.workspace == self.active && member.parked.is_none() && carried.contains(window) {
                 member.workspace = target.to_owned();
                 member.frame = io.frame(*window)?;
@@ -212,15 +322,10 @@ impl Session {
             }
         }
 
+        self.follow_tabs(&mut next);
         self.transition(next, &BTreeSet::new(), io)?;
-        let previous = std::mem::replace(&mut self.active, target.to_owned());
-        if self
-            .last_focused
-            .get(&previous)
-            .is_some_and(|window| arriving.contains(window))
-        {
-            self.last_focused.remove(&previous);
-        }
+        self.active = target.to_owned();
+        self.forget_focus_elsewhere();
         if !focus_incoming {
             return Ok(true);
         }
@@ -239,7 +344,7 @@ impl Session {
         }
     }
 
-    /// Move a window to another workspace without switching.
+    /// Move a window to another workspace without switching. A tab moves its whole group.
     pub fn send(
         &mut self,
         window: WindowId,
@@ -247,6 +352,7 @@ impl Session {
         displays: &[Rect],
         io: &mut impl WorkspaceIo,
     ) -> Result<(), WindowError> {
+        let window = self.tab_root(window);
         let Some(mut member) = self.members.get(&window).cloned() else {
             return Ok(());
         };
@@ -258,7 +364,7 @@ impl Session {
         if member.workspace == self.active && member.parked.is_none() {
             member.frame = io.frame(window)?;
         }
-        let from = std::mem::replace(&mut member.workspace, to.to_owned());
+        member.workspace = to.to_owned();
         if to == self.active {
             member.parked = None;
             if let Some(areas) = &self.work_areas {
@@ -272,10 +378,9 @@ impl Session {
 
         let mut next = self.members.clone();
         next.insert(window, member);
+        self.follow_tabs(&mut next);
         self.transition(next, &BTreeSet::new(), io)?;
-        if from != to && self.last_focused.get(&from) == Some(&window) {
-            self.last_focused.remove(&from);
-        }
+        self.forget_focus_elsewhere();
         Ok(())
     }
 
@@ -290,6 +395,10 @@ impl Session {
         let Some(member) = self.members.get(&window) else {
             return Ok(false);
         };
+        // A hidden tab isn't on screen; its group comes back through its shown tab.
+        if self.tabs.contains_key(&window) {
+            return Ok(false);
+        }
         if member.workspace == self.active || member.parked.is_none() || !io.is_movable(window) {
             return Ok(false);
         }
@@ -303,7 +412,7 @@ impl Session {
         if let Some(member) = next.get_mut(&window) {
             member.parked = Some(origin);
         }
-        io.write_journal(&journal_of(&next, &BTreeMap::new()))?;
+        io.write_journal(&journal_of(&next, &self.tabs, &BTreeMap::new()))?;
         io.place(window, origin, true)?;
         if !(lands_at(io.frame(window)?, origin) && self.hidden_as(window, true, io)) {
             return Err(WindowError::refused(
@@ -316,6 +425,10 @@ impl Session {
 
     /// Stop tracking a window, returning it to view first.
     pub fn release(&mut self, window: WindowId, io: &mut impl WorkspaceIo) -> Result<(), WindowError> {
+        if self.tabs.contains_key(&window) {
+            self.discard(window);
+            return io.write_journal(&self.journal());
+        }
         let mut next = self.members.clone();
         if let Some(member) = next.get_mut(&window) {
             member.parked = None;
@@ -343,7 +456,7 @@ impl Session {
         for (window, member) in next.iter_mut() {
             if member.workspace == id {
                 member.workspace = destination.to_owned();
-                if member.parked.is_none() {
+                if member.parked.is_none() && !self.tabs.contains_key(window) {
                     member.frame = io.frame(*window)?;
                 }
             }
@@ -351,6 +464,7 @@ impl Session {
                 member.parked = None;
             }
         }
+        self.follow_tabs(&mut next);
         self.transition(next, &BTreeSet::new(), io)?;
         self.active = new_active;
         self.last_focused.remove(id);
@@ -373,6 +487,9 @@ impl Session {
         let mut next = self.members.clone();
         let mut forced = BTreeSet::new();
         for (window, member) in next.iter_mut() {
+            if self.tabs.contains_key(window) {
+                continue;
+            }
             if !io.is_movable(*window) {
                 return Err(WindowError::unavailable(
                     "A window is busy during the display change. Close its dialog or leave full screen, then retry.",
@@ -404,6 +521,7 @@ impl Session {
             }
         }
 
+        self.follow_tabs(&mut next);
         self.transition(next, &forced, io)?;
         self.work_areas = Some(areas.to_vec());
         Ok(())
@@ -416,7 +534,7 @@ impl Session {
         let parked: Vec<WindowId> = self
             .members
             .iter()
-            .filter(|(_, member)| member.parked.is_some())
+            .filter(|(window, member)| member.parked.is_some() && !self.tabs.contains_key(window))
             .map(|(window, _)| *window)
             .collect();
         for window in parked {
@@ -424,6 +542,12 @@ impl Session {
             match self.members.get_mut(&window) {
                 Some(member) if return_to(self.policy, window, origin, io) => member.parked = None,
                 _ => all_back = false,
+            }
+        }
+        for (hidden, shown) in &self.tabs {
+            let back = self.members.get(shown).is_some_and(|lead| lead.parked.is_none());
+            if let (true, Some(member)) = (back, self.members.get_mut(hidden)) {
+                member.parked = None;
             }
         }
         io.write_journal(&self.journal()).is_ok() && all_back
@@ -444,7 +568,7 @@ impl Session {
         let remembered = self
             .last_focused
             .get(&self.active)
-            .copied()
+            .map(|window| self.tab_root(*window))
             .filter(|window| self.can_focus(*window, io));
         let candidate = remembered.or_else(|| {
             self.members
@@ -459,10 +583,12 @@ impl Session {
     }
 
     fn can_focus(&self, window: WindowId, io: &mut impl WorkspaceIo) -> bool {
-        let visible_here = self
-            .members
-            .get(&window)
-            .is_some_and(|member| member.workspace == self.active && member.parked.is_none());
+        // Focusing a hidden tab would make its app show that tab instead.
+        let visible_here = !self.tabs.contains_key(&window)
+            && self
+                .members
+                .get(&window)
+                .is_some_and(|member| member.workspace == self.active && member.parked.is_none());
         visible_here && io.is_movable(window) && !io.is_minimized(window)
     }
 
@@ -477,11 +603,14 @@ impl Session {
         let moving: Vec<WindowId> = next
             .iter()
             .filter(|(window, after)| {
-                forced.contains(window)
+                let changed = forced.contains(window)
                     || self
                         .members
                         .get(window)
-                        .is_some_and(|before| before.parked != after.parked)
+                        .is_some_and(|before| before.parked != after.parked);
+                // A hidden tab moves with its shown tab; moving it alone would do nothing
+                // on screen until its app shows it.
+                changed && !self.tabs.contains_key(window)
             })
             .map(|(window, _)| *window)
             .collect();
@@ -505,7 +634,7 @@ impl Session {
                 recovery.insert(*window, before.clone());
             }
         }
-        io.write_journal(&journal_of(&recovery, &prior))?;
+        io.write_journal(&journal_of(&recovery, &self.tabs, &prior))?;
 
         let policy = self.policy;
         let mut order = moving;
@@ -535,7 +664,7 @@ impl Session {
             }
         });
 
-        match outcome.and_then(|()| io.write_journal(&journal_of(&next, &BTreeMap::new()))) {
+        match outcome.and_then(|()| io.write_journal(&journal_of(&next, &self.tabs, &BTreeMap::new()))) {
             Ok(()) => {
                 self.members = next;
                 Ok(())
@@ -585,9 +714,16 @@ fn lands_at(frame: Rect, origin: Point) -> bool {
     (frame.x - origin.x).abs() < MOVE_TOLERANCE && (frame.y - origin.y).abs() < MOVE_TOLERANCE
 }
 
-fn journal_of(members: &Members, prior: &BTreeMap<WindowId, Point>) -> Vec<JournalEntry> {
+/// Parked windows to journal. Hidden tabs come back with their shown tab, so only the
+/// shown one is journaled.
+fn journal_of(
+    members: &Members,
+    tabs: &BTreeMap<WindowId, WindowId>,
+    prior: &BTreeMap<WindowId, Point>,
+) -> Vec<JournalEntry> {
     members
         .iter()
+        .filter(|(window, _)| !tabs.contains_key(window))
         .filter_map(|(window, member)| {
             member.parked.map(|parked| JournalEntry {
                 window: *window,

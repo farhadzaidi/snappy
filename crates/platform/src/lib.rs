@@ -25,7 +25,9 @@ pub struct Display {
     pub scale: f64,
 }
 
-/// Identifies a window across a daemon restart while its app keeps running.
+/// Identifies a window across a daemon restart while its app keeps running: the process ID
+/// and the process's start time, which together never name another process, and a token
+/// for the window that stays the same while the window exists.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoveryKey {
@@ -35,8 +37,14 @@ pub struct RecoveryKey {
 }
 
 impl RecoveryKey {
+    /// The same process; a reused process ID with another start time is not.
     pub fn same_process(&self, other: &RecoveryKey) -> bool {
         self.pid == other.pid && (self.launch_time - other.launch_time).abs() < 0.001
+    }
+
+    /// The same window of the same process.
+    pub fn same_window(&self, other: &RecoveryKey) -> bool {
+        self.same_process(other) && self.window == other.window
     }
 }
 
@@ -68,6 +76,17 @@ impl WindowState {
     }
 }
 
+/// One window's native tabs, where the platform makes each tab a window of its own and
+/// shows only the selected one, as macOS does. Moving the shown tab moves the group.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabGroup {
+    /// The selected tab, the only one on screen.
+    pub shown: WindowInfo,
+    /// Other tabs of the group that the platform has seen. Their frames are stale until
+    /// they show, and moving one changes nothing on screen.
+    pub hidden: Vec<WindowId>,
+}
+
 pub trait WindowSystem {
     fn displays(&mut self) -> Vec<Display>;
     /// The managed window under `point`; errors explain why there is none.
@@ -85,6 +104,12 @@ pub trait WindowSystem {
     fn all_windows(&mut self) -> Vec<WindowInfo>;
     /// Windows filling any of `frames`, for a swap drop.
     fn windows_occupying(&mut self, frames: &[Rect]) -> Result<Vec<WindowInfo>, WindowError>;
+    /// The tab groups, with at least one hidden tab, of the apps that own `windows`. Hidden
+    /// tabs are never among the visible windows or the ones filling zones. Platforms whose
+    /// tabs live inside one window report none.
+    fn tab_groups(&mut self, _windows: &[WindowId]) -> Vec<TabGroup> {
+        Vec::new()
+    }
     fn focus(&mut self, window: WindowId);
     /// Prepare an app for a bounds change and undo it afterwards, for apps that block
     /// bounds changes in some mode, such as Chrome with enhanced accessibility on macOS.
@@ -157,14 +182,28 @@ impl Caption {
     }
 }
 
-/// Windows outlined on one display apart from its zones, such as the windows being taken
-/// along to another workspace. Each is drawn as the swap source's outline is, inside its
-/// frame, whether or not zones show.
+/// Windows outlined on one display apart from its zones, such as the selected windows.
+/// Each is outlined inside its frame, whether or not zones show.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OverlayMarks {
     pub work_area: Rect,
-    /// Window frames. Parts outside the work area aren't drawn.
-    pub frames: Vec<Rect>,
+    pub windows: Vec<MarkedWindow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarkedWindow {
+    /// Parts outside the work area aren't drawn.
+    pub frame: Rect,
+    pub style: MarkStyle,
+}
+
+/// How a marked window is outlined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkStyle {
+    /// In the selection: the swap source's mint border.
+    Selected,
+    /// Just focused by a focus shortcut: a border in a color of its own, shown briefly.
+    Focused,
 }
 
 pub trait Overlay {
@@ -359,7 +398,12 @@ pub enum PlatformEvent {
     /// A second launch, a reopen, or the menu's "Open Snappy…".
     OpenSettingsRequested,
     Tray(TrayCommand),
+    /// The menu's Quit, a termination signal, or the session ending: parked windows come
+    /// back before the daemon exits.
     QuitRequested,
+    /// Stop so that a new daemon can take over, as when installing a new build: every
+    /// window stays where it is, parked ones included, for the next launch to pick up.
+    RestartRequested,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -367,4 +411,32 @@ pub enum TrayCommand {
     ManageWorkspaces,
     SelectLayout { display: String, layout: String },
     SwitchWorkspace(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(pid: u32, launch_time: f64, window: &str) -> RecoveryKey {
+        RecoveryKey {
+            pid,
+            launch_time,
+            window: window.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_window_is_the_same_only_within_the_same_process_start() {
+        let original = key(100, 1_700_000_000.25, "42");
+        assert!(original.same_window(&key(100, 1_700_000_000.25, "42")));
+        assert!(
+            !original.same_window(&key(100, 1_700_000_000.25, "43")),
+            "another window"
+        );
+        assert!(
+            !original.same_window(&key(100, 1_700_000_100.0, "42")),
+            "the process ID taken by a later process"
+        );
+        assert!(!original.same_window(&key(101, 1_700_000_000.25, "42")));
+    }
 }

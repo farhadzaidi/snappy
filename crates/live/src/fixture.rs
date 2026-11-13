@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use snappy_core::geometry::{Rect, Size};
+use snappy_core::geometry::{Point, Rect, Size};
 
 use crate::protocol::{Reply, Request};
 
@@ -194,6 +194,22 @@ impl Fixture {
             on,
         })
         .map(drop)
+    }
+
+    /// Open `id` as a new tab of `into`; returns the group's frame.
+    pub fn tab(&mut self, id: &str, into: &str) -> Result<Rect, String> {
+        self.framed(&Request::Tab {
+            id: id.to_owned(),
+            into: into.to_owned(),
+        })
+    }
+
+    /// Move tab `id` into a window of its own at `at`; returns its new frame.
+    pub fn tear_out(&mut self, id: &str, at: Point) -> Result<Rect, String> {
+        self.framed(&Request::TearOut {
+            id: id.to_owned(),
+            at,
+        })
     }
 
     pub fn close(&mut self, id: &str) -> Result<(), String> {

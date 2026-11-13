@@ -130,7 +130,7 @@ fn managed_apps() -> impl Iterator<Item = App> {
 }
 
 /// An app's windows, each set to answer within `timeout`. Unresponsive apps list none.
-fn app_windows(application: &AxElement, timeout: f32) -> Vec<AxElement> {
+pub(super) fn app_windows(application: &AxElement, timeout: f32) -> Vec<AxElement> {
     let windows = application.elements_attribute(names::WINDOWS).unwrap_or_default();
     for window in &windows {
         window.set_timeout(timeout);
@@ -138,7 +138,7 @@ fn app_windows(application: &AxElement, timeout: f32) -> Vec<AxElement> {
     windows
 }
 
-fn is_minimized(window: &AxElement) -> bool {
+pub(super) fn is_minimized(window: &AxElement) -> bool {
     window.bool_attribute(names::MINIMIZED).unwrap_or(false)
 }
 

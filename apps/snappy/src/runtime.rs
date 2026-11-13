@@ -34,7 +34,10 @@ pub fn run_engine<P: Platform + 'static>(
         }
 
         while let Some(input) = incoming.recv().await {
-            let quit = input == Input::Platform(PlatformEvent::QuitRequested);
+            let quit = matches!(
+                input,
+                Input::Platform(PlatformEvent::QuitRequested | PlatformEvent::RestartRequested)
+            );
             if input == Input::Platform(PlatformEvent::OpenSettingsRequested)
                 && let Err(error) = settings_app.open()
             {

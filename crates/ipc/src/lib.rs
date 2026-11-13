@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use snappy_core::keys::KeyChord;
 use snappy_core::layout::Layout;
 use snappy_core::navigate::Direction;
-use snappy_core::settings::{DragModifier, HistoryStep, LayoutOptions, Settings, Workspace, WorkspaceStep};
+use snappy_core::settings::{
+    DragModifier, FocusShortcut, HistoryStep, LayoutOptions, Settings, Workspace, WorkspaceStep,
+};
 use snappy_core::swap::{SwapModifier, WhenTaken};
 use snappy_platform::{Display, Remedy};
 use thiserror::Error;
@@ -73,6 +75,11 @@ pub enum Command {
     },
     /// The shortcut that moves the focused window into the nearest empty zone.
     SetNearestEmptyShortcut {
+        chord: Option<KeyChord>,
+    },
+    /// A shortcut that moves focus between windows or changes the selection.
+    SetFocusShortcut {
+        shortcut: FocusShortcut,
         chord: Option<KeyChord>,
     },
     ApplyLayout {

@@ -171,9 +171,10 @@ impl Windows {
     }
 
     pub fn all_windows(&self) -> Vec<WindowInfo> {
+        let desktop = self.current_desktop();
         self.all_records()
             .iter()
-            .filter(|record| record.facts.check().is_ok())
+            .filter(|record| record.check(desktop).is_ok())
             .map(|record| self.info(record))
             .collect()
     }

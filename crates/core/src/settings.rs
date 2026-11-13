@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::bindings;
-use crate::keys::{KeyChord, Modifier, Platform};
+use crate::keys::{Combo, KeyChord, Modifier, Platform, chords_the_system_keeps};
 use crate::layout::{self, DEFAULT_LAYOUT_ID, FALLBACK_LAYOUT_ID, Layout, valid_id, valid_name};
 use crate::navigate::Direction;
 use crate::swap::{SwapModifier, WhenTaken};
@@ -71,7 +71,8 @@ impl DragModifier {
     }
 }
 
-/// Move-between-zones shortcuts.
+/// Shortcuts for getting around: moving the focused window between zones, moving focus
+/// between windows, and selecting windows.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Navigation {
@@ -79,9 +80,71 @@ pub struct Navigation {
     pub right: Option<KeyChord>,
     pub up: Option<KeyChord>,
     pub down: Option<KeyChord>,
-    /// Move the focused window into the nearest empty zone.
+    /// Move the focused window into the nearest empty zone, or the selection into empty
+    /// zones.
     #[serde(default)]
     pub nearest_empty: Option<KeyChord>,
+    #[serde(default)]
+    pub focus_left: Option<KeyChord>,
+    #[serde(default)]
+    pub focus_right: Option<KeyChord>,
+    #[serde(default)]
+    pub focus_up: Option<KeyChord>,
+    #[serde(default)]
+    pub focus_down: Option<KeyChord>,
+    /// Add the focused window to the selection, or take it out.
+    #[serde(default)]
+    pub select_window: Option<KeyChord>,
+    #[serde(default)]
+    pub clear_selection: Option<KeyChord>,
+}
+
+/// The shortcuts that move focus between windows or change the selection. None of them
+/// moves a window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FocusShortcut {
+    FocusUp,
+    FocusLeft,
+    FocusDown,
+    FocusRight,
+    SelectWindow,
+    ClearSelection,
+}
+
+impl FocusShortcut {
+    pub const ALL: [FocusShortcut; 6] = [
+        FocusShortcut::FocusUp,
+        FocusShortcut::FocusLeft,
+        FocusShortcut::FocusDown,
+        FocusShortcut::FocusRight,
+        FocusShortcut::SelectWindow,
+        FocusShortcut::ClearSelection,
+    ];
+
+    /// The name the settings app and conflict messages use.
+    pub fn title(self) -> &'static str {
+        match self {
+            FocusShortcut::FocusUp => "Focus up",
+            FocusShortcut::FocusLeft => "Focus left",
+            FocusShortcut::FocusDown => "Focus down",
+            FocusShortcut::FocusRight => "Focus right",
+            FocusShortcut::SelectWindow => "Select window",
+            FocusShortcut::ClearSelection => "Clear selection",
+        }
+    }
+
+    /// The field that holds this shortcut's chord in the settings file.
+    fn field(self) -> &'static str {
+        match self {
+            FocusShortcut::FocusUp => "focusUp",
+            FocusShortcut::FocusLeft => "focusLeft",
+            FocusShortcut::FocusDown => "focusDown",
+            FocusShortcut::FocusRight => "focusRight",
+            FocusShortcut::SelectWindow => "selectWindow",
+            FocusShortcut::ClearSelection => "clearSelection",
+        }
+    }
 }
 
 /// The name the settings app and conflict messages give the nearest-empty-zone shortcut.
@@ -111,6 +174,36 @@ impl Navigation {
         Direction::ALL
             .into_iter()
             .filter_map(|direction| self.get(direction).map(|chord| (direction, chord)))
+    }
+
+    pub fn focus_shortcut(&self, shortcut: FocusShortcut) -> Option<&KeyChord> {
+        match shortcut {
+            FocusShortcut::FocusUp => self.focus_up.as_ref(),
+            FocusShortcut::FocusLeft => self.focus_left.as_ref(),
+            FocusShortcut::FocusDown => self.focus_down.as_ref(),
+            FocusShortcut::FocusRight => self.focus_right.as_ref(),
+            FocusShortcut::SelectWindow => self.select_window.as_ref(),
+            FocusShortcut::ClearSelection => self.clear_selection.as_ref(),
+        }
+    }
+
+    pub fn set_focus_shortcut(&mut self, shortcut: FocusShortcut, chord: Option<KeyChord>) {
+        let slot = match shortcut {
+            FocusShortcut::FocusUp => &mut self.focus_up,
+            FocusShortcut::FocusLeft => &mut self.focus_left,
+            FocusShortcut::FocusDown => &mut self.focus_down,
+            FocusShortcut::FocusRight => &mut self.focus_right,
+            FocusShortcut::SelectWindow => &mut self.select_window,
+            FocusShortcut::ClearSelection => &mut self.clear_selection,
+        };
+        *slot = chord;
+    }
+
+    /// Every assigned focus and selection chord.
+    pub fn focus_shortcuts(&self) -> impl Iterator<Item = (FocusShortcut, &KeyChord)> {
+        FocusShortcut::ALL
+            .into_iter()
+            .filter_map(|shortcut| self.focus_shortcut(shortcut).map(|chord| (shortcut, chord)))
     }
 }
 
@@ -206,20 +299,17 @@ pub struct Workspaces {
     pub active_id: String,
     pub previous: Option<KeyChord>,
     pub next: Option<KeyChord>,
-    /// Send the focused window to the previous workspace and stay.
+    /// Send the focused window, or the selection, to the previous workspace and stay.
     #[serde(default)]
     pub send_previous: Option<KeyChord>,
-    /// Send the focused window to the next workspace and stay.
+    /// Send the focused window, or the selection, to the next workspace and stay.
     #[serde(default)]
     pub send_next: Option<KeyChord>,
-    /// Pick up or put down the focused window; the next switch brings picked-up windows.
-    #[serde(default)]
-    pub take_along: Option<KeyChord>,
     pub items: Vec<Workspace>,
 }
 
-/// The shortcuts for every workspace at once: stepping to the previous or next one,
-/// sending the focused window there, and taking windows along to the next switch.
+/// The shortcuts for every workspace at once: stepping to the previous or next one, and
+/// sending windows there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkspaceStep {
@@ -227,16 +317,14 @@ pub enum WorkspaceStep {
     Next,
     SendPrevious,
     SendNext,
-    TakeAlong,
 }
 
 impl WorkspaceStep {
-    pub const ALL: [WorkspaceStep; 5] = [
+    pub const ALL: [WorkspaceStep; 4] = [
         WorkspaceStep::Previous,
         WorkspaceStep::Next,
         WorkspaceStep::SendPrevious,
         WorkspaceStep::SendNext,
-        WorkspaceStep::TakeAlong,
     ];
 
     /// The name the settings app and conflict messages use.
@@ -246,7 +334,6 @@ impl WorkspaceStep {
             WorkspaceStep::Next => "Next workspace",
             WorkspaceStep::SendPrevious => "Send window to previous workspace",
             WorkspaceStep::SendNext => "Send window to next workspace",
-            WorkspaceStep::TakeAlong => "Take along",
         }
     }
 
@@ -257,7 +344,6 @@ impl WorkspaceStep {
             WorkspaceStep::Next => "next",
             WorkspaceStep::SendPrevious => "sendPrevious",
             WorkspaceStep::SendNext => "sendNext",
-            WorkspaceStep::TakeAlong => "takeAlong",
         }
     }
 }
@@ -317,7 +403,7 @@ impl Workspaces {
     /// Three workspaces, switched to with the Snappy key and their number, and stepped
     /// through with the Snappy key and the semicolon and quote keys, or with the period and
     /// slash keys to send the focused window away. Both pairs sit together under the right
-    /// hand, on every keyboard layout's home and bottom rows. Return takes windows along.
+    /// hand, on every keyboard layout's home and bottom rows.
     pub fn defaults() -> Self {
         let chord = |code: &str, label: &str| Some(KeyChord::snappy(code, []).with_label(label));
         Self {
@@ -327,7 +413,6 @@ impl Workspaces {
             next: chord("Quote", "'"),
             send_previous: chord("Period", "."),
             send_next: chord("Slash", "/"),
-            take_along: Some(KeyChord::snappy("Enter", [])),
             items: (1..=3)
                 .map(|n| Workspace::numbered(format!("workspace-{n}"), n))
                 .collect(),
@@ -340,7 +425,6 @@ impl Workspaces {
             WorkspaceStep::Next => self.next.as_ref(),
             WorkspaceStep::SendPrevious => self.send_previous.as_ref(),
             WorkspaceStep::SendNext => self.send_next.as_ref(),
-            WorkspaceStep::TakeAlong => self.take_along.as_ref(),
         }
     }
 
@@ -350,7 +434,6 @@ impl Workspaces {
             WorkspaceStep::Next => &mut self.next,
             WorkspaceStep::SendPrevious => &mut self.send_previous,
             WorkspaceStep::SendNext => &mut self.send_next,
-            WorkspaceStep::TakeAlong => &mut self.take_along,
         };
         *slot = chord;
     }
@@ -380,14 +463,24 @@ impl Workspaces {
 }
 
 impl Navigation {
+    /// The arrows move the focused window, and I, J, K, and L, which sit like arrows under
+    /// the right hand, move focus. Return selects and backslash clears the selection;
+    /// Delete can't, since macOS never passes the Snappy key with Delete on to apps.
     pub fn defaults() -> Self {
         let chord = |code: &str, label: &str| Some(KeyChord::snappy(code, []).with_label(label));
+        let key = |code: &str| Some(KeyChord::snappy(code, []));
         Self {
             left: chord("ArrowLeft", "←"),
             right: chord("ArrowRight", "→"),
             up: chord("ArrowUp", "↑"),
             down: chord("ArrowDown", "↓"),
-            nearest_empty: Some(KeyChord::snappy("Space", [])),
+            nearest_empty: key("Space"),
+            focus_left: key("KeyJ"),
+            focus_right: key("KeyL"),
+            focus_up: key("KeyI"),
+            focus_down: key("KeyK"),
+            select_window: key("Enter"),
+            clear_selection: chord("Backslash", "\\"),
         }
     }
 }
@@ -525,6 +618,10 @@ impl Settings {
                 .nearest_empty
                 .as_ref()
                 .is_none_or(KeyChord::is_valid)
+            && self
+                .navigation
+                .focus_shortcuts()
+                .all(|(_, chord)| chord.is_valid())
             && self.history.chords().all(|(_, chord)| chord.is_valid());
         if valid {
             Ok(())
@@ -567,18 +664,32 @@ impl Settings {
 
     /// Parse a settings file. Fields missing from the file take their defaults, except
     /// that a default shortcut is left unassigned when another binding the file has already
-    /// uses its chord. Shortcuts the file has, cleared ones included, are kept.
+    /// uses its chord. Shortcuts the file has, cleared ones included, are kept, except
+    /// chords the OS keeps for itself, which read as missing.
     pub fn from_json(bytes: &[u8], platform: Platform) -> Result<Settings, SettingsError> {
         if bytes.len() > MAX_FILE_BYTES {
             return Err(SettingsError::Invalid);
         }
-        let file: SettingsFile = serde_json::from_slice(bytes).map_err(|_| SettingsError::Invalid)?;
+        let mut written: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|_| SettingsError::Invalid)?;
+        let kept: Vec<Combo> = chords_the_system_keeps(platform)
+            .into_iter()
+            .map(|kept| kept.combo)
+            .collect();
+        forget_kept_chords(&mut written, &kept);
+        let file: SettingsFile = serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?;
         let defaults = Settings::defaults(platform);
         let navigation_missing = file.navigation.is_none();
-        let nearest_empty_missing = file
-            .navigation
-            .as_ref()
-            .is_some_and(|written| written.get("nearestEmpty").is_none());
+        let written_lacks = |field: &str| {
+            file.navigation
+                .as_ref()
+                .is_some_and(|written| written.get(field).is_none())
+        };
+        let nearest_empty_missing = written_lacks("nearestEmpty");
+        let missing_focus_shortcuts: Vec<FocusShortcut> = FocusShortcut::ALL
+            .into_iter()
+            .filter(|shortcut| written_lacks(shortcut.field()))
+            .collect();
         let navigation = match file.navigation {
             Some(written) => serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?,
             None => Navigation::default(),
@@ -609,7 +720,11 @@ impl Settings {
         let mut used = bindings::bound_combos(&settings);
         let mut unused = |chord: Option<KeyChord>| chord.filter(|chord| used.insert(chord.combo()));
         if nearest_empty_missing {
-            settings.navigation.nearest_empty = unused(defaults.navigation.nearest_empty);
+            settings.navigation.nearest_empty = unused(defaults.navigation.nearest_empty.clone());
+        }
+        for shortcut in missing_focus_shortcuts {
+            let chord = defaults.navigation.focus_shortcut(shortcut).cloned();
+            settings.navigation.set_focus_shortcut(shortcut, unused(chord));
         }
         for missing in missing_workspace_chords {
             missing.fill(&mut settings.workspaces, &mut unused);
@@ -624,6 +739,27 @@ impl Settings {
         }
         Ok(bytes)
     }
+}
+
+/// Remove every shortcut in a written file that the OS keeps for itself. Such a shortcut
+/// never fired, and files saved before Snappy knew that may hold one, so it reads as if
+/// the file never had it instead of failing the whole file.
+fn forget_kept_chords(value: &mut serde_json::Value, kept: &[Combo]) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            fields.retain(|_, field| !is_kept_chord(field, kept));
+            fields
+                .values_mut()
+                .for_each(|field| forget_kept_chords(field, kept));
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|item| forget_kept_chords(item, kept)),
+        _ => {}
+    }
+}
+
+fn is_kept_chord(value: &serde_json::Value, kept: &[Combo]) -> bool {
+    value.get("code").is_some()
+        && serde_json::from_value::<KeyChord>(value.clone()).is_ok_and(|chord| kept.contains(&chord.combo()))
 }
 
 /// A workspace shortcut a settings file doesn't mention, as files written before it
@@ -969,7 +1105,6 @@ mod tests {
                     snappy("Quote"),
                     snappy("Period"),
                     snappy("Slash"),
-                    snappy("Enter"),
                 ],
                 "{platform:?}"
             );
@@ -987,10 +1122,24 @@ mod tests {
             );
             assert_eq!(combo(settings.navigation.left.as_ref()), snappy("ArrowLeft"));
             assert_eq!(combo(settings.navigation.nearest_empty.as_ref()), snappy("Space"));
+            let focus =
+                FocusShortcut::ALL.map(|shortcut| combo(settings.navigation.focus_shortcut(shortcut)));
+            assert_eq!(
+                focus,
+                [
+                    snappy("KeyI"),
+                    snappy("KeyJ"),
+                    snappy("KeyK"),
+                    snappy("KeyL"),
+                    snappy("Enter"),
+                    snappy("Backslash"),
+                ],
+                "{platform:?}"
+            );
             assert_eq!(settings.history, MoveHistory::default());
 
             let every_chord = bindings::bound_combos(&settings);
-            assert_eq!(every_chord.len(), 5 + 3 + 5, "{platform:?}");
+            assert_eq!(every_chord.len(), 4 + 3 + 5 + 6, "{platform:?}");
             let snappy_key = crate::keys::snappy_key_modifiers();
             assert!(
                 every_chord.iter().all(|combo| combo.mods == snappy_key),
@@ -1000,6 +1149,10 @@ mod tests {
         assert_eq!(
             Settings::defaults(Platform::Windows).workspaces,
             Settings::defaults(MAC).workspaces
+        );
+        assert_eq!(
+            Settings::defaults(Platform::Linux).navigation,
+            Settings::defaults(MAC).navigation
         );
     }
 
@@ -1014,44 +1167,185 @@ mod tests {
     }
 
     #[test]
-    fn a_file_without_send_steps_or_take_along_gets_their_defaults() {
+    fn a_file_without_send_steps_gets_their_defaults() {
         let mut settings = Settings::defaults(MAC);
         settings.workspaces.next = None;
-        let bytes = written_without(settings, &["sendPrevious", "sendNext", "takeAlong"]);
+        let bytes = written_without(settings, &["sendPrevious", "sendNext"]);
         let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(
             loaded.workspaces.send_previous.map(|c| c.combo()),
             snappy("Period")
         );
         assert_eq!(loaded.workspaces.send_next.map(|c| c.combo()), snappy("Slash"));
-        assert_eq!(loaded.workspaces.take_along.map(|c| c.combo()), snappy("Enter"));
         assert_eq!(loaded.workspaces.next, None, "written steps are kept");
         assert_eq!(loaded.history, MoveHistory::default());
     }
 
     #[test]
-    fn a_file_without_send_steps_or_take_along_skips_defaults_another_binding_uses() {
+    fn a_file_without_send_steps_skips_defaults_another_binding_uses() {
         let mut settings = Settings::defaults(MAC);
         settings.workspaces.items[0].switch_shortcut = Some(KeyChord::snappy("Slash", []));
-        settings.history.undo = Some(KeyChord::snappy("Enter", []));
         settings.workspaces.send_next = None;
-        settings.workspaces.take_along = None;
-        let bytes = written_without(settings, &["sendPrevious", "sendNext", "takeAlong"]);
+        let bytes = written_without(settings, &["sendPrevious", "sendNext"]);
         let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(
             loaded.workspaces.send_previous.map(|c| c.combo()),
             snappy("Period")
         );
         assert_eq!(loaded.workspaces.send_next, None);
-        assert_eq!(loaded.workspaces.take_along, None);
+    }
+
+    /// The defaults written without some navigation fields, as older files are.
+    fn written_without_navigation(settings: Settings, fields: &[&str]) -> Vec<u8> {
+        let mut written = serde_json::to_value(settings).unwrap();
+        let navigation = written["navigation"].as_object_mut().unwrap();
+        for field in fields {
+            navigation.remove(*field);
+        }
+        serde_json::to_vec(&written).unwrap()
+    }
+
+    const FOCUS_FIELDS: [&str; 6] = [
+        "focusUp",
+        "focusLeft",
+        "focusDown",
+        "focusRight",
+        "selectWindow",
+        "clearSelection",
+    ];
+
+    #[test]
+    fn a_file_without_focus_and_selection_shortcuts_gets_their_defaults() {
+        let bytes = written_without_navigation(Settings::defaults(MAC), &FOCUS_FIELDS);
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
+        assert_eq!(loaded.navigation, Navigation::defaults());
+    }
+
+    #[test]
+    fn a_file_without_focus_and_selection_shortcuts_skips_defaults_another_binding_uses() {
+        let mut settings = Settings::defaults(MAC);
+        settings.history.undo = Some(KeyChord::snappy("Enter", []));
+        settings.workspaces.items[0].send_shortcut = Some(KeyChord::snappy("KeyK", []));
+        let bytes = written_without_navigation(settings, &FOCUS_FIELDS);
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
+        assert_eq!(loaded.navigation.select_window, None);
+        assert_eq!(loaded.navigation.focus_down, None);
+        assert_eq!(loaded.navigation.focus_up.map(|c| c.combo()), snappy("KeyI"));
+        assert_eq!(
+            loaded.navigation.clear_selection.map(|c| c.combo()),
+            snappy("Backslash")
+        );
         assert_eq!(loaded.history.undo.map(|c| c.combo()), snappy("Enter"));
+    }
+
+    /// The defaults written with the Snappy key and Delete clearing the selection, as
+    /// files saved before macOS was known to keep that chord are.
+    fn written_clearing_with_delete(settings: Settings) -> Vec<u8> {
+        let mut written = serde_json::to_value(settings).unwrap();
+        written["navigation"]["clearSelection"] =
+            serde_json::json!({ "code": "Backspace", "mods": ["snappy"] });
+        serde_json::to_vec(&written).unwrap()
+    }
+
+    #[test]
+    fn a_macos_file_clearing_with_the_snappy_key_and_delete_loads_with_backslash_instead() {
+        let bytes = written_clearing_with_delete(Settings::defaults(MAC));
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
+        assert_eq!(loaded.navigation, Navigation::defaults());
+        assert_eq!(
+            loaded.navigation.clear_selection.unwrap().long_label(MAC),
+            "Snappy + \\"
+        );
+    }
+
+    #[test]
+    fn a_macos_file_clearing_with_delete_leaves_clearing_unassigned_when_backslash_is_taken() {
+        let mut settings = Settings::defaults(MAC);
+        settings.history.undo = Some(KeyChord::snappy("Backslash", []));
+        let bytes = written_clearing_with_delete(settings);
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
+        assert_eq!(loaded.navigation.clear_selection, None);
+        assert_eq!(loaded.history.undo.map(|c| c.combo()), snappy("Backslash"));
+    }
+
+    #[test]
+    fn a_macos_file_with_the_snappy_key_and_delete_anywhere_else_loads_without_it() {
+        let mut settings = Settings::defaults(MAC);
+        settings.history.redo = Some(KeyChord::snappy("Backspace", []));
+        settings.workspaces.items[1].send_shortcut = Some(KeyChord::snappy("Backspace", []));
+        let halves = layout::preset("halves").unwrap();
+        let mut options = settings.options(halves);
+        options
+            .zone_shortcuts
+            .insert("halves-0".into(), KeyChord::snappy("Backspace", []));
+        options
+            .zone_shortcuts
+            .insert("halves-1".into(), KeyChord::snappy("KeyM", []));
+        settings.layouts.options.insert("halves".into(), options);
+        let bytes = serde_json::to_vec(&settings).unwrap();
+
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
+        assert_eq!(loaded.history.redo, None);
+        assert_eq!(loaded.workspaces.items[1].send_shortcut, None);
+        let zones = loaded.options(halves).zone_shortcuts;
+        assert_eq!(zones.keys().collect::<Vec<_>>(), ["halves-1"]);
+        assert_eq!(loaded.navigation, Navigation::defaults());
+    }
+
+    #[test]
+    fn windows_and_linux_files_keep_the_snappy_key_and_backspace() {
+        for platform in [Platform::Windows, Platform::Linux] {
+            let bytes = written_clearing_with_delete(Settings::defaults(platform));
+            let loaded = Settings::from_json(&bytes, platform).unwrap();
+            assert_eq!(
+                loaded.navigation.clear_selection.map(|c| c.combo()),
+                snappy("Backspace"),
+                "{platform:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_saved_cleared_focus_or_selection_shortcut_stays_cleared() {
+        let mut settings = Settings::defaults(MAC);
+        settings
+            .navigation
+            .set_focus_shortcut(FocusShortcut::SelectWindow, None);
+        settings
+            .navigation
+            .set_focus_shortcut(FocusShortcut::FocusLeft, None);
+        let json = String::from_utf8(settings.to_json().unwrap()).unwrap();
+        assert!(json.contains(r#""selectWindow": null"#), "{json}");
+        let loaded = Settings::from_json(json.as_bytes(), MAC).unwrap();
+        assert_eq!(loaded.navigation, settings.navigation);
+    }
+
+    #[test]
+    fn a_file_with_the_former_take_along_shortcut_loads_and_selects_with_its_chord() {
+        let mut written = serde_json::to_value(Settings::defaults(MAC)).unwrap();
+        let take_along = serde_json::json!({ "code": "Enter", "mods": ["snappy"] });
+        written["workspaces"]
+            .as_object_mut()
+            .unwrap()
+            .insert("takeAlong".into(), take_along);
+        let navigation = written["navigation"].as_object_mut().unwrap();
+        for field in FOCUS_FIELDS {
+            navigation.remove(field);
+        }
+        let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
+        assert_eq!(
+            loaded.navigation.select_window.as_ref().map(KeyChord::combo),
+            snappy("Enter")
+        );
+        let saved = String::from_utf8(loaded.to_json().unwrap()).unwrap();
+        assert!(!saved.contains("takeAlong"), "{saved}");
     }
 
     #[test]
     fn a_file_with_the_former_move_steps_ignores_them_and_gets_the_send_steps() {
         let mut written = serde_json::to_value(Settings::defaults(MAC)).unwrap();
         let workspaces = written["workspaces"].as_object_mut().unwrap();
-        for field in ["sendPrevious", "sendNext", "takeAlong"] {
+        for field in ["sendPrevious", "sendNext"] {
             workspaces.remove(field);
         }
         let former = |code: &str| serde_json::json!({ "code": code, "mods": ["snappy", "shift"] });
@@ -1074,11 +1368,9 @@ mod tests {
     fn a_saved_cleared_workspace_shortcut_stays_cleared() {
         let mut settings = Settings::defaults(MAC);
         settings.workspaces.set_step(WorkspaceStep::SendNext, None);
-        settings.workspaces.set_step(WorkspaceStep::TakeAlong, None);
         settings.workspaces.items[1].switch_shortcut = None;
         let loaded = Settings::from_json(&settings.to_json().unwrap(), MAC).unwrap();
         assert_eq!(loaded.workspaces.send_next, None);
-        assert_eq!(loaded.workspaces.take_along, None);
         assert_eq!(loaded.workspaces.items[1].switch_shortcut, None);
     }
 
@@ -1114,7 +1406,7 @@ mod tests {
                 .iter()
                 .all(|item| item.switch_shortcut.is_none())
         );
-        assert_eq!(loaded.workspaces.take_along.map(|c| c.combo()), snappy("Enter"));
+        assert_eq!(loaded.workspaces.next.map(|c| c.combo()), snappy("Quote"));
         assert_eq!(loaded.workspaces.items.len(), 3);
     }
 

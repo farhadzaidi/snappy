@@ -98,6 +98,35 @@ impl Fixture {
                     Err(error) => Reply::error(error.to_string()),
                 }
             }
+            Request::Tab { id, into } => {
+                let Some(lead) = self.windows.get(&into).cloned() else {
+                    return Reply::error(format!("no window {into}"));
+                };
+                let frame = outer_frame(&lead);
+                let attributes = Window::default_attributes()
+                    .with_title(format!("Fixture {id}"))
+                    .with_position(LogicalPosition::new(frame.x, frame.y))
+                    .with_inner_size(lead.inner_size());
+                match event_loop.create_window(attributes) {
+                    Ok(window) => {
+                        let window = Rc::new(window);
+                        let added = tabs::add(&lead, &window);
+                        self.windows.insert(id, Rc::clone(&window));
+                        match added {
+                            Ok(()) => Reply::frame(outer_frame(&window)),
+                            Err(error) => Reply::error(error),
+                        }
+                    }
+                    Err(error) => Reply::error(error.to_string()),
+                }
+            }
+            Request::TearOut { id, at } => self.with_window(&id, |window| match tabs::tear_out(window) {
+                Ok(()) => {
+                    window.set_outer_position(LogicalPosition::new(at.x, at.y));
+                    Reply::frame(outer_frame(window))
+                }
+                Err(error) => Reply::error(error),
+            }),
             Request::Frame { id } => self.with_window(&id, |window| Reply::frame(outer_frame(window))),
             Request::Focus { id } => self.with_window(&id, |window| {
                 window.focus_window();
@@ -127,6 +156,75 @@ impl Fixture {
             Some(window) => action(window),
             None => Reply::error(format!("no window {id}")),
         }
+    }
+}
+
+/// Native window tabs, which only macOS makes windows of their own.
+#[cfg(target_os = "macos")]
+mod tabs {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use winit::window::Window;
+
+    /// `NSWindowAbove`: the new tab goes after the receiver's.
+    const ABOVE: isize = 1;
+
+    fn ns_window(window: &Window) -> Result<*mut AnyObject, String> {
+        let handle = window.window_handle().map_err(|error| error.to_string())?;
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return Err("not an AppKit window".to_owned());
+        };
+        let view = handle.ns_view.as_ptr().cast::<AnyObject>();
+        // SAFETY: `ns_view` is the live content view of a window this, the main, thread
+        // owns, and `window` returns its window or nil.
+        let ns_window: *mut AnyObject = unsafe { msg_send![view, window] };
+        if ns_window.is_null() {
+            Err("the view has no window".to_owned())
+        } else {
+            Ok(ns_window)
+        }
+    }
+
+    /// Add `tab` to `lead`'s tab group and show it, as an app's New Tab does.
+    pub fn add(lead: &Window, tab: &Window) -> Result<(), String> {
+        let (lead, tab) = (ns_window(lead)?, ns_window(tab)?);
+        let nothing = std::ptr::null_mut::<AnyObject>();
+        // SAFETY: both are live windows of this thread; the selectors take a window and an
+        // ordering, and a sender that may be nil.
+        unsafe {
+            let _: () = msg_send![lead, addTabbedWindow: tab, ordered: ABOVE];
+            let _: () = msg_send![tab, makeKeyAndOrderFront: nothing];
+        }
+        Ok(())
+    }
+
+    /// Show `tab`, then move it to a window of its own, as Window > Move Tab to New Window
+    /// and dragging it out of the tab bar do.
+    pub fn tear_out(tab: &Window) -> Result<(), String> {
+        let tab = ns_window(tab)?;
+        let nothing = std::ptr::null_mut::<AnyObject>();
+        // SAFETY: a live window of this thread; both actions take a sender that may be nil.
+        unsafe {
+            let _: () = msg_send![tab, makeKeyAndOrderFront: nothing];
+            let _: () = msg_send![tab, moveTabToNewWindow: nothing];
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod tabs {
+    use winit::window::Window;
+
+    const NONE: &str = "native tabs aren't windows of their own here";
+
+    pub fn add(_lead: &Window, _tab: &Window) -> Result<(), String> {
+        Err(NONE.to_owned())
+    }
+
+    pub fn tear_out(_tab: &Window) -> Result<(), String> {
+        Err(NONE.to_owned())
     }
 }
 

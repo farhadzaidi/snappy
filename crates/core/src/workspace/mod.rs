@@ -2,10 +2,12 @@
 
 mod focus;
 mod parking;
+mod relaunch;
 mod session;
 #[cfg(test)]
 mod tests;
 
 pub use focus::{FOCUS_GATE_SECONDS, FocusPolicy};
 pub use parking::{PARKED_TOLERANCE, ParkingPolicy, is_parked, parking_origin, reachable};
-pub use session::{JournalEntry, Member, Session, WorkspaceIo};
+pub use relaunch::{Found, Journaled, Relaunch, relaunch};
+pub use session::{JournalEntry, Member, Session, Tabs, WorkspaceIo};

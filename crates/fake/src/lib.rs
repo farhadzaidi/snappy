@@ -9,9 +9,9 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Modifier, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
-    OverlayScene, Permissions, Platform, RecoveryKey, Remedy, Tray, TrayMenu, WindowId, WindowInfo,
-    WindowState, WindowSystem,
+    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, MarkedWindow, Overlay,
+    OverlayMarks, OverlayScene, Permissions, Platform, RecoveryKey, Remedy, TabGroup, Tray, TrayMenu,
+    WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 /// A window with scriptable app behavior.
@@ -27,6 +27,12 @@ pub struct FakeWindow {
     /// Every write is ignored.
     pub frozen: bool,
     pub hidden: bool,
+    /// A native tab hidden behind this shown tab, as on macOS: off screen, left out of
+    /// the visible windows, with a frame that goes stale while the group moves.
+    pub tab_of: Option<WindowId>,
+    /// When its process started; another value with the same process ID is a later process
+    /// that reused the ID.
+    pub launch_time: f64,
 }
 
 impl FakeWindow {
@@ -34,18 +40,20 @@ impl FakeWindow {
         Self {
             app: app.to_owned(),
             pid,
+            launch_time: 1.0,
             frame,
             state: WindowState::default(),
             min_size: Size::new(1.0, 1.0),
             strict_resize: false,
             frozen: false,
             hidden: false,
+            tab_of: None,
         }
     }
 
-    /// Not hidden by its app and not on the parking desktop.
+    /// Not hidden by its app, as a hidden tab, or on the parking desktop.
     pub fn is_shown(&self) -> bool {
-        !self.hidden && !self.state.on_parking_desktop
+        !self.hidden && self.tab_of.is_none() && !self.state.on_parking_desktop
     }
 }
 
@@ -88,7 +96,7 @@ pub struct FakePlatform {
     pub drag_monitoring: bool,
     pub overlay: Vec<OverlayCall>,
     /// The windows each display outlines now; displays without any are absent.
-    pub marks: BTreeMap<String, Vec<Rect>>,
+    pub marks: BTreeMap<String, Vec<MarkedWindow>>,
     /// How many times marks were sent.
     pub mark_calls: usize,
     pub tray: TrayMenu,
@@ -171,6 +179,71 @@ impl FakePlatform {
         self.windows[&id].frame
     }
 
+    /// Open a new tab in `shown`'s window, as its app does: the new tab shows, at the
+    /// group's frame, with focus, and every other tab hides behind it.
+    pub fn add_tab(&mut self, id: u64, shown: WindowId) -> WindowId {
+        let lead = self.windows[&shown].clone();
+        let tab = self.open(id, FakeWindow::new(&lead.app, lead.pid, lead.frame));
+        for window in self.windows.values_mut() {
+            if window.tab_of == Some(shown) {
+                window.tab_of = Some(tab);
+            }
+        }
+        if let Some(window) = self.windows.get_mut(&shown) {
+            window.tab_of = Some(tab);
+        }
+        tab
+    }
+
+    /// Show `tab` in its group, as clicking it does: it takes the group's frame and the
+    /// shown tab's place, and the others hide behind it.
+    pub fn select_tab(&mut self, tab: WindowId) {
+        let Some(shown) = self.windows.get(&tab).and_then(|window| window.tab_of) else {
+            return;
+        };
+        let frame = self.windows[&shown].frame;
+        for window in self.windows.values_mut() {
+            if window.tab_of == Some(shown) {
+                window.tab_of = Some(tab);
+            }
+        }
+        if let Some(window) = self.windows.get_mut(&shown) {
+            window.tab_of = Some(tab);
+        }
+        if let Some(window) = self.windows.get_mut(&tab) {
+            window.tab_of = None;
+            window.frame = frame;
+        }
+        self.focus(tab);
+    }
+
+    /// Drag `tab` out of its group into a window of its own at `frame`, focused. When it
+    /// was the shown tab, the group shows its first other tab where it was.
+    pub fn tear_out(&mut self, tab: WindowId, frame: Rect) {
+        let behind: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|(_, window)| window.tab_of == Some(tab))
+            .map(|(id, _)| *id)
+            .collect();
+        if let Some(next) = behind.first().copied() {
+            let group_frame = self.windows[&tab].frame;
+            for other in &behind {
+                if let Some(window) = self.windows.get_mut(other) {
+                    window.tab_of = (*other != next).then_some(next);
+                }
+            }
+            if let Some(window) = self.windows.get_mut(&next) {
+                window.frame = group_frame;
+            }
+        }
+        if let Some(window) = self.windows.get_mut(&tab) {
+            window.tab_of = None;
+            window.frame = frame;
+        }
+        self.focus(tab);
+    }
+
     pub fn last_overlay(&self) -> Option<&OverlayCall> {
         self.overlay.last()
     }
@@ -195,7 +268,7 @@ impl FakePlatform {
             frame: window.frame,
             recovery_key: Some(RecoveryKey {
                 pid: window.pid,
-                launch_time: 1.0,
+                launch_time: window.launch_time,
                 window: id.0.to_string(),
             }),
         })
@@ -301,8 +374,13 @@ impl WindowSystem for FakePlatform {
             .collect()
     }
 
+    /// Like macOS, hidden tabs are listed only while their group is minimized.
     fn all_windows(&mut self) -> Vec<WindowInfo> {
-        self.windows.keys().filter_map(|id| self.info(*id)).collect()
+        self.windows
+            .iter()
+            .filter(|(_, window)| window.tab_of.is_none() || window.state.minimized)
+            .filter_map(|(id, _)| self.info(*id))
+            .collect()
     }
 
     fn windows_occupying(&mut self, frames: &[Rect]) -> Result<Vec<WindowInfo>, WindowError> {
@@ -319,8 +397,39 @@ impl WindowSystem for FakePlatform {
         Ok(found)
     }
 
+    fn tab_groups(&mut self, windows: &[WindowId]) -> Vec<TabGroup> {
+        let pids: BTreeSet<u32> = windows
+            .iter()
+            .filter_map(|id| self.windows.get(id).map(|window| window.pid))
+            .collect();
+        self.windows
+            .iter()
+            .filter(|(_, window)| window.tab_of.is_none() && pids.contains(&window.pid))
+            .filter_map(|(id, _)| {
+                let hidden: Vec<WindowId> = self
+                    .windows
+                    .iter()
+                    .filter(|(_, window)| window.tab_of == Some(*id))
+                    .map(|(hidden, _)| *hidden)
+                    .collect();
+                let shown = self.info(*id)?;
+                (!hidden.is_empty()).then_some(TabGroup { shown, hidden })
+            })
+            .collect()
+    }
+
+    /// Focusing raises the window, as every platform does. Focusing a hidden tab shows it.
     fn focus(&mut self, window: WindowId) {
+        if self
+            .windows
+            .get(&window)
+            .is_some_and(|target| target.tab_of.is_some())
+        {
+            return self.select_tab(window);
+        }
         self.focused = Some(window);
+        self.stacking.retain(|id| *id != window);
+        self.stacking.insert(0, window);
     }
 
     fn begin_bounds_change(&mut self, window: WindowId) {
@@ -413,10 +522,10 @@ impl Overlay for FakePlatform {
 
     fn mark(&mut self, display: &str, marks: &OverlayMarks) {
         self.mark_calls += 1;
-        if marks.frames.is_empty() {
+        if marks.windows.is_empty() {
             self.marks.remove(display);
         } else {
-            self.marks.insert(display.to_owned(), marks.frames.clone());
+            self.marks.insert(display.to_owned(), marks.windows.clone());
         }
     }
 }

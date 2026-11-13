@@ -723,6 +723,13 @@ fn a_restarted_daemon_finds_windows_left_on_the_parking_desktop() {
     let mut restarted = desktop!();
     let platform = &mut restarted.platform;
     assert!(platform.state(id(window)).unwrap().on_parking_desktop);
+    // Xfwm4 takes moving and resizing out of a parked window's allowed actions.
+    let parked = platform
+        .all_windows()
+        .into_iter()
+        .find(|info| info.id == id(window))
+        .expect("the parked window is listed");
+    assert!(parked.recovery_key.is_some());
     platform.show_for_workspace(id(window), home.origin()).unwrap();
     assert!(wait_until(|| desktop.is_viewable(window)));
     platform.bind(&displays);
@@ -837,8 +844,8 @@ fn chords_grabbed_elsewhere_are_unavailable() {
     assert!(desktop.platform.is_available(&taken));
 }
 
-/// Every default chord, moving between zones, to the nearest empty zone, the workspace
-/// steps, taking windows along, and switching to workspaces 1 to 9, is free under the
+/// Every default chord, moving between zones, to the nearest empty zone, focus and the
+/// selection, the workspace steps, and switching to workspaces 1 to 9, is free under the
 /// session's window manager, Xfwm4 with its default key bindings.
 #[test]
 fn the_default_shortcuts_are_free() {
@@ -850,9 +857,17 @@ fn the_default_shortcuts_are_free() {
         .map(|(_, chord)| chord.clone())
         .collect();
     chords.extend(settings.navigation.nearest_empty.clone());
+    chords.extend(
+        settings
+            .navigation
+            .focus_shortcuts()
+            .map(|(_, chord)| chord.clone()),
+    );
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
-    assert_eq!(chords.len(), 5 + 5 + 9);
+    assert_eq!(chords.len(), 5 + 6 + 4 + 9);
+    let clear_selection = KeyChord::snappy("Backslash", []).combo();
+    assert!(chords.iter().any(|chord| chord.combo() == clear_selection));
     let taken: Vec<String> = chords
         .iter()
         .filter(|chord| !desktop.platform.is_available(&chord.combo()))

@@ -1,7 +1,7 @@
 //! What the runner and the fixture app say to each other: one JSON object per line.
 
 use serde::{Deserialize, Serialize};
-use snappy_core::geometry::{Rect, Size};
+use snappy_core::geometry::{Point, Rect, Size};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -23,6 +23,18 @@ pub enum Request {
     },
     Close {
         id: String,
+    },
+    /// Open a window as a new native tab of `into`, shown and focused. Only macOS makes each
+    /// tab a window of its own.
+    Tab {
+        id: String,
+        into: String,
+    },
+    /// Move tab `id` into a window of its own with its top left at `at`, as dragging it out
+    /// of the tab bar does.
+    TearOut {
+        id: String,
+        at: Point,
     },
     /// Enter or leave the system's full screen.
     FullScreen {
