@@ -7,6 +7,7 @@
 #![cfg(target_os = "linux")]
 
 mod app;
+mod caps_lock;
 mod displays;
 mod eligibility;
 mod error;

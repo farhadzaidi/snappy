@@ -3,6 +3,8 @@
 //! question is the availability probe; Snappy's own component never counts, whatever an
 //! earlier run left registered. A press arrives as a signal on the component.
 
+use snappy_linux::journal;
+
 use crate::bus::{Bus, CallError};
 use crate::shared::Grab;
 
@@ -18,6 +20,9 @@ const SET_PRESENT: u32 = 2;
 const NO_AUTOLOADING: u32 = 4;
 
 const ACTION_PREFIX: &str = "shortcut-";
+/// The modifier-only shortcut that fires when Caps Lock, held as the Snappy key, comes up
+/// with nothing else used meanwhile.
+pub const CAPS_LOCK_TAP: &str = "caps-lock-tap";
 
 /// The shortcut ID an action stands for.
 pub fn shortcut_id(action: &str) -> Option<u32> {
@@ -84,6 +89,42 @@ fn grab(bus: &Bus, id: u32, key: i32) -> Result<Option<Grab>, CallError> {
     Ok(None)
 }
 
+fn tap_action() -> [String; 4] {
+    [
+        COMPONENT.to_owned(),
+        CAPS_LOCK_TAP.to_owned(),
+        COMPONENT_NAME.to_owned(),
+        "Caps Lock let go alone, while it is the Snappy key".to_owned(),
+    ]
+}
+
+/// Binds the modifier-only shortcut to `modifiers`, the Snappy key's modifiers as one Qt key
+/// code. Another component holding the same modifiers alone would take the releases, so the
+/// daemon's output says so.
+pub fn register_tap(bus: &Bus, modifiers: i32) {
+    if bus
+        .key_holders(vec![modifiers])
+        .is_ok_and(|holders| held_elsewhere(&holders))
+    {
+        journal::warn(
+            "another shortcut uses the Snappy key's modifiers alone, so taps of Caps Lock may not reach Snappy",
+        );
+    }
+    let action = tap_action();
+    let bound = bus
+        .register_action(action.clone())
+        .and_then(|()| bus.set_action_keys(action, vec![modifiers], SET_PRESENT | NO_AUTOLOADING));
+    if let Err(error) = bound {
+        journal::warn(format_args!(
+            "KDE's shortcut service didn't take the Caps Lock tap: {error:?}"
+        ));
+    }
+}
+
+pub fn unregister_tap(bus: &Bus) {
+    let _ = bus.unregister_action(COMPONENT, CAPS_LOCK_TAP.to_owned());
+}
+
 /// Removes the actions entirely, so none is left behind in System Settings.
 pub fn unregister(bus: &Bus, grabs: &[Grab]) {
     for grab in grabs {
@@ -123,6 +164,16 @@ mod tests {
         assert_eq!(action[0], COMPONENT);
         assert_eq!(shortcut_id(&action[1]), Some(12));
         assert_eq!(shortcut_id("something-else"), None);
+        assert_eq!(
+            shortcut_id(CAPS_LOCK_TAP),
+            None,
+            "the Caps Lock tap is no shortcut of the engine's"
+        );
+        assert_eq!(
+            tap_action()[0],
+            COMPONENT,
+            "Snappy's own, so probes count it as free"
+        );
         assert_eq!(COMPONENT_PATH, format!("/component/{COMPONENT}"));
     }
 }

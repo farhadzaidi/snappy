@@ -23,18 +23,28 @@ pub struct Monitoring {
     /// How many times drag monitoring has turned on, so the event thread can tell a new
     /// stretch of it, with key events it hasn't seen in between, from the one it follows.
     pub drag_stretch: u64,
+    /// Caps Lock, held as the Snappy key, is down: key and button presses tell whether
+    /// something else is used, and Caps Lock's release ends it.
+    pub caps_lock_down: bool,
 }
 
 impl Monitoring {
-    /// The raw events to select. Keys are observed only while drag monitoring is on.
+    /// The raw events to select. Keys are observed only while drag monitoring is on or
+    /// Caps Lock, held as the Snappy key, is down.
     pub fn raw_events(self) -> XIEventMask {
         let buttons = XIEventMask::RAW_BUTTON_PRESS | XIEventMask::RAW_BUTTON_RELEASE;
-        let drag = XIEventMask::RAW_MOTION | XIEventMask::RAW_KEY_PRESS | XIEventMask::RAW_KEY_RELEASE;
-        match (self.press, self.drag) {
-            (_, true) => buttons | drag,
-            (true, false) => buttons,
-            (false, false) => XIEventMask::from(0u32),
+        let keys = XIEventMask::RAW_KEY_PRESS | XIEventMask::RAW_KEY_RELEASE;
+        let mut mask = XIEventMask::from(0u32);
+        if self.press || self.drag {
+            mask |= buttons;
         }
+        if self.drag {
+            mask |= XIEventMask::RAW_MOTION | keys;
+        }
+        if self.caps_lock_down {
+            mask |= keys | XIEventMask::RAW_BUTTON_PRESS;
+        }
+        mask
     }
 }
 
@@ -156,6 +166,20 @@ mod tests {
         .raw_events();
         assert!(has(operation_only, XIEventMask::RAW_KEY_PRESS));
         assert_eq!(u32::from(Monitoring::default().raw_events()), 0);
+    }
+
+    #[test]
+    fn keys_and_presses_are_observed_while_caps_lock_is_down_as_the_snappy_key() {
+        let down = Monitoring {
+            caps_lock_down: true,
+            ..Monitoring::default()
+        }
+        .raw_events();
+        assert!(has(
+            down,
+            XIEventMask::RAW_KEY_PRESS | XIEventMask::RAW_KEY_RELEASE | XIEventMask::RAW_BUTTON_PRESS
+        ));
+        assert!(!has(down, XIEventMask::RAW_MOTION));
     }
 
     /// Shift on keycodes 50 and 62, Control on 37.

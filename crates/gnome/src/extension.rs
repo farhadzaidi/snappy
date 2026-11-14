@@ -46,6 +46,10 @@ pub const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../apps/gnome-extension/shortcuts.js"),
     ),
     (
+        "capsLock.js",
+        include_bytes!("../../../apps/gnome-extension/capsLock.js"),
+    ),
+    (
         "overlay.js",
         include_bytes!("../../../apps/gnome-extension/overlay.js"),
     ),

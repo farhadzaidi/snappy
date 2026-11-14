@@ -16,6 +16,7 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::rust_connection::RustConnection;
 
+use crate::caps_lock;
 use crate::error::X11Error;
 use crate::events::EventLoop;
 use crate::hotkeys;
@@ -87,7 +88,10 @@ impl App {
         watch_displays(&conn, &screen);
         negotiate_randr(&engine_conn);
         let xinput = !wayland && negotiate_xinput(&conn);
-        detect_key_repeat(&conn);
+        if negotiate_xkb(&conn) {
+            detect_key_repeat(&conn);
+            watch_keymap(&conn);
+        }
 
         let shared = Arc::new(Shared::new(conn, screen, atoms, control, xinput));
         overlay::negotiate(&shared);
@@ -128,6 +132,8 @@ impl App {
     }
 
     fn teardown(self) {
+        // The engine restores Caps Lock as it stops; this covers an engine that didn't.
+        caps_lock::restore(&self.shared);
         hotkeys::unregister_all(&self.shared);
         input::set(&self.shared, |monitoring| *monitoring = Monitoring::default());
         let _ = self.ui.send(UiCommand::Stop);
@@ -186,20 +192,37 @@ fn negotiate_xinput(conn: &RustConnection) -> bool {
         .is_some_and(|reply| (reply.major_version, reply.minor_version) >= XINPUT_VERSION)
 }
 
+fn negotiate_xkb(conn: &RustConnection) -> bool {
+    if !matches!(conn.extension_information(xkb::X11_EXTENSION_NAME), Ok(Some(_))) {
+        return false;
+    }
+    conn.xkb_use_extension(1, 0)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_some_and(|reply| reply.supported)
+}
+
+/// A client using XKB gets no core `MappingNotify` when a keymap is loaded, as
+/// `setxkbmap` or a layout switch does, and only asked-for ones when a key changes, so it
+/// asks for XKB's own notices of both.
+fn watch_keymap(conn: &RustConnection) {
+    let changes = xkb::EventType::NEW_KEYBOARD_NOTIFY | xkb::EventType::MAP_NOTIFY;
+    let parts = xkb::MapPart::KEY_SYMS | xkb::MapPart::MODIFIER_MAP | xkb::MapPart::KEY_ACTIONS;
+    if let Ok(cookie) = conn.xkb_select_events(
+        xkb::ID::USE_CORE_KBD.into(),
+        xkb::EventType::from(0u16),
+        changes,
+        parts,
+        parts,
+        &xkb::SelectEventsAux::default(),
+    ) {
+        cookie.ignore_error();
+    }
+}
+
 /// Held shortcut keys then repeat as presses without releases, which the event loop
 /// ignores until the key is released.
 fn detect_key_repeat(conn: &RustConnection) {
-    if !matches!(conn.extension_information(xkb::X11_EXTENSION_NAME), Ok(Some(_))) {
-        return;
-    }
-    let supported = conn
-        .xkb_use_extension(1, 0)
-        .ok()
-        .and_then(|cookie| cookie.reply().ok())
-        .is_some_and(|reply| reply.supported);
-    if !supported {
-        return;
-    }
     let detectable = xkb::PerClientFlag::DETECTABLE_AUTO_REPEAT;
     let none = xkb::BoolCtrl::from(0u32);
     if let Ok(cookie) = conn.xkb_per_client_flags(

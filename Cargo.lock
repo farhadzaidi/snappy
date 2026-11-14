@@ -4121,6 +4121,8 @@ dependencies = [
 name = "snappy-x11"
 version = "0.0.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "snappy-core",
  "snappy-linux",
  "snappy-platform",

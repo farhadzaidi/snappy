@@ -47,5 +47,6 @@ export function initialState(platform: PlatformName): AppState {
     debugLogPath: "~/Library/Logs/Snappy/debug.jsonl",
     status: null,
     addedWorkspace: null,
+    capsLockProblem: null,
   };
 }

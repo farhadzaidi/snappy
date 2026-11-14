@@ -11,6 +11,7 @@ use snappy_platform::PlatformEvent;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::HHOOK;
 
+use crate::caps_lock::CapsLockKeys;
 use crate::desktop_guard::Guard;
 use crate::dispatch::Job;
 use crate::events::Hooks;
@@ -26,9 +27,14 @@ pub struct Main {
     pub shared: Arc<Shared>,
     pub jobs: Receiver<Job>,
     pub hooks: Hooks,
-    /// The low-level keyboard and mouse hooks, installed only while drag monitoring is on.
+    /// The low-level keyboard and mouse hooks, installed only while something needs them
+    /// (`update_input_hooks`).
     pub keyboard: Option<HHOOK>,
     pub mouse: Option<HHOOK>,
+    /// Whether the hooks serve drag monitoring.
+    pub drag_input: bool,
+    /// Caps Lock's state while it is the Snappy key.
+    pub caps_lock: Option<CapsLockKeys>,
     /// The window in a move or size loop.
     pub drag: Option<HWND>,
     /// Modifiers last reported during drag monitoring.

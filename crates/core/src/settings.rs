@@ -36,6 +36,10 @@ pub struct Settings {
     /// then (`read_as_before_the_snappy_key`).
     #[serde(default)]
     pub snappy_key: SnappyKey,
+    /// Caps Lock, held, stands for the Snappy key, and tapped alone still turns Caps Lock on
+    /// or off. Off unless the user turns it on.
+    #[serde(default)]
+    pub caps_lock_as_snappy_key: bool,
     pub navigation: Navigation,
     pub layouts: Layouts,
     pub workspaces: Workspaces,
@@ -645,6 +649,7 @@ impl Settings {
                 shortcuts_enabled: true,
             },
             snappy_key: SnappyKey::DEFAULT,
+            caps_lock_as_snappy_key: false,
             navigation: Navigation::defaults(),
             layouts: Layouts {
                 default_layout_id: DEFAULT_LAYOUT_ID.to_owned(),
@@ -879,6 +884,9 @@ impl Settings {
             version: file.version.unwrap_or(FORMAT_VERSION),
             snapping: file.snapping.unwrap_or_else(|| defaults.snapping.clone()),
             snappy_key,
+            caps_lock_as_snappy_key: file
+                .caps_lock_as_snappy_key
+                .unwrap_or(defaults.caps_lock_as_snappy_key),
             navigation,
             layouts: file.layouts.unwrap_or_else(|| defaults.layouts.clone()),
             workspaces,
@@ -1016,6 +1024,7 @@ impl MissingChord {
 struct SettingsFile {
     version: Option<u32>,
     snapping: Option<Snapping>,
+    caps_lock_as_snappy_key: Option<bool>,
     /// Kept as written so shortcuts added after the file was saved can be told apart.
     navigation: Option<serde_json::Value>,
     layouts: Option<Layouts>,
@@ -1927,6 +1936,19 @@ mod tests {
                 None
             ]
         );
+    }
+
+    #[test]
+    fn caps_lock_is_not_the_snappy_key_unless_turned_on() {
+        assert!(!Settings::defaults(MAC).caps_lock_as_snappy_key);
+        let loaded = Settings::from_json(br#"{ "version": 1 }"#, MAC).unwrap();
+        assert!(!loaded.caps_lock_as_snappy_key);
+
+        let mut on = Settings::defaults(MAC);
+        on.caps_lock_as_snappy_key = true;
+        let saved = on.to_json().unwrap();
+        assert!(String::from_utf8_lossy(&saved).contains(r#""capsLockAsSnappyKey": true"#));
+        assert!(Settings::from_json(&saved, MAC).unwrap().caps_lock_as_snappy_key);
     }
 
     #[test]

@@ -150,6 +150,41 @@ pub trait HotKeys {
     fn is_available(&mut self, combo: &Combo) -> bool;
 }
 
+/// Caps Lock as the Snappy key. Held, Caps Lock acts as the Snappy key's modifiers, so
+/// every shortcut, and anything else that reads those modifiers, works with it as with the
+/// keys themselves, and Caps Lock never turns on. The adapter reports each press as
+/// `PlatformEvent::CapsLock`, and the engine decides whether it was a tap and asks for
+/// `toggle_caps_lock`. While Caps Lock is down the adapter may notice that another key or a
+/// mouse button is used, and says so, but never which.
+pub trait CapsLock {
+    /// Make Caps Lock, held, act as `modifiers`, replacing what an earlier call set up.
+    /// Refuses, with a sentence for the user, when the system already remaps Caps Lock or
+    /// the change can't be made. Returns what a later run needs to undo the change should
+    /// this one end without `restore_caps_lock`, as a crash does.
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String>;
+    /// Give Caps Lock back its usual behavior.
+    fn restore_caps_lock(&mut self);
+    /// Undo the change an earlier run made and left in place, from what its
+    /// `hold_caps_lock_as` returned.
+    fn undo_caps_lock(&mut self, undo: &CapsLockUndo);
+    /// Turn Caps Lock on or off, its light included, as a tap of the key does.
+    fn toggle_caps_lock(&mut self);
+}
+
+/// What an adapter needs to undo its Caps Lock change in a later run, in a form of its own.
+/// The engine keeps it in a state file while the change is in place.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CapsLockUndo(pub String);
+
+/// Caps Lock, while it is the Snappy key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapsLockInput {
+    Pressed,
+    /// Another key or a mouse button was used while Caps Lock was down.
+    OtherInput,
+    Released,
+}
+
 /// What one display's overlay shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OverlayScene {
@@ -331,7 +366,7 @@ impl LiveControl {
 }
 
 pub trait Platform:
-    WindowSystem + Input + HotKeys + Overlay + Permissions + DesktopGuard + Tray + LoginItem
+    WindowSystem + Input + HotKeys + CapsLock + Overlay + Permissions + DesktopGuard + Tray + LoginItem
 {
     fn capabilities(&self) -> Capabilities;
     /// Whether live control can run now. Adapters where this changes while Snappy runs
@@ -372,6 +407,9 @@ pub enum PlatformEvent {
         mods: Mods,
     },
     HotKey(u32),
+    /// Caps Lock went down or up, or something else was used meanwhile, while it is the
+    /// Snappy key.
+    CapsLock(CapsLockInput),
     WindowCreated {
         pid: u32,
     },

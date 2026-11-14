@@ -1,8 +1,9 @@
 //! Hand-written declarations for the C APIs the `objc2` crates don't cover:
-//! Accessibility, Carbon hotkeys, the display UUID lookup, and `kill`.
+//! Accessibility, Carbon hotkeys, the HID system, the display UUID lookup, and `kill`.
 
 pub mod ax;
 pub mod carbon;
+pub mod hid;
 
 use objc2_core_foundation::CFType;
 

@@ -20,5 +20,6 @@ pub mod scene;
 pub mod session;
 pub mod tray;
 pub mod wayland;
+pub mod xkb;
 
 pub use instance::{Claim, InstanceLock, claim, lock_path};

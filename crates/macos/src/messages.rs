@@ -12,6 +12,12 @@ pub const NOT_RESPONDING: &str = "The app is not responding. Try again when it i
 pub const CLOSED_OR_REVOKED: &str = "The window is closed or Accessibility access was revoked.";
 pub const UNAVAILABLE_OR_FULL_SCREEN: &str = "The window is unavailable or in full screen.";
 
+pub const CAPS_LOCK_IN_KEY_MAPPING: &str = "Caps Lock is already remapped by a key mapping (hidutil or a keyboard app). Remove that to use Caps Lock as the Snappy key.";
+pub const CAPS_LOCK_IN_MODIFIER_KEYS: &str = "Caps Lock is already remapped by System Settings (Keyboard Shortcuts, Modifier Keys). Remove that to use Caps Lock as the Snappy key.";
+pub const CAPS_LOCK_UNMAPPABLE: &str = "macOS didn't let Snappy remap Caps Lock. Try again in a moment.";
+pub const CAPS_LOCK_UNWATCHED: &str =
+    "Snappy couldn't watch Caps Lock. Check that Accessibility is on for Snappy in System Settings.";
+
 pub const SWAP_NEEDS_PERMISSION: &str = "Accessibility access is required to swap windows.";
 pub const SWAP_LIST_UNREADABLE: &str = "Could not check which window occupies the zone.";
 pub const SWAP_UNSUPPORTED_OCCUPANT: &str = "An unsupported app occupies that zone. The swap was cancelled.";

@@ -6,19 +6,20 @@ use std::time::{Duration, Instant};
 use objc2_app_kit::NSApplication;
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Platform as PlatformName};
+use snappy_core::keys::{Combo, Mods, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
-    OverlayScene, Permissions, Platform, TabGroup, Tray, TrayMenu, WindowId, WindowInfo, WindowState,
-    WindowSystem,
+    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
+    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, TabGroup, Tray, TrayMenu, WindowId,
+    WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::ax::{self, AxElement};
 use crate::registry::Shared;
 use crate::windows::Windows;
 use crate::{
-    desktop_guard, displays, hotkeys, login_item, main_thread, monitors, overlay, permissions, tray,
+    caps_lock, desktop_guard, displays, hotkeys, login_item, main_thread, monitors, overlay, permissions,
+    tray,
 };
 
 pub struct MacPlatform {
@@ -149,6 +150,24 @@ impl HotKeys for MacPlatform {
     fn is_available(&mut self, combo: &Combo) -> bool {
         let combo = combo.clone();
         main_thread::sync(move |_| hotkeys::is_available(&combo))
+    }
+}
+
+impl CapsLock for MacPlatform {
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
+        caps_lock::hold_as(modifiers)
+    }
+
+    fn restore_caps_lock(&mut self) {
+        caps_lock::restore();
+    }
+
+    fn undo_caps_lock(&mut self, undo: &CapsLockUndo) {
+        caps_lock::undo(undo);
+    }
+
+    fn toggle_caps_lock(&mut self) {
+        caps_lock::toggle();
     }
 }
 

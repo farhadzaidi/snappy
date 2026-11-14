@@ -16,7 +16,7 @@ use snappy_core::swap::{SwapModifier, WhenTaken};
 use snappy_platform::{Display, Remedy};
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 /// Messages larger than this are refused; settings files are capped well below it.
 pub const MAX_MESSAGE_BYTES: u32 = 8 * 1024 * 1024;
 
@@ -72,6 +72,11 @@ pub enum Command {
     /// every shortcut still works with them.
     SetSnappyKey {
         modifiers: Mods,
+    },
+    /// Hold Caps Lock as the Snappy key, or give it back its usual behavior. Turning it on
+    /// is refused, with the reason, when the system already remaps Caps Lock.
+    SetCapsLockAsSnappyKey {
+        enabled: bool,
     },
     /// A shortcut of the navigation section: moving the focused window between zones or
     /// into the nearest empty zone, moving focus, or changing the selection.
@@ -166,6 +171,10 @@ pub struct AppState {
     pub status: Option<Status>,
     /// The ID of a workspace newly added by `AddWorkspace`, so the page can select it.
     pub added_workspace: Option<String>,
+    /// Why Caps Lock isn't the Snappy key although the setting asks for it, such as the
+    /// system remapping Caps Lock since it was turned on.
+    #[serde(default)]
+    pub caps_lock_problem: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -321,6 +330,13 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn caps_lock_as_the_snappy_key_has_a_command_of_its_own() {
+        let command: Command =
+            serde_json::from_str(r#"{"kind":"setCapsLockAsSnappyKey","enabled":true}"#).unwrap();
+        assert_eq!(command, Command::SetCapsLockAsSnappyKey { enabled: true });
     }
 
     #[test]

@@ -165,6 +165,19 @@ impl CarbonChord {
     }
 }
 
+/// The NSEvent and CGEvent modifier flags for `mods`; both use the same bits.
+pub fn event_flags(mods: Mods) -> u64 {
+    [
+        (Modifier::Shift, EVENT_SHIFT),
+        (Modifier::Ctrl, EVENT_CONTROL),
+        (Modifier::Alt, EVENT_OPTION),
+        (Modifier::Meta, EVENT_COMMAND),
+    ]
+    .iter()
+    .filter(|(modifier, _)| mods.contains(*modifier))
+    .fold(0, |flags, (_, bit)| flags | *bit as u64)
+}
+
 /// The modifiers held, from an NSEvent's raw modifier flags.
 pub fn mods_from_event_flags(flags: usize) -> Mods {
     [
@@ -261,6 +274,15 @@ mod tests {
             CarbonChord::from_combo(&Combo::new("Nope", [Modifier::Ctrl])),
             None
         );
+    }
+
+    #[test]
+    fn mods_become_event_flags_and_back() {
+        let hyper = Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
+        let flags = event_flags(hyper);
+        assert_eq!(flags, (EVENT_CONTROL | EVENT_OPTION | EVENT_COMMAND) as u64);
+        assert_eq!(mods_from_event_flags(flags as usize), hyper);
+        assert_eq!(event_flags(Mods::NONE), 0);
     }
 
     #[test]

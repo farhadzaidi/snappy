@@ -42,6 +42,8 @@ pub struct State {
     pub marked: HashMap<String, OverlayMarks>,
     /// Display IDs to window units per point, from the last display read.
     pub scales: HashMap<String, f64>,
+    /// The request that holds Caps Lock as the Snappy key, while it is held.
+    pub caps_lock: Option<Request>,
 }
 
 impl State {
@@ -117,6 +119,7 @@ impl Shared {
                     marks: marks.clone(),
                 });
             }
+            requests.extend(state.caps_lock.clone());
             requests
         };
         for request in requests {

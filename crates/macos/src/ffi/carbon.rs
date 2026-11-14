@@ -21,6 +21,8 @@ pub const EVENT_NOT_HANDLED_ERR: OSStatus = -9874;
 pub const EVENT_CLASS_KEYBOARD: u32 = u32::from_be_bytes(*b"keyb");
 /// `kEventHotKeyPressed`.
 pub const EVENT_HOT_KEY_PRESSED: u32 = 5;
+/// `kEventHotKeyReleased`.
+pub const EVENT_HOT_KEY_RELEASED: u32 = 6;
 /// `kEventParamDirectObject`, `'----'`.
 pub const EVENT_PARAM_DIRECT_OBJECT: u32 = u32::from_be_bytes(*b"----");
 /// `typeEventHotKeyID`, `'hkid'`.
@@ -65,6 +67,7 @@ unsafe extern "C" {
         hot_key: *mut EventHotKeyRef,
     ) -> OSStatus;
     pub fn UnregisterEventHotKey(hot_key: EventHotKeyRef) -> OSStatus;
+    pub fn GetEventKind(event: EventRef) -> u32;
     pub fn GetEventParameter(
         event: EventRef,
         name: u32,

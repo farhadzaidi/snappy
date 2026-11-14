@@ -12,6 +12,7 @@ use snappy_linux::journal;
 use snappy_platform::{LiveControl, OverlayScene, TrayMenu};
 
 use crate::bus::Bus;
+use crate::caps_lock;
 use crate::keystate::{self, Watch};
 use crate::overlay::{Overlays, Target};
 use crate::protocol::{Event, Request};
@@ -23,6 +24,12 @@ pub enum Incoming {
     Modifiers(Mods, Instant),
     /// One of Snappy's shortcuts, by the action KDE knows it as.
     Shortcut(String),
+    /// The held modifiers, while Caps Lock is the Snappy key.
+    CapsLockModifiers(Mods),
+    /// The session was locked, or unlocked.
+    ScreenLocked(bool),
+    /// Another program changed KDE's keyboard layout settings.
+    KeyboardSettingsChanged,
     /// KWin started, stopped, or started over.
     KWinChanged,
     Tray(TrayMenu),
@@ -60,6 +67,8 @@ pub struct State {
     pub targets: HashMap<String, Target>,
     /// Follows the modifier keys while drag monitoring is on.
     pub modifiers: Option<Watch>,
+    /// Caps Lock held as the Snappy key, while it is.
+    pub caps_lock: Option<caps_lock::Hold>,
 }
 
 impl State {
@@ -108,6 +117,11 @@ impl Shared {
 
     pub fn send_incoming(&self, incoming: Incoming) {
         let _ = self.incoming.send(incoming);
+    }
+
+    /// Where listening threads send what they hear.
+    pub fn incoming(&self) -> Sender<Incoming> {
+        self.incoming.clone()
     }
 
     /// Starts or stops following the modifier keys. A failure leaves drags without

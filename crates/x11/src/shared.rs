@@ -9,6 +9,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt, EventMask, Window};
 use x11rb::rust_connection::RustConnection;
 
+use crate::caps_lock::CapsLockState;
 use crate::hotkeys::HotKeyTable;
 use crate::input::Monitoring;
 use crate::keys::{Keymap, ModMasks, ModifierKeys};
@@ -24,6 +25,7 @@ pub struct Shared {
     pub keyboard: Mutex<Keyboard>,
     pub hotkeys: Mutex<HotKeyTable>,
     pub monitoring: Mutex<Monitoring>,
+    pub caps_lock: Mutex<CapsLockState>,
     /// Display IDs to scale factors, from the last display read.
     pub scales: Mutex<HashMap<String, f64>>,
     tracked: Mutex<HashSet<Window>>,
@@ -85,6 +87,7 @@ impl Shared {
             keyboard: Mutex::new(keyboard),
             hotkeys: Mutex::new(HotKeyTable::default()),
             monitoring: Mutex::new(Monitoring::default()),
+            caps_lock: Mutex::new(CapsLockState::default()),
             scales: Mutex::new(HashMap::new()),
             tracked: Mutex::new(HashSet::new()),
         }

@@ -12,6 +12,7 @@
 
 mod app;
 mod bus;
+mod caps_lock;
 mod displays;
 mod error;
 mod keys;

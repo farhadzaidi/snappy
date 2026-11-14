@@ -10,6 +10,10 @@ pub trait Input {
     fn pointer_drag(&mut self, to: Point, mods: Mods) -> Result<(), String>;
     fn pointer_up(&mut self, at: Point, mods: Mods) -> Result<(), String>;
     fn key(&mut self, code: &KeyCode, mods: Mods) -> Result<(), String>;
+    /// Press Caps Lock, or let it go with `down` false.
+    fn caps_lock(&mut self, down: bool) -> Result<(), String>;
+    /// Whether Caps Lock is on.
+    fn caps_lock_on(&mut self) -> Result<bool, String>;
 
     /// Press and release a key with its modifiers, the Snappy key already expanded.
     fn chord(&mut self, combo: &Combo) -> Result<(), String> {
@@ -48,7 +52,10 @@ pub use mac::MacInput as PlatformInput;
 #[cfg(target_os = "macos")]
 mod mac {
     use objc2_core_foundation::CGPoint;
-    use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton};
+    use objc2_core_graphics::{
+        CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation, CGEventType,
+        CGMouseButton,
+    };
     use snappy_core::geometry::Point;
     use snappy_core::keys::{KeyCode, Modifier, Mods};
 
@@ -77,6 +84,10 @@ mod mac {
         }
         flags
     }
+
+    /// F18, the key Snappy has macOS make of Caps Lock. Posted events join the stream past
+    /// the HID remap, so the scenarios press what Caps Lock arrives as.
+    const CAPS_LOCK_AS_SNAPPY_KEY: u16 = 79;
 
     /// The left-hand key for each modifier.
     fn modifier_key(modifier: Modifier) -> u16 {
@@ -158,6 +169,21 @@ mod mac {
             }
             Ok(())
         }
+
+        /// Function keys report with the function flag, as real arrow keys do; shortcuts match
+        /// on it.
+        fn caps_lock(&mut self, down: bool) -> Result<(), String> {
+            let event = CGEvent::new_keyboard_event(None, CAPS_LOCK_AS_SNAPPY_KEY, down)
+                .ok_or("could not create a key event")?;
+            CGEvent::set_flags(Some(&event), CGEventFlags::MaskSecondaryFn);
+            CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
+            Ok(())
+        }
+
+        fn caps_lock_on(&mut self) -> Result<bool, String> {
+            let flags = CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState);
+            Ok(flags.contains(CGEventFlags::MaskAlphaShift))
+        }
     }
 }
 
@@ -170,15 +196,19 @@ mod win32 {
     use snappy_core::keys::{KeyCode, Modifier, Mods};
     use snappy_windows::reference;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-        KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
-        MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput, VIRTUAL_KEY,
+        GetKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE,
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
+        SendInput, VIRTUAL_KEY, VK_CAPITAL,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
     };
 
     use super::{Input, MODIFIER_ORDER};
+
+    /// Caps Lock's scan code.
+    const CAPS_LOCK_SCAN: u16 = 0x3a;
 
     /// Injects input with `SendInput`, which the system handles like device input: move
     /// loops, hotkeys, and low-level hooks all see it. Keys go by scan code, so the
@@ -294,6 +324,20 @@ mod win32 {
             }
             Ok(())
         }
+
+        fn caps_lock(&mut self, down: bool) -> Result<(), String> {
+            let up = if down {
+                KEYBD_EVENT_FLAGS(0)
+            } else {
+                KEYEVENTF_KEYUP
+            };
+            keyboard(0, CAPS_LOCK_SCAN, KEYEVENTF_SCANCODE | up)
+        }
+
+        fn caps_lock_on(&mut self) -> Result<bool, String> {
+            // SAFETY: a plain query; the low bit is the key's toggle state.
+            Ok(unsafe { GetKeyState(i32::from(VK_CAPITAL.0)) } & 1 == 1)
+        }
     }
 }
 
@@ -322,8 +366,8 @@ mod x11 {
     use snappy_x11::reference::Keys;
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{
-        BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
-        Window,
+        BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt as _, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
+        KeyButMask, MOTION_NOTIFY_EVENT, Window,
     };
     use x11rb::protocol::xtest::ConnectionExt as _;
     use x11rb::rust_connection::RustConnection;
@@ -332,6 +376,8 @@ mod x11 {
     use super::{Input, MODIFIER_ORDER};
 
     const PRIMARY_BUTTON: u8 = 1;
+    /// Caps Lock's evdev keycode.
+    const CAPS_LOCK: u8 = 66;
 
     /// Fakes device input through XTest, which the server handles like hardware input:
     /// the window manager's moves, grabs, and XInput raw events all see it.
@@ -411,6 +457,22 @@ mod x11 {
                 super::pause(20);
             }
             Ok(())
+        }
+
+        fn caps_lock(&mut self, down: bool) -> Result<(), String> {
+            let kind = if down { KEY_PRESS_EVENT } else { KEY_RELEASE_EVENT };
+            self.fake(kind, CAPS_LOCK, None)
+        }
+
+        /// The core protocol's state includes locked modifiers, Lock among them.
+        fn caps_lock_on(&mut self) -> Result<bool, String> {
+            let pointer = self
+                .conn
+                .query_pointer(self.root)
+                .map_err(|error| error.to_string())?
+                .reply()
+                .map_err(|error| error.to_string())?;
+            Ok(pointer.mask.contains(KeyButMask::LOCK))
         }
     }
 }

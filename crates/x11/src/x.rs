@@ -51,6 +51,7 @@ x11rb::atom_manager! {
         RESOURCE_MANAGER,
         _SNAPPY_PARKING_DESKTOP,
         _SNAPPY_STOP,
+        _XKB_RULES_NAMES,
         UTF8_STRING,
     }
 }

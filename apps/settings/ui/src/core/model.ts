@@ -77,6 +77,8 @@ export interface Settings {
   };
   /** The modifiers the Snappy key stands for, at least two. */
   snappyKey: Modifier[];
+  /** Caps Lock, held, stands for the Snappy key; tapped alone, it still turns Caps Lock on or off. */
+  capsLockAsSnappyKey: boolean;
   navigation: Navigation;
   layouts: {
     defaultLayoutId: string;
@@ -157,6 +159,8 @@ export interface AppState {
   debugLogPath: string;
   status: Status | null;
   addedWorkspace: string | null;
+  /** Why Caps Lock isn't the Snappy key though the setting asks for it. */
+  capsLockProblem: string | null;
 }
 
 export type ToSettings =
@@ -174,6 +178,7 @@ export type Command =
   | { kind: "setWhenTaken"; choice: WhenTaken }
   | { kind: "setShortcutsEnabled"; enabled: boolean }
   | { kind: "setSnappyKey"; modifiers: Modifier[] }
+  | { kind: "setCapsLockAsSnappyKey"; enabled: boolean }
   | { kind: "setNavigationShortcut"; shortcut: NavigationShortcut; chord: KeyChord | null }
   | { kind: "applyLayout"; display: string; layout: string }
   | { kind: "saveLayout"; layout: Layout; options: LayoutOptions; display: string }

@@ -29,6 +29,12 @@ const GLOBAL_ACCEL_INTERFACE: &str = "org.kde.KGlobalAccel";
 pub const COMPONENT_INTERFACE: &str = "org.kde.kglobalaccel.Component";
 /// KWin's own shortcut component, where the script's doorbell lives.
 const KWIN_COMPONENT_PATH: &str = "/component/kwin";
+/// KConfig's change notifications: a signal on the file's name as a path, with the changed
+/// keys by group (`a{saay}`), which KConfigWatcher turns into a reload.
+pub const KXKBRC_PATH: &str = "/kxkbrc";
+pub const CONFIG_NOTIFY_INTERFACE: &str = "org.kde.kconfig.notify";
+pub const CONFIG_CHANGED: &str = "ConfigChanged";
+pub const SCREEN_SAVER_INTERFACE: &str = "org.freedesktop.ScreenSaver";
 const DBUS_NAME: &str = "org.freedesktop.DBus";
 const DBUS_PATH: &str = "/org/freedesktop/DBus";
 
@@ -468,6 +474,26 @@ impl Bus {
             "unregister",
             (component, action),
         )
+    }
+
+    /// KConfig's change notification for `kxkbrc`'s `[Layout]` group, naming `keys`, as
+    /// System Settings sends it when it saves the keyboard settings.
+    pub fn notify_config_changed(&self, keys: &[&str]) -> Result<(), CallError> {
+        let changed: HashMap<String, Vec<Vec<u8>>> = HashMap::from([(
+            crate::caps_lock::CHANGED_GROUP.to_owned(),
+            keys.iter().map(|key| key.as_bytes().to_vec()).collect(),
+        )]);
+        self.run(move |conn| {
+            conn.emit_signal(
+                None::<&str>,
+                KXKBRC_PATH,
+                CONFIG_NOTIFY_INTERFACE,
+                CONFIG_CHANGED,
+                &(changed,),
+            )
+            .map_err(|error| CallError::Unreachable(error.to_string()))
+        })
+        .unwrap_or_else(|| Err(CallError::Unreachable("the bus thread stopped".to_owned())))
     }
 
     /// Every action holding exactly this key sequence, as `(component, action)`.

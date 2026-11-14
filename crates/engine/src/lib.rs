@@ -5,6 +5,7 @@
 //! that set and run one at a time; a new operation cancels the one in flight.
 
 mod actions;
+mod caps_lock;
 mod commands;
 mod core;
 mod debug_log;
@@ -63,6 +64,7 @@ impl<P: Platform + 'static> Engine<P> {
             }
         }
         core.displays = core.platform.displays();
+        caps_lock::start(&mut core);
         core.refresh_live(false);
         workspaces::configure(&mut core);
         if first_launch {
@@ -111,6 +113,7 @@ impl<P: Platform + 'static> Engine<P> {
             }
             PlatformEvent::PointerUp { at, mods } => drag::pointer_up(shared, at, mods),
             PlatformEvent::HotKey(id) => actions::hotkey(shared, id),
+            PlatformEvent::CapsLock(input) => caps_lock::input(&mut shared.core.borrow_mut(), input),
             PlatformEvent::WindowCreated { .. } => workspaces::focus_changed(shared, false),
             PlatformEvent::FocusChanged { by_activation, .. } => {
                 workspaces::focus_changed(shared, by_activation)
@@ -223,9 +226,10 @@ impl<P: Platform + 'static> Engine<P> {
         Self::release(&mut core);
     }
 
-    /// Write timings and give up input, shortcuts, and overlays.
+    /// Write timings and give up input, shortcuts, overlays, and Caps Lock.
     fn release(core: &mut crate::core::Core<P>) {
         core.diagnostics.export_timings();
+        caps_lock::stop(core);
         core.platform.set_press_monitoring(false);
         core.platform.set_drag_monitoring(false);
         core.platform.unregister_all();

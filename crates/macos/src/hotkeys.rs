@@ -2,7 +2,9 @@
 //!
 //! One event handler on the application target receives every press. Registrations
 //! carry Snappy's signature and an ID derived from the chord; the availability probe
-//! uses a separate signature so its press could never be mistaken for a shortcut.
+//! uses a separate signature so its press could never be mistaken for a shortcut. The key
+//! Caps Lock arrives as, while it is the Snappy key, has a signature of its own, and its
+//! releases count too.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -12,18 +14,21 @@ use std::ptr;
 use snappy_core::keys::Combo;
 use snappy_platform::PlatformEvent;
 
+use crate::caps_lock;
 use crate::events::emit;
 use crate::ffi::carbon::{
-    EVENT_CLASS_KEYBOARD, EVENT_HOT_KEY_PRESSED, EVENT_NOT_HANDLED_ERR, EVENT_PARAM_DIRECT_OBJECT,
-    EventHandlerCallRef, EventHandlerRef, EventHotKeyID, EventHotKeyRef, EventRef, EventTypeSpec,
-    GetApplicationEventTarget, GetEventParameter, InstallEventHandler, NO_ERR, OSStatus, RegisterEventHotKey,
-    TYPE_EVENT_HOT_KEY_ID, UnregisterEventHotKey,
+    CMD_KEY, CONTROL_KEY, EVENT_CLASS_KEYBOARD, EVENT_HOT_KEY_PRESSED, EVENT_HOT_KEY_RELEASED,
+    EVENT_NOT_HANDLED_ERR, EVENT_PARAM_DIRECT_OBJECT, EventHandlerCallRef, EventHandlerRef, EventHotKeyID,
+    EventHotKeyRef, EventRef, EventTypeSpec, GetApplicationEventTarget, GetEventKind, GetEventParameter,
+    InstallEventHandler, NO_ERR, OPTION_KEY, OSStatus, RegisterEventHotKey, SHIFT_KEY, TYPE_EVENT_HOT_KEY_ID,
+    UnregisterEventHotKey,
 };
 use crate::keycodes::CarbonChord;
 use crate::system_shortcuts;
 
 const SIGNATURE: u32 = u32::from_be_bytes(*b"SNAP");
 const PROBE_SIGNATURE: u32 = u32::from_be_bytes(*b"SNPR");
+const CAPS_LOCK_SIGNATURE: u32 = u32::from_be_bytes(*b"SNCL");
 
 #[derive(Default)]
 struct HotKeys {
@@ -31,6 +36,8 @@ struct HotKeys {
     registered: Vec<EventHotKeyRef>,
     /// Chord-derived Carbon ID to the engine's shortcut ID.
     engine_ids: HashMap<u32, u32>,
+    /// The key Caps Lock arrives as, under every combination of modifiers.
+    caps_lock: Vec<EventHotKeyRef>,
 }
 
 thread_local! {
@@ -44,18 +51,18 @@ pub fn install_handler() {
         if hot_keys.handler.is_some() {
             return;
         }
-        let spec = EventTypeSpec {
+        let specs = [EVENT_HOT_KEY_PRESSED, EVENT_HOT_KEY_RELEASED].map(|kind| EventTypeSpec {
             event_class: EVENT_CLASS_KEYBOARD,
-            event_kind: EVENT_HOT_KEY_PRESSED,
-        };
+            event_kind: kind,
+        });
         let mut handler = ptr::null_mut();
-        // SAFETY: valid target, handler, one type spec, and out-pointer.
+        // SAFETY: valid target, handler, type specs, and out-pointer.
         let status = unsafe {
             InstallEventHandler(
                 GetApplicationEventTarget(),
                 on_hot_key,
-                1,
-                &spec,
+                specs.len(),
+                specs.as_ptr(),
                 ptr::null_mut(),
                 &mut handler,
             )
@@ -100,6 +107,44 @@ pub fn unregister_all() {
             unsafe { UnregisterEventHotKey(hot_key) };
         }
         hot_keys.engine_ids.clear();
+    });
+}
+
+/// Watch `key_code`, the key Caps Lock arrives as, with or without any other modifier held,
+/// so Caps Lock stands for the Snappy key whatever else is down. False when Carbon refused.
+pub fn register_caps_lock_key(key_code: u32) -> bool {
+    HOT_KEYS.with(|hot_keys| {
+        let mut hot_keys = hot_keys.borrow_mut();
+        if !hot_keys.caps_lock.is_empty() {
+            return true;
+        }
+        let modifiers = [CMD_KEY, SHIFT_KEY, OPTION_KEY, CONTROL_KEY];
+        for held in 0..1u32 << modifiers.len() {
+            let mask = modifiers
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| held & (1 << bit) != 0)
+                .fold(0, |mask, (_, modifier)| mask | modifier);
+            let carbon = CarbonChord {
+                key_code,
+                modifiers: mask,
+                id: mask | key_code,
+            };
+            match register_chord(carbon, CAPS_LOCK_SIGNATURE, carbon.id) {
+                Some(hot_key) => hot_keys.caps_lock.push(hot_key),
+                None => return false,
+            }
+        }
+        true
+    })
+}
+
+pub fn unregister_caps_lock_key() {
+    HOT_KEYS.with(|hot_keys| {
+        for hot_key in hot_keys.borrow_mut().caps_lock.drain(..) {
+            // SAFETY: each reference came from a successful registration.
+            unsafe { UnregisterEventHotKey(hot_key) };
+        }
     });
 }
 
@@ -152,7 +197,16 @@ unsafe extern "C" fn on_hot_key(_call: EventHandlerCallRef, event: EventRef, _da
             (&mut id as *mut EventHotKeyID).cast(),
         )
     };
-    if status != NO_ERR || id.signature != SIGNATURE {
+    if status != NO_ERR {
+        return EVENT_NOT_HANDLED_ERR;
+    }
+    // SAFETY: Carbon passes a valid event.
+    let pressed = unsafe { GetEventKind(event) } == EVENT_HOT_KEY_PRESSED;
+    if id.signature == CAPS_LOCK_SIGNATURE {
+        caps_lock::key_changed(pressed);
+        return NO_ERR;
+    }
+    if id.signature != SIGNATURE || !pressed {
         return EVENT_NOT_HANDLED_ERR;
     }
     let engine_id = HOT_KEYS.with(|hot_keys| {

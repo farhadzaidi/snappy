@@ -27,6 +27,8 @@ const FIRST_STEP: f64 = 12.0;
 const HOVER_MS: u64 = 100;
 /// How long a drag waits for GNOME Shell to start moving the window.
 const MOVE_START_TIMEOUT: Duration = Duration::from_secs(1);
+/// Caps Lock's evdev keycode.
+const CAPS_LOCK: u8 = 66;
 
 /// Whether the suite runs in a GNOME on Wayland session.
 pub fn is_session() -> bool {
@@ -151,16 +153,19 @@ pub fn on_screen_windows(daemon: Option<i32>) -> Result<Vec<ScreenWindow>, Strin
         .collect()
 }
 
-/// Lets go of the button and every modifier, so a failed scenario leaves nothing held.
+/// Lets go of the button, every modifier, and Caps Lock, so a failed scenario leaves nothing
+/// held.
 pub fn release_all() {
     let _ = call(release_all_request());
 }
 
-/// The request that lets go of the button and every modifier key the tests press.
+/// The request that lets go of the button and every key the tests hold down.
 fn release_all_request() -> Value {
     let keycodes: Vec<u8> = MODIFIER_ORDER
         .into_iter()
-        .map(|modifier| key_codes::modifier_keycode(modifier) - key_codes::EVDEV_OFFSET)
+        .map(key_codes::modifier_keycode)
+        .chain([CAPS_LOCK])
+        .map(|keycode| keycode - key_codes::EVDEV_OFFSET)
         .collect();
     json!({"op": "releaseAll", "keycodes": keycodes})
 }
@@ -274,5 +279,14 @@ impl Input for GnomeInput {
             pause(20);
         }
         Ok(())
+    }
+
+    fn caps_lock(&mut self, down: bool) -> Result<(), String> {
+        self.key_event(CAPS_LOCK, down)
+    }
+
+    /// The Caps Lock state of GNOME Shell's keymap, which every keyboard's light follows.
+    fn caps_lock_on(&mut self) -> Result<bool, String> {
+        Ok(call(json!({"op": "capsLockOn"}))?.as_bool().unwrap_or(false))
     }
 }

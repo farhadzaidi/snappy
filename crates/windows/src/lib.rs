@@ -2,12 +2,13 @@
 //!
 //! `App` lives on the main thread and owns everything that must run there: a hidden
 //! window and its message loop, WinEvent hooks, the low-level input hooks while
-//! dragging, hotkeys, overlays, the notification-area icon, and the desktop guard.
+//! dragging and for Caps Lock as the Snappy key, hotkeys, overlays, the notification-area icon, and the desktop guard.
 //! `WindowsPlatform` is the engine thread's handle: it reads and moves windows directly
 //! and sends main-thread work through a dispatcher.
 #![cfg(windows)]
 
 mod app;
+mod caps_lock;
 mod class;
 mod desktop_guard;
 mod dispatch;

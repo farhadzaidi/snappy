@@ -13,17 +13,19 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{KeyChord, Modifier, Mods, Platform as PlatformName};
+use snappy_core::keys::{KeyChord, Modifier, Mods, Platform as PlatformName, SnappyKey};
 use snappy_core::settings::{Settings, Workspace};
 use snappy_gnome::{App, GnomePlatform, Stopper};
 use snappy_linux::key_codes;
 use snappy_platform::{
-    Caption, DesktopGuard, HotKeys, Input, LiveControl, Overlay, OverlayScene, OverlayZone, Platform,
-    PlatformEvent, Tray, TrayMenu, WindowSystem,
+    CapsLock, CapsLockInput, Caption, DesktopGuard, HotKeys, Input, LiveControl, Overlay, OverlayScene,
+    OverlayZone, Platform, PlatformEvent, Tray, TrayMenu, WindowSystem,
 };
 use zbus::blocking::Connection;
 
 const WAIT: Duration = Duration::from_secs(5);
+/// Caps Lock's evdev keycode.
+const CAPS_LOCK: u8 = 66;
 /// Where a title bar is grabbed, below the window's top edge.
 const TITLE_BAR_GRIP: f64 = 14.0;
 /// The modifier keys the tests press, in the order they press them.
@@ -142,6 +144,19 @@ impl Shell {
 
     fn modifier(&self, modifier: Modifier, pressed: bool) {
         self.key(key_codes::modifier_keycode(modifier), pressed);
+    }
+
+    /// The Caps Lock state of GNOME Shell's keymap.
+    fn caps_lock_on(&self) -> bool {
+        self.helper(json!({"op": "capsLockOn"})) == true
+    }
+
+    fn wait_caps_lock(&self, on: bool) {
+        let deadline = Instant::now() + WAIT;
+        while self.caps_lock_on() != on {
+            assert!(Instant::now() < deadline, "Caps Lock never turned {on}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn press_chord(&self, chord: &KeyChord) {
@@ -268,6 +283,7 @@ impl Drop for Shell {
             &(release_all_request().to_string(),),
         );
         self.fixtures.clear();
+        self.platform.restore_caps_lock();
         self.platform.unregister_all();
         self.platform.set_press_monitoring(false);
         self.platform.set_drag_monitoring(false);
@@ -916,11 +932,221 @@ fn key_request(keycode: u8, pressed: bool) -> Value {
     json!({"op": "key", "keycode": keycode - key_codes::EVDEV_OFFSET, "pressed": pressed})
 }
 
-/// The helper's request to let go of the button and every modifier the tests press.
+/// The helper's request to let go of the button, every modifier, and Caps Lock.
 fn release_all_request() -> Value {
     let keycodes: Vec<u8> = MODIFIERS
         .into_iter()
-        .map(|modifier| key_codes::modifier_keycode(modifier) - key_codes::EVDEV_OFFSET)
+        .map(key_codes::modifier_keycode)
+        .chain([CAPS_LOCK])
+        .map(|keycode| keycode - key_codes::EVDEV_OFFSET)
         .collect();
     json!({"op": "releaseAll", "keycodes": keycodes})
+}
+
+fn caps_lock(input: CapsLockInput) -> PlatformEvent {
+    PlatformEvent::CapsLock(input)
+}
+
+/// Only Caps Lock's own events, in order.
+fn caps_lock_events(events: &[PlatformEvent]) -> Vec<PlatformEvent> {
+    events
+        .iter()
+        .filter(|event| matches!(event, PlatformEvent::CapsLock(_)))
+        .cloned()
+        .collect()
+}
+
+/// Taps Caps Lock alone, and returns what the adapter reported up to its release.
+fn tap_caps_lock(shell: &Shell) -> Vec<PlatformEvent> {
+    shell.key(CAPS_LOCK, true);
+    std::thread::sleep(Duration::from_millis(60));
+    shell.key(CAPS_LOCK, false);
+    shell.wait_for("Caps Lock coming up", |event| {
+        *event == caps_lock(CapsLockInput::Released)
+    })
+}
+
+/// Snappy's option files in the session's XKB folder.
+fn xkb_folder() -> std::path::PathBuf {
+    snappy_linux::xkb::user_folder().unwrap()
+}
+
+#[test]
+fn caps_lock_held_is_the_snappy_key_and_each_press_is_reported_without_its_keys() {
+    let mut shell = shell!();
+    let key = SnappyKey::DEFAULT;
+    let right = KeyChord::snappy("ArrowRight", []);
+    assert!(shell.platform.register(&[(11, right.combo(key))]).is_empty());
+    shell.platform.hold_caps_lock_as(key.modifiers()).unwrap();
+    assert!(xkb_folder().join("symbols/snappy").exists());
+    std::thread::sleep(Duration::from_millis(300));
+    shell.drain();
+    assert!(!shell.caps_lock_on());
+
+    // Held with an arrow, Caps Lock is the Snappy key, and never turns on.
+    shell.key(CAPS_LOCK, true);
+    std::thread::sleep(Duration::from_millis(60));
+    let arrow = key_codes::evdev_keycode("ArrowRight").unwrap();
+    shell.key(arrow, true);
+    shell.key(arrow, false);
+    shell.key(CAPS_LOCK, false);
+    let seen = shell.wait_for("Caps Lock coming up", |event| {
+        *event == caps_lock(CapsLockInput::Released)
+    });
+    assert!(seen.contains(&PlatformEvent::HotKey(11)), "{seen:?}");
+    assert_eq!(caps_lock_events(&seen)[0], caps_lock(CapsLockInput::Pressed));
+    assert!(!shell.caps_lock_on(), "holding never turns Caps Lock on");
+
+    // Alone, a press is only pressed and released.
+    assert_eq!(
+        caps_lock_events(&tap_caps_lock(&shell)),
+        [
+            caps_lock(CapsLockInput::Pressed),
+            caps_lock(CapsLockInput::Released)
+        ]
+    );
+    assert!(
+        !shell.caps_lock_on(),
+        "the adapter only reports; the engine decides"
+    );
+
+    // Another key, or a button, while it is down is reported as something else used.
+    shell.key(CAPS_LOCK, true);
+    std::thread::sleep(Duration::from_millis(60));
+    let j = key_codes::evdev_keycode("KeyJ").unwrap();
+    shell.key(j, true);
+    shell.key(j, false);
+    shell.key(CAPS_LOCK, false);
+    let seen = shell.wait_for("Caps Lock coming up", |event| {
+        *event == caps_lock(CapsLockInput::Released)
+    });
+    assert_eq!(
+        caps_lock_events(&seen),
+        [
+            caps_lock(CapsLockInput::Pressed),
+            caps_lock(CapsLockInput::OtherInput),
+            caps_lock(CapsLockInput::Released)
+        ]
+    );
+    shell.pointer(Point::new(1700.0, 900.0));
+    shell.key(CAPS_LOCK, true);
+    std::thread::sleep(Duration::from_millis(60));
+    shell.button(true);
+    shell.button(false);
+    shell.key(CAPS_LOCK, false);
+    let seen = shell.wait_for("Caps Lock coming up", |event| {
+        *event == caps_lock(CapsLockInput::Released)
+    });
+    assert!(
+        caps_lock_events(&seen).contains(&caps_lock(CapsLockInput::OtherInput)),
+        "{seen:?}"
+    );
+
+    // The Snappy key's own modifiers tapped alone are not Caps Lock.
+    for modifier in [Modifier::Ctrl, Modifier::Alt, Modifier::Meta] {
+        shell.modifier(modifier, true);
+    }
+    for modifier in [Modifier::Meta, Modifier::Alt, Modifier::Ctrl] {
+        shell.modifier(modifier, false);
+    }
+    assert!(caps_lock_events(&shell.drain()).is_empty());
+
+    // Turning Caps Lock on and off is the adapter's, as is Shift + Caps Lock, the real one.
+    shell.platform.toggle_caps_lock();
+    shell.wait_caps_lock(true);
+    shell.platform.toggle_caps_lock();
+    shell.wait_caps_lock(false);
+    shell.modifier(Modifier::Shift, true);
+    shell.key(CAPS_LOCK, true);
+    shell.key(CAPS_LOCK, false);
+    shell.modifier(Modifier::Shift, false);
+    shell.wait_caps_lock(true);
+    assert!(caps_lock_events(&shell.drain()).is_empty());
+
+    // Changing the Snappy key while Caps Lock is on keeps it on.
+    let control_shift = Mods::from_iter([Modifier::Ctrl, Modifier::Shift]);
+    shell.platform.hold_caps_lock_as(control_shift).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(shell.caps_lock_on());
+    let symbols = std::fs::read_to_string(xkb_folder().join("symbols/snappy")).unwrap();
+    assert!(symbols.contains("Control+Shift"), "{symbols}");
+
+    // Restored, Caps Lock is a plain Caps Lock again and Snappy's files are gone.
+    shell.platform.restore_caps_lock();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!xkb_folder().join("symbols/snappy").exists());
+    shell.drain();
+    tap(&shell, CAPS_LOCK);
+    shell.wait_caps_lock(false);
+    tap(&shell, CAPS_LOCK);
+    shell.wait_caps_lock(true);
+    tap(&shell, CAPS_LOCK);
+    shell.wait_caps_lock(false);
+    assert!(caps_lock_events(&shell.drain()).is_empty());
+}
+
+#[test]
+fn a_caps_lock_the_users_keyboard_options_remap_is_refused_naming_the_option() {
+    let mut shell = shell!();
+    let options = |value: &str| {
+        let status = Command::new("gsettings")
+            .args(["set", "org.gnome.desktop.input-sources", "xkb-options", value])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::thread::sleep(Duration::from_millis(300));
+    };
+    options("['caps:escape', 'compose:ralt']");
+    let refused = shell.platform.hold_caps_lock_as(SnappyKey::DEFAULT.modifiers());
+    options("[]");
+    assert_eq!(
+        refused.unwrap_err(),
+        "Caps Lock is already remapped by the keyboard option caps:escape. Remove that to use Caps \
+         Lock as the Snappy key."
+    );
+    assert!(!xkb_folder().join("symbols/snappy").exists());
+}
+
+#[test]
+fn the_extension_gives_caps_lock_back_when_snappy_goes_away() {
+    let shell = shell!();
+    std::fs::create_dir_all(xkb_folder()).unwrap();
+    snappy_linux::xkb::install(
+        &xkb_folder(),
+        SnappyKey::DEFAULT.modifiers(),
+        snappy_linux::xkb::CapsLockSymbol::Nothing,
+    )
+    .unwrap();
+    {
+        let other = Connection::session().unwrap();
+        let request = json!({
+            "op": "capsLockHold", "modifiers": "<Control><Alt><Super>", "mask": 76, "keycodes": [44],
+        });
+        other
+            .call_method(
+                Some("org.gnome.Shell"),
+                "/io/github/farhadzaidi/Snappy/Shell",
+                Some("io.github.farhadzaidi.Snappy.Shell"),
+                "Call",
+                &(request.to_string(),),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        tap(&shell, CAPS_LOCK);
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!shell.caps_lock_on(), "Caps Lock is the Snappy key while held");
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    tap(&shell, CAPS_LOCK);
+    shell.wait_caps_lock(true);
+    tap(&shell, CAPS_LOCK);
+    shell.wait_caps_lock(false);
+    snappy_linux::xkb::uninstall(&xkb_folder()).unwrap();
+}
+
+/// Presses and releases a key at a hand's pace.
+fn tap(shell: &Shell, keycode: u8) {
+    shell.key(keycode, true);
+    std::thread::sleep(Duration::from_millis(60));
+    shell.key(keycode, false);
 }

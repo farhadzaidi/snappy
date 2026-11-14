@@ -2,6 +2,7 @@
 //! engines, acts like the user, and reads what the engine did.
 #![allow(clippy::unwrap_used)]
 
+mod caps_lock;
 mod desktop_parking;
 mod dragging;
 mod focus;

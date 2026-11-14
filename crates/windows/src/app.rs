@@ -115,6 +115,8 @@ impl App {
             hooks: Hooks::install(),
             keyboard: None,
             mouse: None,
+            drag_input: false,
+            caps_lock: None,
             drag: None,
             held: Default::default(),
             hotkeys: HotKeyTable::default(),
@@ -165,6 +167,7 @@ impl App {
     fn teardown(self) {
         run_jobs();
         if let Some(mut main) = main_state::take() {
+            main.restore_caps_lock();
             main.set_input_hooks(false);
             main.unregister_hotkeys();
             main.hooks.remove_all();

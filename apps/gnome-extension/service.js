@@ -7,6 +7,7 @@ import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+import {CapsLock} from './capsLock.js';
 import {Drags} from './input.js';
 import {Menu} from './menu.js';
 import {Overlays} from './overlay.js';
@@ -15,7 +16,7 @@ import {Shortcuts} from './shortcuts.js';
 import * as Windows from './windows.js';
 
 /** Changes whenever a request, reply, or event changes shape. The app checks it. */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 const OBJECT_PATH = '/io/github/farhadzaidi/Snappy/Shell';
 const INTERFACE = `
@@ -34,10 +35,11 @@ const INTERFACE = `
 
 /**
  * Requests that leave something behind for the app: grabs, monitoring, followed windows,
- * overlays, a menu.
+ * overlays, a menu, Caps Lock as the Snappy key.
  */
 const STATEFUL = new Set([
     'monitoring', 'register', 'follow', 'overlayPrepare', 'overlayShow', 'overlayMark', 'menu',
+    'capsLockHold',
 ]);
 
 export class Service {
@@ -51,6 +53,7 @@ export class Service {
             this._events = new Windows.WindowEvents(emit);
             this._drags = new Drags(emit);
             this._shortcuts = new Shortcuts(emit);
+            this._capsLock = new CapsLock(emit);
             this._overlays = new Overlays();
             this._menu = new Menu(extensionPath, emit);
             Main.layoutManager.connectObject('monitors-changed', () => emit({type: 'displays'}), this);
@@ -68,12 +71,13 @@ export class Service {
 
     /**
      * The extension keeps running on the lock screen so hidden windows stay hidden; nothing
-     * of Snappy's shows there.
+     * of Snappy's shows there, and Caps Lock is a plain Caps Lock.
      */
     _sessionModeChanged() {
         const locked = Main.sessionMode.isLocked;
         this._overlays.setLocked(locked);
         this._menu.setVisible(!locked);
+        this._capsLock.setLocked(locked);
     }
 
     get Version() {
@@ -121,6 +125,7 @@ export class Service {
     _appGone() {
         this._unwatchApp();
         this._shortcuts.unregisterAll();
+        this._capsLock.restore();
         this._drags.setMonitoring(false, false, 0);
         this._events.unfollowAll();
         this._overlays.clear();
@@ -180,6 +185,17 @@ export class Service {
             return null;
         case 'isFree':
             return this._shortcuts.isFree(request.accelerator);
+        case 'keyboardOptions':
+            return this._capsLock.options();
+        case 'capsLockHold':
+            this._capsLock.hold({modifiers: request.modifiers, mask: request.mask, keycodes: request.keycodes});
+            return null;
+        case 'capsLockRestore':
+            this._capsLock.restore();
+            return null;
+        case 'capsLockToggle':
+            this._capsLock.toggle();
+            return null;
         case 'overlayPrepare':
             this._overlays.prepare(request.display, request.scene);
             return null;
@@ -241,6 +257,7 @@ export class Service {
         this._unwatchApp();
         this._drags?.destroy();
         this._shortcuts?.destroy();
+        this._capsLock?.destroy();
         this._overlays?.clear();
         this._menu?.remove();
         this._events?.destroy();

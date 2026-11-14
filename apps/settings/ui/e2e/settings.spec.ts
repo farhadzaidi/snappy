@@ -439,6 +439,41 @@ test("changing the Snappy key keeps shortcuts named Snappy and the labels follow
   );
 });
 
+test("caps lock as the snappy key is a switch of the snappy key, refused with the reason", async ({
+  page,
+}) => {
+  const snappyKey = group(page, "Snappy key");
+  const capsLock = snappyKey.getByRole("switch", { name: "Use Caps Lock as the Snappy key" });
+  await expect(capsLock).toHaveAttribute("aria-checked", "false");
+  await expect(snappyKey).toContainText(
+    "Hold Caps Lock instead of Control + Option + Command. Tap it alone to turn Caps Lock on or off.",
+  );
+
+  const remapped =
+    "Caps Lock is already remapped in macOS. Remove that mapping to use Caps Lock as the Snappy key.";
+  await page.evaluate((reason) => window.snappyFake.refuseCapsLock(reason), remapped);
+  await capsLock.click();
+  await expect(snappyKey.getByRole("alert")).toHaveText(remapped);
+  await expect(capsLock).toHaveAttribute("aria-checked", "false");
+
+  await page.evaluate(() => window.snappyFake.refuseCapsLock(undefined));
+  await capsLock.click();
+  expect(await lastCommandOf(page, "setCapsLockAsSnappyKey")).toEqual({
+    kind: "setCapsLockAsSnappyKey",
+    enabled: true,
+  });
+  await expect(capsLock).toHaveAttribute("aria-checked", "true");
+  await expect(snappyKey.getByRole("alert")).toHaveCount(0);
+  await expect(toast(page)).toContainText("Hold Caps Lock for the Snappy key.");
+
+  const problem = "Caps Lock is remapped by the keyboard option caps:escape now.";
+  await page.evaluate(
+    (reason) => window.snappyFake.patchState((state) => ({ ...state, capsLockProblem: reason })),
+    problem,
+  );
+  await expect(snappyKey.getByRole("alert")).toHaveText(problem);
+});
+
 test("reset to default brings back Control, Option, and Command", async ({ page }) => {
   const reset = group(page, "Snappy key").getByRole("button", { name: "Reset to default" });
   await group(page, "Snappy key").getByRole("button", { name: "Control", exact: true }).click();

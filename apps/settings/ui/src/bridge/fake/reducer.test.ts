@@ -357,4 +357,26 @@ describe("fake daemon", () => {
     );
     expect(outcome.state.settings.snappyKey).toEqual(["ctrl", "alt", "meta"]);
   });
+
+  it("caps lock as the snappy key starts off, turns on and off, and a refusal keeps it off", () => {
+    const before = initialState("linux");
+    expect(before.settings.capsLockAsSnappyKey).toBe(false);
+    const on = run(before, { kind: "setCapsLockAsSnappyKey", enabled: true });
+    expect(on.error).toBeNull();
+    expect(on.state.settings.capsLockAsSnappyKey).toBe(true);
+    expect(on.state.status?.message).toBe(
+      "Hold Caps Lock for the Snappy key. Tap it to turn Caps Lock on or off.",
+    );
+    const off = run(on.state, { kind: "setCapsLockAsSnappyKey", enabled: false });
+    expect(off.state.settings.capsLockAsSnappyKey).toBe(false);
+
+    const refusal = "Caps Lock is already remapped by the keyboard option caps:escape.";
+    const refused = applyCommand(
+      before,
+      { kind: "setCapsLockAsSnappyKey", enabled: true },
+      { ...freeSystem, capsLockRefusal: refusal },
+    );
+    expect(refused.error).toBe(refusal);
+    expect(refused.state.settings.capsLockAsSnappyKey).toBe(false);
+  });
 });

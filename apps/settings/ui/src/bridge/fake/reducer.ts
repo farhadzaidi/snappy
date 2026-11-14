@@ -17,6 +17,8 @@ export interface Outcome {
 export interface FakeSystem {
   /** Whether the system and other apps leave a chord free. */
   isAvailable(chord: KeyChord): boolean;
+  /** Why Caps Lock can't be the Snappy key, as when the system already remaps it. */
+  capsLockRefusal?: string | undefined;
 }
 
 export function applyCommand(state: AppState, command: Command, system: FakeSystem): Outcome {
@@ -42,6 +44,8 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
       });
     case "setSnappyKey":
       return setSnappyKey(state, command.modifiers, system);
+    case "setCapsLockAsSnappyKey":
+      return setCapsLockAsSnappyKey(state, command.enabled, system);
     case "setNavigationShortcut":
       return save(state, {
         ...settings,
@@ -137,6 +141,20 @@ function setSnappyKey(state: AppState, modifiers: Modifier[], system: FakeSystem
   }
   const label = snappyKeyLabel(changed.valid.snappyKey, state.platform);
   return withStatus(done({ ...state, settings: changed.valid }), `The Snappy key is now ${label}.`);
+}
+
+/** Hold Caps Lock as the Snappy key, refused with the reason when the system remaps it already. */
+function setCapsLockAsSnappyKey(state: AppState, enabled: boolean, system: FakeSystem): Outcome {
+  if (enabled === state.settings.capsLockAsSnappyKey) {
+    return done(state);
+  }
+  if (enabled && system.capsLockRefusal !== undefined) {
+    return { state, error: system.capsLockRefusal };
+  }
+  const message = enabled
+    ? "Hold Caps Lock for the Snappy key. Tap it to turn Caps Lock on or off."
+    : "Caps Lock works as usual again.";
+  return withStatus(save(state, { ...state.settings, capsLockAsSnappyKey: enabled }), message);
 }
 
 function sameModifiers(a: Modifier[], b: Modifier[]): boolean {

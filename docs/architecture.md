@@ -47,7 +47,7 @@ core ◄── platform ◄── engine ◄── apps/snappy
 
 | Crate | Depends on | Role |
 |---|---|---|
-| `core` | serde, thiserror | Geometry, layouts and presets, the editor's operations, drag intent, swaps, navigation, directional focus, the nearest empty zone and placing the selection, shortcuts, their titles, and conflicts, the settings model and validation, the bounds-settle algorithm, undo, and the workspace session. |
+| `core` | serde, thiserror | Geometry, layouts and presets, the editor's operations, drag intent, swaps, navigation, directional focus, the nearest empty zone and placing the selection, shortcuts, their titles, and conflicts, the settings model and validation, the bounds-settle algorithm, undo, the workspace session, and what a press of Caps Lock was while it is the Snappy key. |
 | `platform` | core | The `Platform` trait family (`WindowSystem`, `Input`, `HotKeys`, `Overlay`, `Permissions`, `DesktopGuard`, `Tray`, `LoginItem`) and `PlatformEvent`. |
 | `engine` | core, platform, ipc, tokio | Runtime state, event handling, the operation queue, stores, diagnostics. |
 | `ipc` | core, platform | `ToSettings`, `ToDaemon`, `Command`, `AppState`, and framing. |
@@ -78,7 +78,7 @@ Every window move goes through `Shared::submit` in `crates/engine/src/ops.rs`. O
 - **One at a time.** Operations never interleave, so two moves never fight over a window. A generation counter makes sure only the latest operation's completion clears the in-flight state.
 - **A press cancels.** A mouse press on any window cancels the operation in flight (`drag::pointer_down`).
 - **Protected windows.** While a swap or a grouped undo is moving two windows, a press on either one adds it to `Core::protected`. The operation's recovery path (putting a window back after a failure) then leaves that window to the user.
-- **Keyboard observation is scoped.** Drag monitoring, which includes modifier key events, is on only during a drag. At idle Snappy sees no keystrokes except its own registered shortcuts.
+- **Keyboard observation is scoped.** Drag monitoring, which includes modifier key events, is on only during a drag. At idle Snappy sees no keystrokes except its own registered shortcuts and, with Caps Lock as the Snappy key, Caps Lock itself; while Caps Lock is held it notices that another key or a mouse button was used, never which ([Caps Lock as the Snappy key](#caps-lock-as-the-snappy-key)).
 
 ## How a drag becomes a snap
 
@@ -157,7 +157,18 @@ What happens to stored chords follows from their form:
 - **Snappy key chords follow the key.** They stay stored as `["snappy", …]` and keep reading "Snappy + X"; only their combos change. The modifiers recorded with them stay too, even one the new key includes: with Control+Shift as the key, Snappy + Shift + J presses Control + Shift + J, the same as Snappy + J, and holds Shift again once the key no longer does.
 - **Concrete chords never change.** What the user recorded is what they press, whatever the key becomes, including a key made of the chord's modifiers or some of them: the chord still reads "Control + Option + Shift + U", is saved so, and keeps its keys when the key changes again. A change that would put a Snappy key chord on the same keys is refused, as above.
 
-Settings imported from a file keep the file's key, checked as a settings change is, without probing; a chord the OS refuses then fails to register and is reported as taken, as for any other shortcut. If a future Snappy key is not made of the four modifiers, such as Caps Lock held as a "hyper" key, each adapter also needs to turn that key into the modifiers the setting names, by remapping it or intercepting it before the OS sees it.
+Settings imported from a file keep the file's key, checked as a settings change is, without probing; a chord the OS refuses then fails to register and is reported as taken, as for any other shortcut.
+
+### Caps Lock as the Snappy key
+
+An opt-in setting, `Settings::caps_lock_as_snappy_key` (`"capsLockAsSnappyKey"`, off by default), lets Caps Lock stand for the Snappy key. Held, it acts as the Snappy key's modifiers, whatever they are, so every shortcut works with it as with the keys themselves and nothing about shortcuts changes; tapped alone, it still turns Caps Lock on or off. Holding it never turns Caps Lock on and never repeats.
+
+- **The platform makes the key.** `CapsLock::hold_caps_lock_as(modifiers)` asks the adapter to make Caps Lock, held, act as the Snappy key's modifiers, each with what its OS offers out of the box ([platforms.md](platforms.md)). It refuses, with a sentence for the user, when the system already remaps Caps Lock: a macOS key mapping or Modifier Keys setting, a Windows Scancode Map, an XKB option such as `caps:escape` or `ctrl:nocaps`, or an `xmodmap` on X11. `restore_caps_lock` gives Caps Lock back its usual behavior.
+- **The engine decides what a press was** (`crates/engine/src/caps_lock.rs`). Adapters report `PlatformEvent::CapsLock`: Caps Lock went down, something else was used while it was down, or it came up. They may notice that another key or a mouse button was used while Caps Lock is down, to tell a tap from a hold, but never say or record which. The engine times the press with the platform's clock and asks `core::caps_lock::CapsLockPress` what it was: a tap when nothing else was used and it came up within `TAP_LIMIT` (half a second); then it calls `toggle_caps_lock`, which turns Caps Lock and its light on or off on every keyboard as the key itself would. A Snappy shortcut that fires while Caps Lock is down also makes the press a hold, for platforms that can't see every key.
+- **When it applies.** While the setting is on, permission is granted, and live control is available (`caps_lock::configure`, run from `refresh_live`, so it follows settings, permission, and live control changes). A new Snappy key holds Caps Lock again with the new modifiers. `core::caps_lock::steps` says what to do from where things stand: hold, hold again, restore, or nothing.
+- **Turning it on** (`SetCapsLockAsSnappyKey`) tries the platform first when it can apply now, so a refusal leaves the setting off and the reply, shown under the switch, says why. A refusal later, at start or after the Snappy key changes, keeps the setting, is announced once, and shows under the switch (`AppState::caps_lock_problem`) until a change makes it work.
+- **Cleaning up.** Turning the setting off, quitting, and stopping for a restart all restore Caps Lock. While a change is in place, the engine keeps what undoes it, in a form of the adapter's own (`CapsLockUndo`), in `caps-lock.json`. A run that ends without restoring, as a crash does, leaves that file behind; the next start hands it to `undo_caps_lock` before anything else, then holds Caps Lock again if the setting asks, so checking for someone else's remapping never sees Snappy's own.
+- **The debug log** records `capsLockHeld` (the modifiers), `capsLockRefused` (the reason), `capsLockRestored`, `capsLockLeftOverUndone`, `capsLockTapped` (how long it was down), and `capsLockReleased` for a hold (how long, and whether something else was used, never what).
 
 ## How a settings change works
 
@@ -247,7 +258,7 @@ When live control is lost while workspaces run, as when GNOME's extension is tur
 
 When `SNAPPY_HOME` names a folder, everything goes there instead: `settings.json`, `state/`, and `logs/`. The live tests use it to run against scratch files.
 
-- **State:** `workspace-journal.json`, `workspace-membership.json`, and on macOS the single-instance lock, `daemon.lock`. Linux keeps its lock, `snappy.lock`, in `$XDG_RUNTIME_DIR` when that is set.
+- **State:** `workspace-journal.json`, `workspace-membership.json`, `caps-lock.json` while Caps Lock is held as the Snappy key, and on macOS the single-instance lock, `daemon.lock`. Linux keeps its lock, `snappy.lock`, in `$XDG_RUNTIME_DIR` when that is set.
 - **Logs:** `drops.json` (the last 20 modifier drags and how each ended), `workspace-lifecycle.json` (the last 30 workspace events), `workspace-performance.json` (up to 120 switch timings, written at quit), and the debug log.
 
 Writes are atomic: a temporary file in the same folder, then a rename (`crates/engine/src/store.rs`). State and log files are readable only by the user. An unreadable settings file is reported, Snappy runs on defaults, and the file is never overwritten.

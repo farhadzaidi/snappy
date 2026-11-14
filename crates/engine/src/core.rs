@@ -17,6 +17,7 @@ use snappy_platform::{
 };
 
 use crate::actions::action_record;
+use crate::caps_lock::{self, CapsLockController};
 use crate::debug_log::{DebugLog, Level};
 use crate::diagnostics::Diagnostics;
 use crate::focus::FocusFlash;
@@ -91,6 +92,7 @@ pub(crate) struct Core<P> {
     pub added_workspace: Option<String>,
     pub focus_flash: FocusFlash,
     pub marks: Marks,
+    pub caps_lock: CapsLockController,
 }
 
 impl<P: Platform> Core<P> {
@@ -133,6 +135,7 @@ impl<P: Platform> Core<P> {
             added_workspace: None,
             focus_flash: FocusFlash::default(),
             marks: Marks::default(),
+            caps_lock: CapsLockController::default(),
         }
     }
 
@@ -255,6 +258,7 @@ impl<P: Platform> Core<P> {
             .set_drag_modifier(self.settings.snapping.drag_modifier.modifier());
         self.platform.set_press_monitoring(self.live);
         self.configure_hotkeys();
+        caps_lock::configure(self);
         self.prepare_overlays();
         self.update_tray();
     }
@@ -556,6 +560,7 @@ impl<P: Platform> Core<P> {
             debug_log_path: self.debug.path().display().to_string(),
             status: self.status.clone(),
             added_workspace: self.added_workspace.take(),
+            caps_lock_problem: self.caps_lock.problem().map(str::to_owned),
         }
     }
 }

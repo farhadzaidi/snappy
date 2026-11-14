@@ -5,22 +5,23 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Modifier, Platform as PlatformName};
+use snappy_core::keys::{Combo, Modifier, Mods, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
+use snappy_linux::xkb::{self, CapsLockSymbol};
 use snappy_linux::{login_item, scene};
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
-    OverlayScene, Permissions, Platform, Remedy, Tray, TrayMenu, WindowId, WindowInfo, WindowState,
-    WindowSystem,
+    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
+    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Remedy, Tray, TrayMenu, WindowId, WindowInfo,
+    WindowState, WindowSystem,
 };
 
 use crate::bus::CallError;
 use crate::messages::{
-    HIDE_REFUSED, LOG_OUT_FAILED, NO_FOCUSED_WINDOW, NOT_STANDARD, ON_ALL_WORKSPACES, SHELL_UNREACHABLE,
-    UNEXPECTED_REPLY, WINDOW_GONE, unavailable,
+    CAPS_LOCK_UNSUPPORTED, HIDE_REFUSED, LOG_OUT_FAILED, NO_FOCUSED_WINDOW, NOT_STANDARD, ON_ALL_WORKSPACES,
+    SHELL_UNREACHABLE, UNEXPECTED_REPLY, WINDOW_GONE, caps_lock_not_written, caps_lock_remapped, unavailable,
 };
 use crate::protocol::{
-    Accelerator, GONE, Monitor, PointerPosition, REFUSED_ALL_WORKSPACES, Request, WindowRecord,
+    Accelerator, GONE, Monitor, PointerPosition, REFUSED_ALL_WORKSPACES, Request, UNSUPPORTED, WindowRecord,
 };
 use crate::shared::Shared;
 use crate::{displays, extension, keys, menu, windows};
@@ -380,6 +381,84 @@ impl HotKeys for GnomePlatform {
             return true;
         }
         self.call(&Request::IsFree { accelerator }).unwrap_or(false)
+    }
+}
+
+impl GnomePlatform {
+    /// What a Caps Lock request's failure tells the user.
+    fn caps_lock_refusal(error: CallError) -> String {
+        match error {
+            CallError::Refused(reason) if reason == UNSUPPORTED => CAPS_LOCK_UNSUPPORTED.to_owned(),
+            CallError::Unreachable(_) => SHELL_UNREACHABLE.to_owned(),
+            CallError::Refused(_) | CallError::Malformed(_) => UNEXPECTED_REPLY.to_owned(),
+        }
+    }
+
+    /// Checks the user's own options, writes Snappy's XKB option for `modifiers`, and has the
+    /// extension add it to the keymap.
+    fn hold_caps_lock(&self, modifiers: Mods) -> Result<(), String> {
+        let options: String = self
+            .call(&Request::KeyboardOptions)
+            .map_err(Self::caps_lock_refusal)?;
+        let remapping = xkb::caps_lock_options(&options);
+        if !remapping.is_empty() {
+            return Err(caps_lock_remapped(&remapping));
+        }
+        let folder = xkb::user_folder().ok_or_else(|| {
+            caps_lock_not_written(&std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no home folder",
+            ))
+        })?;
+        xkb::install(&folder, modifiers, CapsLockSymbol::Nothing)
+            .map_err(|error| caps_lock_not_written(&error))?;
+        let hold = Request::CapsLockHold {
+            modifiers: keys::modifier_prefix(modifiers),
+            mask: keys::mask_of(modifiers),
+            keycodes: keys::keys_while_caps_lock_is_down(),
+        };
+        self.shared.bus.send(&hold).map_err(Self::caps_lock_refusal)?;
+        self.shared.state().caps_lock = Some(hold);
+        Ok(())
+    }
+
+    /// Takes Snappy's option out of the keymap, then its files out of the XKB folder.
+    fn remove_caps_lock_option(&self) {
+        self.shared.state().caps_lock = None;
+        let _ = self.shared.bus.send(&Request::CapsLockRestore);
+        if let Some(folder) = xkb::user_folder()
+            && let Err(error) = xkb::uninstall(&folder)
+        {
+            eprintln!("snappy: could not remove the Caps Lock keyboard option: {error}");
+        }
+    }
+}
+
+/// Caps Lock through an XKB option of Snappy's own, which the extension adds to the keymap
+/// GNOME Shell builds; the extension also reports presses of Caps Lock alone and turns Caps
+/// Lock on or off. Nothing outlives GNOME Shell's keymap but the option's files, and the
+/// extension takes the option out itself when the daemon goes away.
+impl CapsLock for GnomePlatform {
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
+        match self.hold_caps_lock(modifiers) {
+            Ok(()) => Ok(CapsLockUndo::default()),
+            Err(reason) => {
+                self.remove_caps_lock_option();
+                Err(reason)
+            }
+        }
+    }
+
+    fn restore_caps_lock(&mut self) {
+        self.remove_caps_lock_option();
+    }
+
+    fn undo_caps_lock(&mut self, _undo: &CapsLockUndo) {
+        self.remove_caps_lock_option();
+    }
+
+    fn toggle_caps_lock(&mut self) {
+        let _ = self.shared.bus.send(&Request::CapsLockToggle);
     }
 }
 

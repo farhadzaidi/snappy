@@ -8,7 +8,7 @@ import { EXPORT_FILE_NAME } from "../bridge";
 import { FAKE_DISPLAYS, initialState } from "./fixtures";
 import { applyCommand } from "./reducer";
 
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 
 /**
  * The same key for every spelling of one shortcut, such as Snappy + K and its modifiers held
@@ -24,6 +24,7 @@ export class FakeDaemon implements Transport {
   private state: AppState;
   private readonly listeners = new Set<(message: ToSettings) => void>();
   private readonly takenByOtherApps = new Set<string>();
+  private capsLockRefusal: string | undefined;
 
   constructor(platform: PlatformName) {
     this.state = initialState(platform);
@@ -40,6 +41,7 @@ export class FakeDaemon implements Transport {
     const snappyKey = this.state.settings.snappyKey;
     const outcome = applyCommand(this.state, command, {
       isAvailable: (chord) => !this.takenByOtherApps.has(comboKey(chord, snappyKey)),
+      capsLockRefusal: this.capsLockRefusal,
     });
     this.state = outcome.state;
 
@@ -57,6 +59,14 @@ export class FakeDaemon implements Transport {
    */
   takeShortcut(chord: KeyChord): void {
     this.takenByOtherApps.add(comboKey(chord, this.state.settings.snappyKey));
+  }
+
+  /**
+   * Refuse Caps Lock as the Snappy key with `reason`, as when the system already remaps it,
+   * or stop refusing with `undefined`.
+   */
+  refuseCapsLock(reason: string | undefined): void {
+    this.capsLockRefusal = reason;
   }
 
   /** Replace part of the state and broadcast it, as the daemon does after a change. */

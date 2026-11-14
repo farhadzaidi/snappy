@@ -1,6 +1,7 @@
 //! Live scenarios. Each opens its own fixture windows, acts through real input, and checks
 //! where the windows really ended up.
 
+mod caps_lock;
 mod focus;
 mod moves;
 mod selection;
@@ -13,6 +14,7 @@ mod workspaces;
 
 use snappy_core::keys::Platform;
 
+use caps_lock::caps_lock_as_snappy_key;
 use focus::{focus_directions, focus_zones};
 use moves::{
     arrow_shortcut, drag_snaps, full_screen_refused, grid_snap, minimum_size, nearest_empty_zone,
@@ -133,6 +135,10 @@ pub const ALL: &[(&str, Scenario)] = &[
     (
         "a_chosen_snappy_key_moves_windows_with_its_own_modifiers",
         chosen_snappy_key,
+    ),
+    (
+        "caps_lock_held_is_the_snappy_key_and_tapped_alone_toggles_caps_lock",
+        caps_lock_as_snappy_key,
     ),
     (
         "restarting_keeps_every_window_in_its_workspace_and_quitting_still_returns_them",

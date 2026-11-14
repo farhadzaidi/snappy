@@ -18,7 +18,7 @@ use snappy_platform::{Display, Platform, WindowInfo};
 use crate::core::{Core, PendingNavigation};
 use crate::drag::{swap_source, zone_slots};
 use crate::ops::{Shared, SnapRequest, SwapMove, run_redo, run_snap, run_swap, run_undo};
-use crate::{focus, selection, workspaces};
+use crate::{caps_lock, focus, selection, workspaces};
 
 pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
     let (action, combo) = {
@@ -29,6 +29,7 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         let Some(hotkey) = core.hotkey(id).cloned() else {
             return;
         };
+        caps_lock::note_other_input(&mut core);
         let live = core.is_live();
         core.trace("shortcut", || {
             let mut record = action_record(&hotkey.action);

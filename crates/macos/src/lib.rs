@@ -9,6 +9,7 @@
 mod app;
 mod apps;
 mod ax;
+mod caps_lock;
 mod coords;
 mod delegate;
 mod desktop_guard;

@@ -113,6 +113,8 @@ export default class SnappyTestExtension extends Extension {
             this._keyboard.notify_key(now(), request.keycode,
                 request.pressed ? Clutter.KeyState.PRESSED : Clutter.KeyState.RELEASED);
             return null;
+        case 'capsLockOn':
+            return Clutter.get_default_backend().get_default_seat().get_keymap().get_caps_lock_state();
         case 'windowFrame': {
             const window = windowTitled(request.title);
             return window ? frameOf(window) : null;

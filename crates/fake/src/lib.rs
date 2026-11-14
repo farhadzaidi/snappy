@@ -6,12 +6,12 @@ use std::time::Duration;
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Modifier, Platform as PlatformName};
+use snappy_core::keys::{Combo, Modifier, Mods, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, MarkedWindow, Overlay,
-    OverlayMarks, OverlayScene, Permissions, Platform, RecoveryKey, Remedy, TabGroup, Tray, TrayMenu,
-    WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
+    MarkedWindow, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, RecoveryKey, Remedy, TabGroup,
+    Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 /// A window with scriptable app behavior.
@@ -92,6 +92,17 @@ pub struct FakePlatform {
     pub registrations: usize,
     /// Chords some other app owns.
     pub taken_elsewhere: BTreeSet<Combo>,
+    /// The modifiers Caps Lock stands for while held, while it is the Snappy key.
+    pub caps_lock_held_as: Option<Mods>,
+    /// Holding Caps Lock as the Snappy key is refused with this, as when the system
+    /// already remaps it.
+    pub caps_lock_refusal: Option<String>,
+    /// What holding Caps Lock returns to undo it in a later run.
+    pub caps_lock_undo: CapsLockUndo,
+    /// Changes of earlier runs undone, in order.
+    pub caps_lock_undone: Vec<CapsLockUndo>,
+    /// How many times Caps Lock was turned on or off.
+    pub caps_lock_toggles: usize,
     pub press_monitoring: bool,
     pub drag_monitoring: bool,
     pub overlay: Vec<OverlayCall>,
@@ -136,6 +147,11 @@ impl Default for FakePlatform {
             registered: Vec::new(),
             registrations: 0,
             taken_elsewhere: BTreeSet::new(),
+            caps_lock_held_as: None,
+            caps_lock_refusal: None,
+            caps_lock_undo: CapsLockUndo("fake".to_owned()),
+            caps_lock_undone: Vec::new(),
+            caps_lock_toggles: 0,
             press_monitoring: false,
             drag_monitoring: false,
             overlay: Vec::new(),
@@ -496,6 +512,29 @@ impl HotKeys for FakePlatform {
     /// A chord Snappy holds itself reads as taken, as macOS's Carbon hotkeys report it.
     fn is_available(&mut self, combo: &Combo) -> bool {
         !self.taken_elsewhere.contains(combo) && !self.registered.iter().any(|(_, held)| held == combo)
+    }
+}
+
+impl CapsLock for FakePlatform {
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
+        if let Some(refusal) = &self.caps_lock_refusal {
+            self.caps_lock_held_as = None;
+            return Err(refusal.clone());
+        }
+        self.caps_lock_held_as = Some(modifiers);
+        Ok(self.caps_lock_undo.clone())
+    }
+
+    fn restore_caps_lock(&mut self) {
+        self.caps_lock_held_as = None;
+    }
+
+    fn undo_caps_lock(&mut self, undo: &CapsLockUndo) {
+        self.caps_lock_undone.push(undo.clone());
+    }
+
+    fn toggle_caps_lock(&mut self) {
+        self.caps_lock_toggles += 1;
     }
 }
 

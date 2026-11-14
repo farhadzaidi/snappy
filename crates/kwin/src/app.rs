@@ -10,12 +10,15 @@ use std::time::Instant;
 use snappy_core::geometry::Point;
 use snappy_linux::clients::ClientTracker;
 use snappy_linux::tray::TrayIcon;
-use snappy_platform::{LiveControl, PlatformEvent, WindowId};
+use snappy_platform::{CapsLockInput, LiveControl, PlatformEvent, WindowId};
 use zbus::MatchRule;
 use zbus::blocking::MessageIterator;
 use zbus::message::Type;
 
-use crate::bus::{Bus, COMPONENT_INTERFACE, GLOBAL_ACCEL_NAME, KWIN_NAME, Served};
+use crate::bus::{
+    Bus, COMPONENT_INTERFACE, CONFIG_CHANGED, CONFIG_NOTIFY_INTERFACE, GLOBAL_ACCEL_NAME, KWIN_NAME,
+    KXKBRC_PATH, SCREEN_SAVER_INTERFACE, Served,
+};
 use crate::error::KWinError;
 use crate::messages::{KWIN_NOT_RUNNING, SCRIPT_NOT_LOADED, SCRIPT_OTHER_VERSION, SCRIPT_STARTING};
 use crate::order::HeldModifiers;
@@ -23,7 +26,7 @@ use crate::overlay::{Command, Overlays};
 use crate::platform::KWinPlatform;
 use crate::protocol::{Event, PROTOCOL_VERSION, Request, WindowRecord};
 use crate::shared::{Incoming, Shared};
-use crate::{script, shortcuts};
+use crate::{caps_lock, script, shortcuts};
 
 pub struct App {
     shared: Arc<Shared>,
@@ -83,6 +86,7 @@ impl App {
         listen(&shared.bus, kwin_owner, sender.clone(), |_| {
             Some(Incoming::KWinChanged)
         })?;
+        listen_for_caps_lock(&shared.bus, &sender)?;
 
         load_script(&shared);
         let tray = TrayIcon::start(events.clone());
@@ -142,11 +146,23 @@ impl App {
                         tray.update(menu);
                     }
                 }
+                Incoming::Shortcut(action) if action == shortcuts::CAPS_LOCK_TAP => {
+                    if caps_lock::released_alone(&self.shared) {
+                        self.emit(PlatformEvent::CapsLock(CapsLockInput::Released));
+                    }
+                }
                 Incoming::Shortcut(action) => {
                     if let Some(id) = shortcuts::shortcut_id(&action) {
                         self.emit(PlatformEvent::HotKey(id));
                     }
                 }
+                Incoming::CapsLockModifiers(mods) => {
+                    if caps_lock::modifiers_reported(&self.shared, mods) {
+                        self.emit(PlatformEvent::CapsLock(CapsLockInput::Pressed));
+                    }
+                }
+                Incoming::ScreenLocked(locked) => caps_lock::screen_locked(&self.shared, locked),
+                Incoming::KeyboardSettingsChanged => caps_lock::settings_changed(&self.shared),
                 Incoming::Modifiers(mods, at) => {
                     if let Some(mods) = held.report(mods, at) {
                         self.emit(PlatformEvent::ModifiersChanged { at: pointer, mods });
@@ -161,6 +177,7 @@ impl App {
     }
 
     fn release(&mut self) {
+        caps_lock::restore(&self.shared);
         let grabs = std::mem::take(&mut self.shared.state().registered);
         shortcuts::unregister(&self.shared.bus, &grabs);
         self.shared.follow_modifiers(false);
@@ -310,6 +327,42 @@ impl WindowList {
             .collect();
         self.tracker.update(&list, &BTreeMap::new())
     }
+}
+
+/// Listens for what Caps Lock as the Snappy key follows: the session being locked, which
+/// the lock screen's own process announces, and KDE's keyboard layout settings changed by
+/// another program. Snappy's own notifications of that change are left out.
+fn listen_for_caps_lock(bus: &Bus, sender: &Sender<Incoming>) -> Result<(), KWinError> {
+    let locked = MatchRule::builder()
+        .msg_type(Type::Signal)
+        .interface(SCREEN_SAVER_INTERFACE)?
+        .member("ActiveChanged")?
+        .build();
+    listen(bus, locked, sender.clone(), |message| {
+        message
+            .body()
+            .deserialize::<bool>()
+            .ok()
+            .map(Incoming::ScreenLocked)
+    })?;
+    let changed = MatchRule::builder()
+        .msg_type(Type::Signal)
+        .path(KXKBRC_PATH)?
+        .interface(CONFIG_NOTIFY_INTERFACE)?
+        .member(CONFIG_CHANGED)?
+        .build();
+    let own = bus.connection().unique_name().map(ToString::to_string);
+    listen(bus, changed, sender.clone(), move |message| {
+        let header = message.header();
+        let sender = header.sender().map(ToString::to_string);
+        if sender.is_some() && sender == own {
+            return None;
+        }
+        let groups: std::collections::HashMap<String, Vec<Vec<u8>>> = message.body().deserialize().ok()?;
+        groups
+            .contains_key(caps_lock::CHANGED_GROUP)
+            .then_some(Incoming::KeyboardSettingsChanged)
+    })
 }
 
 /// Forwards each matching signal, in order, from a thread of its own, and reports the bus

@@ -36,6 +36,17 @@ pub struct HotKeyTable {
     layout: isize,
 }
 
+impl HotKeyTable {
+    /// The engine ID of the shortcut registered for virtual key `vk` with `mods` held.
+    pub fn shortcut_for(&self, mods: Mods, vk: u16) -> Option<u32> {
+        let binding = (modifier_flags(mods), vk);
+        self.registered
+            .iter()
+            .find(|registered| registered.binding == binding)
+            .map(|registered| registered.engine)
+    }
+}
+
 pub fn modifier_flags(mods: Mods) -> u32 {
     [
         (Modifier::Alt, MOD_ALT),

@@ -16,8 +16,8 @@ use crate::delegate::Delegate;
 use crate::platform::MacPlatform;
 use crate::registry::Shared;
 use crate::{
-    apps, ax, desktop_guard, events, hotkeys, main_thread, monitors, observers, overlay, permissions,
-    signals, tray,
+    apps, ax, caps_lock, desktop_guard, events, hotkeys, main_thread, monitors, observers, overlay,
+    permissions, signals, tray,
 };
 
 /// Owns the main-thread machinery. Create it on the main thread before anything else.
@@ -103,6 +103,7 @@ pub fn request_termination() {
 fn teardown() {
     monitors::remove_all();
     hotkeys::unregister_all();
+    caps_lock::stop();
     permissions::set_polling(false);
     overlay::close_all();
     desktop_guard::clear();

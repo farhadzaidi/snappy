@@ -15,12 +15,12 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, KeyChord, Modifier, Mods, Platform};
+use snappy_core::keys::{Combo, KeyChord, Modifier, Mods, Platform, SnappyKey};
 use snappy_core::settings::{Settings, Workspace};
 use snappy_core::workspace::{ParkingPolicy, parking_origin};
 use snappy_platform::{
-    Caption, DesktopGuard, Display, HotKeys, Input, LoginItem, Overlay, OverlayScene, OverlayZone,
-    PlatformEvent, WindowSystem,
+    CapsLock, CapsLockInput, Caption, DesktopGuard, Display, HotKeys, Input, LoginItem, Overlay,
+    OverlayScene, OverlayZone, PlatformEvent, WindowSystem,
 };
 use snappy_windows::reference;
 use snappy_windows::{App, Claim, Stopper, WindowsPlatform};
@@ -28,11 +28,11 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOD_ALT, MOD_CONTROL, MOD_WIN, MOUSE_EVENT_FLAGS,
-    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
-    MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_LSHIFT,
-    VK_LWIN,
+    GetKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOD_ALT, MOD_CONTROL, MOD_WIN,
+    MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
+    MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY,
+    VK_CAPITAL, VK_LSHIFT, VK_LWIN,
 };
 use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -604,6 +604,100 @@ fn registered_shortcuts_fire_on_their_keys() {
     session.expect("zone shortcut", |event| *event == PlatformEvent::HotKey(7));
     press(&chords[1].1);
     session.expect("arrow shortcut", |event| *event == PlatformEvent::HotKey(8));
+    session.platform.unregister_all();
+}
+
+/// Caps Lock's scan code.
+const CAPS_LOCK_SCAN: u16 = 0x3A;
+
+fn caps_lock_key(down: bool) {
+    let mut flags = KEYEVENTF_SCANCODE;
+    if !down {
+        flags |= KEYEVENTF_KEYUP;
+    }
+    send(&[key_input(VIRTUAL_KEY(0), CAPS_LOCK_SCAN, flags)]);
+    pause(30);
+}
+
+fn tap_caps_lock() {
+    caps_lock_key(true);
+    caps_lock_key(false);
+    pause(150);
+}
+
+fn caps_lock_on() -> bool {
+    let state = unsafe { GetKeyState(i32::from(VK_CAPITAL.0)) };
+    state & 1 == 1
+}
+
+/// The Caps Lock and shortcut events among the next ones.
+fn caps_lock_events(session: &Session) -> Vec<PlatformEvent> {
+    session
+        .collect(Duration::from_millis(400))
+        .into_iter()
+        .filter(|event| matches!(event, PlatformEvent::CapsLock(_) | PlatformEvent::HotKey(_)))
+        .collect()
+}
+
+#[test]
+fn caps_lock_held_fires_snappy_shortcuts_and_never_turns_itself_on() {
+    require_desktop!();
+    let mut session = Session::start();
+    let right = (8, snappy("ArrowRight"));
+    assert!(session.platform.register(std::slice::from_ref(&right)).is_empty());
+    session
+        .platform
+        .hold_caps_lock_as(SnappyKey::DEFAULT.modifiers())
+        .unwrap();
+    pause(100);
+    let was_on = caps_lock_on();
+    session.drain();
+
+    caps_lock_key(true);
+    caps_lock_key(true);
+    press(&Combo {
+        code: right.1.code.clone(),
+        mods: Mods::NONE,
+    });
+    caps_lock_key(false);
+    assert_eq!(
+        caps_lock_events(&session),
+        [
+            PlatformEvent::CapsLock(CapsLockInput::Pressed),
+            PlatformEvent::CapsLock(CapsLockInput::OtherInput),
+            PlatformEvent::HotKey(8),
+            PlatformEvent::CapsLock(CapsLockInput::Released),
+        ]
+    );
+    assert_eq!(caps_lock_on(), was_on, "holding left Caps Lock as it was");
+
+    tap_caps_lock();
+    assert_eq!(
+        caps_lock_events(&session),
+        [
+            PlatformEvent::CapsLock(CapsLockInput::Pressed),
+            PlatformEvent::CapsLock(CapsLockInput::Released),
+        ]
+    );
+    assert_eq!(caps_lock_on(), was_on, "the key alone never toggles it");
+
+    session.platform.toggle_caps_lock();
+    pause(200);
+    assert_ne!(caps_lock_on(), was_on, "Snappy turns it on or off");
+    assert!(
+        caps_lock_events(&session).is_empty(),
+        "its own presses go unreported"
+    );
+    session.platform.toggle_caps_lock();
+    pause(200);
+    assert_eq!(caps_lock_on(), was_on);
+
+    session.platform.restore_caps_lock();
+    tap_caps_lock();
+    assert_ne!(caps_lock_on(), was_on, "restored, the key works as usual");
+    assert!(caps_lock_events(&session).is_empty());
+    tap_caps_lock();
+    assert_eq!(caps_lock_on(), was_on);
     session.platform.unregister_all();
 }
 

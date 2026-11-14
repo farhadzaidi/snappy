@@ -8,6 +8,8 @@ license.workspace = true
 snappy-core = { path = "../core" }
 snappy-platform = { path = "../platform" }
 snappy-linux = { path = "../linux" }
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 x11rb = { version = "0.14", default-features = false, features = [
     "randr",

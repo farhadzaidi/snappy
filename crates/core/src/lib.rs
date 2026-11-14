@@ -4,6 +4,7 @@
 pub mod assignment;
 pub mod bindings;
 pub mod bounds;
+pub mod caps_lock;
 pub mod drag;
 pub mod editor;
 pub mod empty_zone;

@@ -11,6 +11,22 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 /** Shortcuts work in the normal session only, not in the overview or on the lock screen. */
 const ACTION_MODES = Shell.ActionMode.NORMAL;
 
+/**
+ * Grabs `accelerator`, without key repeats, in the normal session. Returns the grab's action,
+ * or `Meta.KeyBindingAction.NONE` when something already binds the chord.
+ */
+export function grab(accelerator) {
+    const action = global.display.grab_accelerator(accelerator, Meta.KeyBindingFlags.IGNORE_AUTOREPEAT);
+    if (action !== Meta.KeyBindingAction.NONE)
+        Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), ACTION_MODES);
+    return action;
+}
+
+export function ungrab(action) {
+    Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), Shell.ActionMode.NONE);
+    global.display.ungrab_accelerator(action);
+}
+
 export class Shortcuts {
     constructor(emit) {
         this._emit = emit;
@@ -23,24 +39,12 @@ export class Shortcuts {
         }, this);
     }
 
-    _grab(accelerator) {
-        const action = global.display.grab_accelerator(accelerator, Meta.KeyBindingFlags.IGNORE_AUTOREPEAT);
-        if (action !== Meta.KeyBindingAction.NONE)
-            Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), ACTION_MODES);
-        return action;
-    }
-
-    _ungrab(action) {
-        Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), Shell.ActionMode.NONE);
-        global.display.ungrab_accelerator(action);
-    }
-
     /** Replaces every grab with `keys`, `[{id, accelerator}]`. Returns the IDs refused. */
     register(keys) {
         this.unregisterAll();
         const refused = [];
         for (const {id, accelerator} of keys) {
-            const action = this._grab(accelerator);
+            const action = grab(accelerator);
             if (action === Meta.KeyBindingAction.NONE)
                 refused.push(id);
             else
@@ -51,16 +55,16 @@ export class Shortcuts {
 
     unregisterAll() {
         for (const action of this._actions.keys())
-            this._ungrab(action);
+            ungrab(action);
         this._actions.clear();
     }
 
     /** Whether nothing binds `accelerator`: grabbed and released straight away. */
     isFree(accelerator) {
-        const action = this._grab(accelerator);
+        const action = grab(accelerator);
         if (action === Meta.KeyBindingAction.NONE)
             return false;
-        this._ungrab(action);
+        ungrab(action);
         return true;
     }
 

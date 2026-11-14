@@ -6,12 +6,13 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Platform as PlatformName};
+use snappy_core::keys::{Combo, Mods, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_linux::{journal, login_item};
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
-    OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
+    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo,
+    WindowState, WindowSystem,
 };
 
 use crate::bus::CallError;
@@ -22,7 +23,7 @@ use crate::messages::{
 use crate::overlay::{Command, Target};
 use crate::protocol::{GONE, Monitor, PointerPosition, REFUSED_ALL_DESKTOPS, Request, WindowRecord};
 use crate::shared::{Grab, Incoming, Shared};
-use crate::{displays, keys, shortcuts, windows};
+use crate::{caps_lock, displays, keys, shortcuts, windows};
 
 /// How long showing a parked window waits for its saved position to apply before bringing it
 /// back, and how often it looks. Wayland apps confirm moves asynchronously.
@@ -349,6 +350,25 @@ impl HotKeys for KWinPlatform {
             return true;
         }
         shortcuts::is_free(&self.shared.bus, key)
+    }
+}
+
+/// Caps Lock through Snappy's XKB option in KDE's keyboard settings (`caps_lock`).
+impl CapsLock for KWinPlatform {
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
+        caps_lock::hold(&self.shared, modifiers)
+    }
+
+    fn restore_caps_lock(&mut self) {
+        caps_lock::restore(&self.shared);
+    }
+
+    fn undo_caps_lock(&mut self, undo: &CapsLockUndo) {
+        caps_lock::undo(&self.shared, undo);
+    }
+
+    fn toggle_caps_lock(&mut self) {
+        caps_lock::toggle(&self.shared);
     }
 }
 

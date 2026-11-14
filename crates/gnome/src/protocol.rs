@@ -8,7 +8,7 @@ use snappy_core::geometry::Rect;
 pub use snappy_linux::scene::{Frame, OverlayMarks, OverlayOutline, OverlayScene, OverlayText, OverlayZone};
 
 /// Matches `PROTOCOL_VERSION` in the extension's `service.js`.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 pub const EXTENSION_UUID: &str = "snappy@farhadzaidi.github.io";
 /// GNOME Shell owns this name; the extension exports its object on Shell's connection.
@@ -20,6 +20,9 @@ pub const INTERFACE: &str = "io.github.farhadzaidi.Snappy.Shell";
 pub const REFUSED_ALL_WORKSPACES: &str = "allWorkspaces";
 /// The error a request names a window with when the window is gone.
 pub const GONE: &str = "gone";
+/// The error Caps Lock requests fail with on a GNOME Shell whose keyboard manager lacks the
+/// calls Snappy adds its XKB option through.
+pub const UNSUPPORTED: &str = "unsupported";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -64,6 +67,21 @@ pub enum Request {
     IsFree {
         accelerator: String,
     },
+    /// The XKB options GNOME builds from the user's settings, without Snappy's.
+    KeyboardOptions,
+    /// Add Snappy's XKB option to GNOME's keymap and report presses of Caps Lock alone.
+    /// `modifiers` is the Snappy key as an accelerator prefix and `mask` its modifier bits;
+    /// `keycodes` are grabbed with `modifiers` while Caps Lock is down, to learn that
+    /// something else was used.
+    CapsLockHold {
+        modifiers: String,
+        mask: u32,
+        keycodes: Vec<u8>,
+    },
+    /// Take Snappy's option out of the keymap and stop reporting Caps Lock.
+    CapsLockRestore,
+    /// Turn Caps Lock on or off as its key does.
+    CapsLockToggle,
     OverlayPrepare {
         display: String,
         scene: OverlayScene,
@@ -213,9 +231,22 @@ pub enum Event {
         item: u32,
         generation: u32,
     },
+    /// Caps Lock, while it is the Snappy key, went down or up alone, or something else was
+    /// used meanwhile.
+    CapsLock {
+        phase: CapsLockPhase,
+    },
     /// Anything a newer extension reports that this version doesn't know.
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CapsLockPhase {
+    Pressed,
+    OtherInput,
+    Released,
 }
 
 #[cfg(test)]
@@ -232,6 +263,16 @@ mod tests {
         .unwrap();
         assert_eq!(json, r#"{"op":"setPosition","id":7,"x":10.0,"y":20.0}"#);
         assert_eq!(serde_json::to_string(&Request::Bind).unwrap(), r#"{"op":"bind"}"#);
+        let json = serde_json::to_string(&Request::CapsLockHold {
+            modifiers: "<Control><Alt><Super>".into(),
+            mask: 76,
+            keycodes: vec![10, 113],
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"op":"capsLockHold","modifiers":"<Control><Alt><Super>","mask":76,"keycodes":[10,113]}"#
+        );
         let json = serde_json::to_string(&Request::Monitoring {
             press: true,
             drag: false,
@@ -255,6 +296,13 @@ mod tests {
                 y: 4.0,
                 mods: 1,
                 window: 12
+            }
+        );
+        let event: Event = serde_json::from_str(r#"{"type":"capsLock","phase":"otherInput"}"#).unwrap();
+        assert_eq!(
+            event,
+            Event::CapsLock {
+                phase: CapsLockPhase::OtherInput
             }
         );
         let event: Event = serde_json::from_str(r#"{"type":"somethingNew","detail":1}"#).unwrap();

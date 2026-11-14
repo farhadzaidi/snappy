@@ -1,6 +1,7 @@
-//! Low-level keyboard and mouse hooks, installed only while drag monitoring is on. They
-//! report modifier changes and the primary button's release, and always pass every event
-//! on.
+//! Low-level keyboard and mouse hooks. During drag monitoring they report modifier changes
+//! and the primary button's release, and pass every event on. While Caps Lock is the
+//! Snappy key, the keyboard hook stays installed for it (`caps_lock`), which may swallow
+//! keys, and the mouse hook runs while Caps Lock is down.
 //!
 //! The release is taken from the mouse hook rather than from the end of the move loop:
 //! hooks see input in the order it happened, while the move loop's end arrives after the
@@ -17,8 +18,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, HC_ACTION, HHOOK, HOOKPROC, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, SetWindowsHookExW,
-    UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_KEYDOWN, WM_LBUTTONUP,
-    WM_SYSKEYDOWN,
+    UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
 };
 
 use crate::events::{cursor, modifiers};
@@ -56,18 +57,32 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         // SAFETY: for HC_ACTION, lparam points to the key's KBDLLHOOKSTRUCT.
         let key = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         let down = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-        with_main(|main| main.key(key.vkCode, down));
+        let swallow = with_main(|main| {
+            main.key(key.vkCode, down);
+            main.caps_lock_key(key.vkCode, down, key.dwExtraInfo)
+        });
+        if swallow == Some(true) {
+            return LRESULT(1);
+        }
     }
     // SAFETY: passes the event to the next hook unchanged.
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
 unsafe extern "system" fn on_mouse(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code == HC_ACTION as i32 && wparam.0 as u32 == WM_LBUTTONUP {
-        // SAFETY: for HC_ACTION, lparam points to the event's MSLLHOOKSTRUCT.
-        let event = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
-        let at = Point::new(f64::from(event.pt.x), f64::from(event.pt.y));
-        with_main(|main| main.released(at));
+    if code == HC_ACTION as i32 {
+        match wparam.0 as u32 {
+            WM_LBUTTONUP => {
+                // SAFETY: for HC_ACTION, lparam points to the event's MSLLHOOKSTRUCT.
+                let event = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
+                let at = Point::new(f64::from(event.pt.x), f64::from(event.pt.y));
+                with_main(|main| main.released(at));
+            }
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN => {
+                with_main(|main| main.caps_lock_button());
+            }
+            _ => {}
+        }
     }
     // SAFETY: passes the event to the next hook unchanged.
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
@@ -111,18 +126,34 @@ impl Main {
         }
     }
 
-    /// Installs or removes the hooks to match drag monitoring.
-    pub fn set_input_hooks(&mut self, on: bool) {
-        if on == self.keyboard.is_some() {
-            return;
-        }
-        if on {
+    /// Follows drag monitoring, `drag` saying whether it is on.
+    pub fn set_input_hooks(&mut self, drag: bool) {
+        if drag && !self.drag_input {
             self.held = modifiers();
-            self.keyboard = install(WH_KEYBOARD_LL, Some(on_key));
-            self.mouse = install(WH_MOUSE_LL, Some(on_mouse));
-        } else {
-            remove(self.keyboard.take());
-            remove(self.mouse.take());
+        }
+        self.drag_input = drag;
+        self.update_input_hooks();
+    }
+
+    /// Installs or removes each hook to match what needs it: the keyboard hook for drag
+    /// monitoring or Caps Lock as the Snappy key, the mouse hook for drag monitoring or
+    /// while Caps Lock is down.
+    pub fn update_input_hooks(&mut self) {
+        let keyboard = self.drag_input || self.caps_lock.is_some();
+        let mouse = self.drag_input || self.caps_lock_held();
+        if keyboard != self.keyboard.is_some() {
+            if keyboard {
+                self.keyboard = install(WH_KEYBOARD_LL, Some(on_key));
+            } else {
+                remove(self.keyboard.take());
+            }
+        }
+        if mouse != self.mouse.is_some() {
+            if mouse {
+                self.mouse = install(WH_MOUSE_LL, Some(on_mouse));
+            } else {
+                remove(self.mouse.take());
+            }
         }
     }
 }

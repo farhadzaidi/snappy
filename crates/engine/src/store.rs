@@ -31,6 +31,11 @@ impl Paths {
         self.state_dir.join("workspace-membership.json")
     }
 
+    /// What undoes Snappy's change to Caps Lock, while the change is in place.
+    pub fn caps_lock(&self) -> PathBuf {
+        self.state_dir.join("caps-lock.json")
+    }
+
     pub fn log(&self, name: &str) -> PathBuf {
         self.log_dir.join(name)
     }

@@ -8,11 +8,12 @@ use std::sync::mpsc::Sender;
 use snappy_core::geometry::Point;
 use snappy_core::keys::Mods;
 use snappy_linux::clients::ClientTracker;
-use snappy_platform::{PlatformEvent, WindowId};
+use snappy_platform::{CapsLockInput, PlatformEvent, WindowId};
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, Window};
 
+use crate::caps_lock;
 use crate::error::X11Error;
 use crate::input::{HeldModifiers, PRIMARY_BUTTON};
 use crate::overlay::UiCommand;
@@ -81,21 +82,45 @@ impl EventLoop {
         let _ = self.events.send(event);
     }
 
+    fn caps_lock(&self, input: Option<CapsLockInput>) {
+        if let Some(input) = input {
+            self.emit(PlatformEvent::CapsLock(input));
+        }
+    }
+
     fn handle(&mut self, event: Event) -> Flow {
         self.follow_modifiers();
         if !matches!(event, Event::XinputRawMotion(_)) {
             self.report_motion();
         }
         match event {
-            Event::XinputRawButtonPress(press) if press.detail == PRIMARY_BUTTON => self.pointer_down(),
+            Event::XinputRawButtonPress(press) => {
+                self.caps_lock(caps_lock::raw_pressed(&self.shared, None));
+                if press.detail == PRIMARY_BUTTON {
+                    self.pointer_down();
+                }
+            }
             Event::XinputRawButtonRelease(release) if release.detail == PRIMARY_BUTTON => self.pointer_up(),
             Event::XinputRawMotion(_) => {
                 self.motion_pending = self.button_down && lock(&self.shared.monitoring).drag;
             }
-            Event::XinputRawKeyPress(key) => self.raw_key(key.detail, true),
-            Event::XinputRawKeyRelease(key) => self.raw_key(key.detail, false),
-            Event::KeyPress(key) => self.hotkey(key.detail, key.state.into()),
+            Event::XinputRawKeyPress(key) => {
+                let keycode = u8::try_from(key.detail).ok();
+                self.caps_lock(caps_lock::raw_pressed(&self.shared, keycode));
+                self.raw_key(key.detail, true);
+            }
+            Event::XinputRawKeyRelease(key) => {
+                if let Ok(keycode) = u8::try_from(key.detail) {
+                    self.caps_lock(caps_lock::key_released(&self.shared, keycode));
+                }
+                self.raw_key(key.detail, false);
+            }
+            Event::KeyPress(key) => {
+                self.caps_lock(caps_lock::key_pressed(&self.shared, key.detail));
+                self.hotkey(key.detail, key.state.into());
+            }
             Event::KeyRelease(key) => {
+                self.caps_lock(caps_lock::key_released(&self.shared, key.detail));
                 self.held.remove(&key.detail);
             }
             Event::PropertyNotify(change) if change.window == self.shared.screen.root => {
@@ -107,7 +132,10 @@ impl EventLoop {
             Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_) => {
                 self.emit(PlatformEvent::DisplaysChanged)
             }
-            Event::MappingNotify(_) => self.shared.refresh_keyboard(),
+            Event::MappingNotify(_) | Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => {
+                self.shared.refresh_keyboard();
+                caps_lock::keymap_changed(&self.shared);
+            }
             Event::ClientMessage(message)
                 if message.window == self.shared.control
                     && message.type_ == self.shared.atoms._SNAPPY_STOP =>

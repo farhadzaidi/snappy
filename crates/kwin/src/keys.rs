@@ -3,7 +3,7 @@
 //! KDE matches shortcuts by the symbol a key types, not by the physical key, so a chord is
 //! named by the symbol its key types on a US layout, as KDE's own defaults are.
 
-use snappy_core::keys::{Combo, Modifier};
+use snappy_core::keys::{Combo, Modifier, Mods};
 use snappy_linux::key_codes;
 
 const SHIFT: i32 = 0x0200_0000;
@@ -71,24 +71,28 @@ fn qt_key(keysym: u32) -> Option<i32> {
     }
 }
 
-/// The chord as one Qt key code, or `None` for a key without a US symbol.
-pub fn key_code(combo: &Combo) -> Option<i32> {
-    let key = qt_key(key_codes::us_keysym(combo.code.as_str())?)?;
-    let mods = [
+/// The modifiers alone, as KDE's shortcut service takes a modifier-only shortcut.
+pub fn modifiers_only(mods: Mods) -> i32 {
+    [
         (Modifier::Shift, SHIFT),
         (Modifier::Ctrl, CONTROL),
         (Modifier::Alt, ALT),
         (Modifier::Meta, META),
     ]
     .into_iter()
-    .filter(|(modifier, _)| combo.mods.contains(*modifier))
-    .fold(0, |mods, (_, bit)| mods | bit);
-    Some(key | mods)
+    .filter(|(modifier, _)| mods.contains(*modifier))
+    .fold(0, |bits, (_, bit)| bits | bit)
+}
+
+/// The chord as one Qt key code, or `None` for a key without a US symbol.
+pub fn key_code(combo: &Combo) -> Option<i32> {
+    let key = qt_key(key_codes::us_keysym(combo.code.as_str())?)?;
+    Some(key | modifiers_only(combo.mods))
 }
 
 #[cfg(test)]
 mod tests {
-    use snappy_core::keys::{KeyChord, KeyCode, Mods};
+    use snappy_core::keys::{KeyChord, KeyCode};
 
     use super::*;
 
@@ -125,6 +129,15 @@ mod tests {
             .unwrap()
             .combo(snappy_core::keys::SnappyKey::DEFAULT);
         assert_eq!(key_code(&clear), Some(CONTROL | ALT | META | 0x5c));
+    }
+
+    #[test]
+    fn a_modifier_only_shortcut_is_the_modifier_bits_alone() {
+        assert_eq!(
+            modifiers_only(snappy_core::keys::SnappyKey::DEFAULT.modifiers()),
+            CONTROL | ALT | META
+        );
+        assert_eq!(modifiers_only(Mods::NONE), 0);
     }
 
     #[test]

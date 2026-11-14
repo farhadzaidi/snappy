@@ -12,6 +12,7 @@ use snappy_core::settings::{LayoutOptions, Settings, SettingsError, Workspace};
 use snappy_ipc::{Command, ToSettings};
 use snappy_platform::Platform;
 
+use crate::caps_lock;
 use crate::core::Core;
 use crate::ops::Shared;
 use crate::store::SettingsStore;
@@ -88,6 +89,7 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
         Command::SetWhenTaken { choice } => change(core, |s| s.snapping.when_taken = choice),
         Command::SetShortcutsEnabled { enabled } => change(core, |s| s.snapping.shortcuts_enabled = enabled),
         Command::SetSnappyKey { modifiers } => set_snappy_key(core, modifiers),
+        Command::SetCapsLockAsSnappyKey { enabled } => caps_lock::set_enabled(core, enabled),
         Command::SetNavigationShortcut { shortcut, chord } => {
             change(core, |s| s.navigation.set(shortcut, chord))
         }

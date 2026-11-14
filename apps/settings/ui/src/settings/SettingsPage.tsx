@@ -120,10 +120,12 @@ function sameModifiers(a: readonly Modifier[], b: readonly Modifier[]): boolean 
  * which the daemon refuses, saying what clashed, unless every one of them still works.
  */
 function SnappyKeyGroup() {
-  const { settings, platform } = useAppState();
+  const { settings, platform, capsLockProblem } = useAppState();
   const send = useSend();
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [capsLockRefusal, setCapsLockRefusal] = useState<string | null>(null);
   const snappyKey = settings.snappyKey;
+  const capsLockNotice = capsLockRefusal ?? (settings.capsLockAsSnappyKey ? capsLockProblem : null);
 
   const choose = async (modifiers: Modifier[]) => {
     setRefusal(await send({ kind: "setSnappyKey", modifiers }));
@@ -169,6 +171,23 @@ function SnappyKeyGroup() {
           Reset to default
         </Button>
       </div>
+      <Toggle
+        label="Use Caps Lock as the Snappy key"
+        checked={settings.capsLockAsSnappyKey}
+        onChange={(enabled) =>
+          void send({ kind: "setCapsLockAsSnappyKey", enabled }).then(setCapsLockRefusal)
+        }
+      />
+      <p className="muted caps-lock-hint">
+        Hold Caps Lock instead of {snappyKeyLabel(snappyKey, platform)}. Tap it alone to turn Caps Lock on or
+        off.
+      </p>
+      {capsLockNotice !== null && (
+        <p className="notice notice-warning" role="alert">
+          <AlertIcon />
+          {capsLockNotice}
+        </p>
+      )}
     </Group>
   );
 }

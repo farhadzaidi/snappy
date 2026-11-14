@@ -7,17 +7,18 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Platform as PlatformName};
+use snappy_core::keys::{Combo, Mods, Platform as PlatformName};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem, Overlay, OverlayMarks,
-    OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
+    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo,
+    WindowState, WindowSystem,
 };
 
 use crate::dispatch::Dispatcher;
 use crate::managed::Windows;
 use crate::shared::{Shared, lock};
-use crate::{displays, login_item};
+use crate::{caps_lock, displays, login_item, messages};
 
 pub struct WindowsPlatform {
     windows: Windows,
@@ -162,6 +163,31 @@ impl HotKeys for WindowsPlatform {
         self.dispatcher
             .call(move |main| main.hotkey_available(&combo))
             .unwrap_or(false)
+    }
+}
+
+/// The keyboard hook does it all, so nothing outlives the process and nothing needs undoing.
+impl CapsLock for WindowsPlatform {
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
+        if caps_lock::system_remaps_caps_lock() {
+            self.restore_caps_lock();
+            return Err(messages::CAPS_LOCK_REMAPPED.to_owned());
+        }
+        match self.dispatcher.call(move |main| main.hold_caps_lock(modifiers)) {
+            Some(true) => Ok(CapsLockUndo::default()),
+            _ => Err(messages::CAPS_LOCK_UNAVAILABLE.to_owned()),
+        }
+    }
+
+    fn restore_caps_lock(&mut self) {
+        // Waits, so that quitting gives Caps Lock back before the process ends.
+        self.dispatcher.call(|main| main.restore_caps_lock());
+    }
+
+    fn undo_caps_lock(&mut self, _undo: &CapsLockUndo) {}
+
+    fn toggle_caps_lock(&mut self) {
+        caps_lock::toggle();
     }
 }
 

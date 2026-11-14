@@ -1,7 +1,8 @@
 //! Which modifier keys are down, from KWin's `org_kde_kwin_keystate` Wayland protocol, the
 //! one KDE's keyboard indicator uses. It reports only modifier and lock states, never which
-//! other keys are pressed, and Snappy listens only while a drag runs: the connection opens
-//! when drag monitoring starts and closes when it stops.
+//! other keys are pressed. Snappy listens only while a drag runs, and while Caps Lock is the
+//! Snappy key, to tell its presses apart; each watch is a connection of its own, closed when
+//! it is no longer needed.
 
 use std::io;
 use std::net::Shutdown;
