@@ -4,8 +4,9 @@
 use std::path::Path;
 use std::rc::Rc;
 
-use snappy_core::bindings::conflict_with_layout;
+use snappy_core::bindings::{Probe, availability_probes, conflict_with_layout};
 use snappy_core::editor::is_separated;
+use snappy_core::keys::Mods;
 use snappy_core::layout::{self, DEFAULT_LAYOUT_ID, Layout};
 use snappy_core::settings::{LayoutOptions, Settings, SettingsError, Workspace};
 use snappy_ipc::{Command, ToSettings};
@@ -86,12 +87,9 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
         Command::SetSwapModifier { modifier } => change(core, |s| s.snapping.swap_modifier = modifier),
         Command::SetWhenTaken { choice } => change(core, |s| s.snapping.when_taken = choice),
         Command::SetShortcutsEnabled { enabled } => change(core, |s| s.snapping.shortcuts_enabled = enabled),
-        Command::SetNavigationShortcut { direction, chord } => {
-            change(core, |s| s.navigation.set(direction, chord))
-        }
-        Command::SetNearestEmptyShortcut { chord } => change(core, |s| s.navigation.nearest_empty = chord),
-        Command::SetFocusShortcut { shortcut, chord } => {
-            change(core, |s| s.navigation.set_focus_shortcut(shortcut, chord))
+        Command::SetSnappyKey { modifiers } => set_snappy_key(core, modifiers),
+        Command::SetNavigationShortcut { shortcut, chord } => {
+            change(core, |s| s.navigation.set(shortcut, chord))
         }
         Command::ApplyLayout { display, layout } => {
             apply_layout(core, &display, &layout);
@@ -113,7 +111,7 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
             Ok(())
         }
         Command::ProbeShortcut { chord } => {
-            let available = core.platform.is_available(&chord.combo());
+            let available = core.platform.is_available(&chord.combo(core.settings.snappy_key));
             core.outbox.push(ToSettings::ProbeResult { available });
             Ok(())
         }
@@ -139,11 +137,11 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
         Command::ImportSettings { path } => import(core, Path::new(&path)),
         Command::ExportSettings { path } => {
             SettingsStore::write_file(Path::new(&path), &core.settings).map_err(|e| e.to_string())?;
-            core.announce("Layouts and preferences exported.", false, true);
+            core.announce("Layouts and preferences exported.");
             Ok(())
         }
         Command::DismissStatus => {
-            core.status = None;
+            core.dismiss_status();
             Ok(())
         }
         Command::BeginRecording | Command::EndRecording | Command::DeleteWorkspace { .. } => Ok(()),
@@ -158,11 +156,22 @@ pub(crate) fn change<P: Platform>(
     let mut next = core.settings.clone();
     edit(&mut next);
     let platform = core.platform_name();
-    let valid = next.validate(platform).map_err(|error| match error {
-        // A shortcut conflict explains itself.
+    let valid = next.validate(platform).map_err(refusal)?;
+    commit(core, valid)
+}
+
+/// What to tell the user about settings that failed validation.
+fn refusal(error: SettingsError) -> String {
+    match error {
+        // Shortcut conflicts and Snappy key problems explain themselves.
         SettingsError::Conflict(message) => message,
+        SettingsError::SnappyKey(error) => error.to_string(),
         other => format!("Could not save settings: {other}"),
-    })?;
+    }
+}
+
+/// Save validated settings, then reconfigure what depends on them.
+fn commit<P: Platform>(core: &mut Core<P>, valid: Settings) -> Result<(), String> {
     if valid == core.settings {
         return Ok(());
     }
@@ -182,22 +191,85 @@ pub(crate) fn settings_changed<P: Platform>(core: &mut Core<P>) {
     core.refresh_live(false);
 }
 
+/// Make the Snappy key stand for `modifiers`, checking every shortcut with the new
+/// modifiers first: against each other and the chords the system keeps
+/// (`Settings::with_snappy_key`), then with the OS for each chord the change moves. Nothing
+/// changes when any check fails, and the reply names what clashed.
+fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<(), String> {
+    let current = core.settings.snappy_key;
+    if modifiers == current.modifiers() {
+        return Ok(());
+    }
+    let platform = core.platform_name();
+    let names = |mods: Mods| -> Vec<&'static str> {
+        mods.in_display_order()
+            .map(|modifier| modifier.name(platform))
+            .collect()
+    };
+    let (from, to) = (names(current.modifiers()), names(modifiers));
+
+    let checked = core
+        .settings
+        .with_snappy_key(modifiers, platform)
+        .map_err(refusal)
+        .and_then(|next| {
+            let probes = availability_probes(&next, platform);
+            probe(core, &probes).map(|()| next)
+        });
+    let saved = checked.and_then(|next| {
+        let key = next.snappy_key;
+        commit(core, next).map(|()| key)
+    });
+    match saved {
+        Ok(key) => {
+            core.trace(
+                "snappyKeyChanged",
+                || serde_json::json!({ "from": from, "to": to }),
+            );
+            core.announce(&format!("The Snappy key is now {}.", key.label(platform)));
+            Ok(())
+        }
+        Err(reason) => {
+            // Probing may have taken Snappy's own shortcuts away; put the current ones back.
+            core.configure_hotkeys();
+            core.flag(
+                "snappyKeyRefused",
+                || serde_json::json!({ "from": from, "to": to, "reason": reason }),
+            );
+            Err(reason)
+        }
+    }
+}
+
+/// Ask the OS about each probe, with Snappy's own shortcuts unregistered first, as while
+/// recording: a probed chord can be one Snappy holds now, such as Snappy + Shift + 1 in one
+/// layout becoming Snappy + 1 of another once Shift joins the key, and the OS reports
+/// those as taken. Whoever calls this registers shortcuts again afterwards.
+fn probe<P: Platform>(core: &mut Core<P>, probes: &[Probe]) -> Result<(), String> {
+    core.release_hotkeys();
+    match probes
+        .iter()
+        .find(|probe| !core.platform.is_available(&probe.combo))
+    {
+        Some(taken) => Err(taken.refusal.clone()),
+        None => Ok(()),
+    }
+}
+
 fn set_snapping<P: Platform>(core: &mut Core<P>, enabled: bool) -> Result<(), String> {
     change(core, |s| s.snapping.enabled = enabled)?;
     if !enabled {
-        core.announce("Snapping is paused.", false, true);
-    } else if core.live {
+        core.announce("Snapping is paused.");
+    } else if core.is_live() {
         let modifier = core
             .settings
             .snapping
             .drag_modifier
             .modifier()
             .label(core.platform_name());
-        core.announce(
-            &format!("Snapping is on. Hold {modifier} while dragging a window."),
-            false,
-            true,
-        );
+        core.announce(&format!(
+            "Snapping is on. Hold {modifier} while dragging a window."
+        ));
     } else {
         ask_for_access(core, "Snapping");
     }
@@ -207,15 +279,13 @@ fn set_snapping<P: Platform>(core: &mut Core<P>, enabled: bool) -> Result<(), St
 /// Ask for permission once and say what will happen, or how to grant it by hand when the
 /// request can't be made. `feature` names what starts on the grant.
 fn ask_for_access<P: Platform>(core: &mut Core<P>, feature: &str) {
-    if !core.capabilities.needs_permission || core.permission_granted {
+    if !core.capabilities.needs_permission || core.has_permission() {
         return;
     }
     if core.platform.request_access() {
-        core.announce(
-            &format!("Allow Snappy in Accessibility. {feature} will start automatically."),
-            false,
-            true,
-        );
+        core.announce(&format!(
+            "Allow Snappy in Accessibility. {feature} will start automatically."
+        ));
     } else {
         core.announce_error("Open System Settings → Privacy & Security → Accessibility and allow Snappy.");
     }
@@ -228,7 +298,7 @@ pub(crate) fn first_launch<P: Platform>(core: &mut Core<P>) {
         core.announce_error(&error.to_string());
         return;
     }
-    if core.settings.snapping.enabled && !core.live && core.capabilities.needs_permission {
+    if core.settings.snapping.enabled && !core.is_live() && core.capabilities.needs_permission {
         let _ = set_snapping(core, true);
     }
 }
@@ -244,7 +314,7 @@ pub(crate) fn apply_layout<P: Platform>(core: &mut Core<P>, display: &str, layou
     let result = change(core, |s| assign(s, display, layout_id));
     match result {
         // A quiet update would dismiss the refused-shortcuts error the change raised.
-        Ok(()) if core.registration_failed => {}
+        Ok(()) if core.shortcuts_refused() => {}
         Ok(()) => {
             let name = core
                 .displays
@@ -309,7 +379,7 @@ fn save_layout<P: Platform>(
         s.layouts.options.insert(layout.id.clone(), options);
         assign(s, display, &layout.id);
     })?;
-    core.announce(&format!("{} saved.", layout.name), false, true);
+    core.announce(&format!("{} saved.", layout.name));
     Ok(())
 }
 
@@ -325,7 +395,7 @@ fn delete_layout<P: Platform>(core: &mut Core<P>, id: &str) -> Result<(), String
             s.layouts.default_layout_id = DEFAULT_LAYOUT_ID.to_owned();
         }
     })?;
-    core.announce("Custom layout deleted.", false, true);
+    core.announce("Custom layout deleted.");
     Ok(())
 }
 
@@ -340,7 +410,7 @@ fn set_layout_enabled<P: Platform>(core: &mut Core<P>, id: &str, enabled: bool) 
         s.layouts.options.insert(id.to_owned(), options);
     })?;
     let state = if enabled { "enabled" } else { "disabled" };
-    core.announce(&format!("{} {state}.", layout.name), false, true);
+    core.announce(&format!("{} {state}.", layout.name));
     Ok(())
 }
 
@@ -477,6 +547,6 @@ fn import<P: Platform>(core: &mut Core<P>, path: &Path) -> Result<(), String> {
     imported.workspaces.enabled = false;
     imported.snapping.enabled = core.settings.snapping.enabled;
     change(core, |s| *s = imported).map_err(|error| format!("Import failed: {error}"))?;
-    core.announce("Layouts and preferences imported.", false, true);
+    core.announce("Layouts and preferences imported.");
     Ok(())
 }

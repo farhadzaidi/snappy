@@ -62,81 +62,11 @@ impl TabMemory {
         for window in alone {
             self.group_of.remove(window);
         }
-        let mut room: Vec<usize> = shown.iter().map(|tab| tab.tabs.saturating_sub(1)).collect();
-        let mut behind: Vec<Option<usize>> = vec![None; maybe.len()];
-        let fits = |lead: &ShownTab, tab: &MaybeTab| lead.minimized == tab.minimized;
-
-        for (index, tab) in maybe.iter().enumerate() {
-            let Some(group) = self.group_of.get(&tab.id) else {
-                continue;
-            };
-            let remembered = only(shown.iter().enumerate().filter(|(lead_index, lead)| {
-                fits(lead, tab) && room[*lead_index] > 0 && self.group_of.get(&lead.id) == Some(group)
-            }));
-            if let Some(lead) = remembered {
-                behind[index] = Some(lead);
-                room[lead] -= 1;
-            }
-        }
-
-        // More windows with a group's frame than it has room for can't be told apart.
-        let framed: Vec<Option<usize>> = maybe
-            .iter()
-            .enumerate()
-            .map(|(index, tab)| {
-                let unmatched = behind[index].is_none();
-                let lead = only(shown.iter().enumerate().filter(|(lead_index, lead)| {
-                    fits(lead, tab) && room[*lead_index] > 0 && same_frame(lead.frame, tab.frame)
-                }));
-                lead.filter(|_| unmatched)
-            })
-            .collect();
-        for (lead, space) in room.iter_mut().enumerate() {
-            let matching: Vec<usize> = (0..maybe.len())
-                .filter(|index| framed[*index] == Some(lead))
-                .collect();
-            if matching.len() <= *space {
-                *space -= matching.len();
-                for index in matching {
-                    behind[index] = Some(lead);
-                }
-            }
-        }
-
-        for minimized in [false, true] {
-            let left: Vec<usize> = (0..maybe.len())
-                .filter(|index| behind[*index].is_none() && maybe[*index].minimized == minimized)
-                .collect();
-            let open = only(
-                shown
-                    .iter()
-                    .enumerate()
-                    .filter(|(lead_index, lead)| lead.minimized == minimized && room[*lead_index] > 0),
-            );
-            if let Some(lead) = open
-                && !left.is_empty()
-                && left.len() == room[lead]
-            {
-                for index in left {
-                    behind[index] = Some(lead);
-                }
-                room[lead] = 0;
-            }
-        }
-
-        let groups: Vec<(WindowId, Vec<WindowId>)> = shown
-            .iter()
-            .enumerate()
-            .map(|(lead_index, lead)| {
-                let hidden = maybe
-                    .iter()
-                    .zip(&behind)
-                    .filter(|(_, group)| **group == Some(lead_index))
-                    .map(|(tab, _)| tab.id)
-                    .collect();
-                (lead.id, hidden)
-            })
-            .collect();
+        let mut matching = Matching::new(shown, maybe);
+        matching.by_memory(&self.group_of);
+        matching.by_frame();
+        matching.by_room();
+        let groups = matching.groups();
         self.remember(&groups);
         groups
     }
@@ -163,6 +93,116 @@ impl TabMemory {
     /// Forget windows that are gone.
     pub fn retain(&mut self, mut keep: impl FnMut(WindowId) -> bool) {
         self.group_of.retain(|window, _| keep(*window));
+    }
+}
+
+/// Hidden tabs being matched to the shown tabs of one app, by index into each.
+struct Matching<'a> {
+    shown: &'a [ShownTab],
+    maybe: &'a [MaybeTab],
+    /// How many more hidden tabs each group can take.
+    room: Vec<usize>,
+    /// The group each window that may be a hidden tab sits behind, once matched.
+    behind: Vec<Option<usize>>,
+}
+
+impl<'a> Matching<'a> {
+    fn new(shown: &'a [ShownTab], maybe: &'a [MaybeTab]) -> Self {
+        Self {
+            shown,
+            maybe,
+            room: shown.iter().map(|tab| tab.tabs.saturating_sub(1)).collect(),
+            behind: vec![None; maybe.len()],
+        }
+    }
+
+    /// The one group with room that `tab` could sit behind and `also` accepts.
+    fn only_group(&self, tab: &MaybeTab, also: impl Fn(&ShownTab) -> bool) -> Option<usize> {
+        only(self.shown.iter().enumerate().filter(|(group, shown)| {
+            shown.minimized == tab.minimized && self.room[*group] > 0 && also(shown)
+        }))
+    }
+
+    /// A window stays in the group it was last found in while that group shows a tab.
+    fn by_memory(&mut self, group_of: &HashMap<WindowId, u64>) {
+        let maybe = self.maybe;
+        for (index, tab) in maybe.iter().enumerate() {
+            let Some(mark) = group_of.get(&tab.id) else {
+                continue;
+            };
+            if let Some(group) = self.only_group(tab, |shown| group_of.get(&shown.id) == Some(mark)) {
+                self.behind[index] = Some(group);
+                self.room[group] -= 1;
+            }
+        }
+    }
+
+    /// An unmatched window joins the one group whose shown tab has its frame. More windows
+    /// with a group's frame than it has room for can't be told apart, so none of them joins.
+    fn by_frame(&mut self) {
+        let framed: Vec<Option<usize>> = self
+            .maybe
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| {
+                let group = self.only_group(tab, |shown| same_frame(shown.frame, tab.frame));
+                group.filter(|_| self.behind[index].is_none())
+            })
+            .collect();
+        for (group, space) in self.room.iter_mut().enumerate() {
+            let matching: Vec<usize> = (0..self.maybe.len())
+                .filter(|index| framed[*index] == Some(group))
+                .collect();
+            if matching.len() <= *space {
+                *space -= matching.len();
+                for index in matching {
+                    self.behind[index] = Some(group);
+                }
+            }
+        }
+    }
+
+    /// When one group, minimized or not, has room left and the unmatched windows like it
+    /// exactly fill that room, they are its tabs.
+    fn by_room(&mut self) {
+        for minimized in [false, true] {
+            let left: Vec<usize> = (0..self.maybe.len())
+                .filter(|index| self.behind[*index].is_none() && self.maybe[*index].minimized == minimized)
+                .collect();
+            let open = only(
+                self.shown
+                    .iter()
+                    .enumerate()
+                    .filter(|(group, shown)| shown.minimized == minimized && self.room[*group] > 0),
+            );
+            if let Some(group) = open
+                && !left.is_empty()
+                && left.len() == self.room[group]
+            {
+                for index in left {
+                    self.behind[index] = Some(group);
+                }
+                self.room[group] = 0;
+            }
+        }
+    }
+
+    /// Each shown tab with the hidden tabs matched to it.
+    fn groups(self) -> Vec<(WindowId, Vec<WindowId>)> {
+        self.shown
+            .iter()
+            .enumerate()
+            .map(|(group, shown)| {
+                let hidden = self
+                    .maybe
+                    .iter()
+                    .zip(&self.behind)
+                    .filter(|(_, behind)| **behind == Some(group))
+                    .map(|(tab, _)| tab.id)
+                    .collect();
+                (shown.id, hidden)
+            })
+            .collect()
     }
 }
 

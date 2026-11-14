@@ -7,17 +7,16 @@ use std::io::{self, Read, Write};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use snappy_core::keys::KeyChord;
+use snappy_core::keys::{KeyChord, Mods};
 use snappy_core::layout::Layout;
-use snappy_core::navigate::Direction;
 use snappy_core::settings::{
-    DragModifier, FocusShortcut, HistoryStep, LayoutOptions, Settings, Workspace, WorkspaceStep,
+    DragModifier, HistoryStep, LayoutOptions, NavigationShortcut, Settings, Workspace, WorkspaceStep,
 };
 use snappy_core::swap::{SwapModifier, WhenTaken};
 use snappy_platform::{Display, Remedy};
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// Messages larger than this are refused; settings files are capped well below it.
 pub const MAX_MESSAGE_BYTES: u32 = 8 * 1024 * 1024;
 
@@ -69,17 +68,15 @@ pub enum Command {
     SetShortcutsEnabled {
         enabled: bool,
     },
+    /// Make the Snappy key stand for these modifiers. Refused, with the reason, unless
+    /// every shortcut still works with them.
+    SetSnappyKey {
+        modifiers: Mods,
+    },
+    /// A shortcut of the navigation section: moving the focused window between zones or
+    /// into the nearest empty zone, moving focus, or changing the selection.
     SetNavigationShortcut {
-        direction: Direction,
-        chord: Option<KeyChord>,
-    },
-    /// The shortcut that moves the focused window into the nearest empty zone.
-    SetNearestEmptyShortcut {
-        chord: Option<KeyChord>,
-    },
-    /// A shortcut that moves focus between windows or changes the selection.
-    SetFocusShortcut {
-        shortcut: FocusShortcut,
+        shortcut: NavigationShortcut,
         chord: Option<KeyChord>,
     },
     ApplyLayout {
@@ -273,6 +270,57 @@ mod tests {
     fn commands_use_readable_json() {
         let json = serde_json::to_string(&Command::SetSnapping { enabled: true }).unwrap();
         assert_eq!(json, r#"{"kind":"setSnapping","enabled":true}"#);
+        let key: Command =
+            serde_json::from_str(r#"{"kind":"setSnappyKey","modifiers":["alt","ctrl"]}"#).unwrap();
+        let modifiers = [
+            snappy_core::keys::Modifier::Ctrl,
+            snappy_core::keys::Modifier::Alt,
+        ];
+        assert_eq!(
+            key,
+            Command::SetSnappyKey {
+                modifiers: modifiers.into_iter().collect()
+            }
+        );
+    }
+
+    #[test]
+    fn the_navigation_command_names_its_shortcut_by_the_settings_field() {
+        let focus: Command =
+            serde_json::from_str(r#"{"kind":"setNavigationShortcut","shortcut":"focusUp","chord":null}"#)
+                .unwrap();
+        assert_eq!(
+            focus,
+            Command::SetNavigationShortcut {
+                shortcut: NavigationShortcut::Focus(snappy_core::settings::FocusShortcut::FocusUp),
+                chord: None,
+            }
+        );
+        let arrow = Command::SetNavigationShortcut {
+            shortcut: snappy_core::navigate::Direction::Left.into(),
+            chord: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&arrow).unwrap(),
+            r#"{"kind":"setNavigationShortcut","shortcut":"left","chord":null}"#
+        );
+        let nearest: Command = serde_json::from_str(
+            r#"{"kind":"setNavigationShortcut","shortcut":"nearestEmpty","chord":null}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            nearest,
+            Command::SetNavigationShortcut {
+                shortcut: NavigationShortcut::NearestEmpty,
+                ..
+            }
+        ));
+        assert!(
+            serde_json::from_str::<Command>(
+                r#"{"kind":"setNavigationShortcut","shortcut":"sideways","chord":null}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::bindings;
-use crate::keys::{Combo, KeyChord, Modifier, Platform, chords_the_system_keeps};
+use crate::keys::{
+    ChordMods, Combo, KeyChord, Modifier, Mods, Platform, SnappyKey, SnappyKeyError, chords_the_system_keeps,
+};
 use crate::layout::{self, DEFAULT_LAYOUT_ID, FALLBACK_LAYOUT_ID, Layout, valid_id, valid_name};
 use crate::navigate::Direction;
 use crate::swap::{SwapModifier, WhenTaken};
@@ -19,7 +21,7 @@ pub const MAX_WORKSPACES: usize = 32;
 pub const MAX_WORKSPACE_ID_LENGTH: usize = 128;
 pub const MAX_DISPLAY_ASSIGNMENTS: usize = 32;
 /// Workspaces numbered up to this get the Snappy key with their number to switch to them.
-const NUMBERED_SWITCH_SHORTCUTS: usize = 9;
+pub const NUMBERED_SWITCH_SHORTCUTS: usize = 9;
 
 /// Display ID to layout ID.
 pub type DisplayAssignments = BTreeMap<String, String>;
@@ -29,6 +31,11 @@ pub type DisplayAssignments = BTreeMap<String, String>;
 pub struct Settings {
     pub version: u32,
     pub snapping: Snapping,
+    /// The modifiers every shortcut stored with the Snappy key holds. Files from before it
+    /// could be chosen lack it, get the default, and have their chords read as they were
+    /// then (`read_as_before_the_snappy_key`).
+    #[serde(default)]
+    pub snappy_key: SnappyKey,
     pub navigation: Navigation,
     pub layouts: Layouts,
     pub workspaces: Workspaces,
@@ -113,15 +120,6 @@ pub enum FocusShortcut {
 }
 
 impl FocusShortcut {
-    pub const ALL: [FocusShortcut; 6] = [
-        FocusShortcut::FocusUp,
-        FocusShortcut::FocusLeft,
-        FocusShortcut::FocusDown,
-        FocusShortcut::FocusRight,
-        FocusShortcut::SelectWindow,
-        FocusShortcut::ClearSelection,
-    ];
-
     /// The name the settings app and conflict messages use.
     pub fn title(self) -> &'static str {
         match self {
@@ -150,60 +148,125 @@ impl FocusShortcut {
 /// The name the settings app and conflict messages give the nearest-empty-zone shortcut.
 pub const NEAREST_EMPTY_TITLE: &str = "Move to the nearest empty zone";
 
+/// Every shortcut in the navigation section, so each is listed once: for validation,
+/// conflicts, registration, the defaults a file without it gets, and the command that
+/// sets it. Written as the settings file field that holds it, such as `"left"` or
+/// `"focusUp"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavigationShortcut {
+    /// Move the focused window to the neighboring zone.
+    Move(Direction),
+    /// Move the focused window into the nearest empty zone, or the selection into empty
+    /// zones.
+    NearestEmpty,
+    Focus(FocusShortcut),
+}
+
+impl NavigationShortcut {
+    /// In the order conflicts are looked for.
+    pub const ALL: [NavigationShortcut; 11] = [
+        NavigationShortcut::Move(Direction::Left),
+        NavigationShortcut::Move(Direction::Right),
+        NavigationShortcut::Move(Direction::Up),
+        NavigationShortcut::Move(Direction::Down),
+        NavigationShortcut::NearestEmpty,
+        NavigationShortcut::Focus(FocusShortcut::FocusUp),
+        NavigationShortcut::Focus(FocusShortcut::FocusLeft),
+        NavigationShortcut::Focus(FocusShortcut::FocusDown),
+        NavigationShortcut::Focus(FocusShortcut::FocusRight),
+        NavigationShortcut::Focus(FocusShortcut::SelectWindow),
+        NavigationShortcut::Focus(FocusShortcut::ClearSelection),
+    ];
+
+    /// The name the settings app and conflict messages use.
+    pub fn title(self) -> String {
+        match self {
+            NavigationShortcut::Move(direction) => format!("Move window {}", direction.name()),
+            NavigationShortcut::NearestEmpty => NEAREST_EMPTY_TITLE.to_owned(),
+            NavigationShortcut::Focus(shortcut) => shortcut.title().to_owned(),
+        }
+    }
+
+    /// The field that holds this shortcut's chord in the settings file.
+    fn field(self) -> &'static str {
+        match self {
+            NavigationShortcut::Move(direction) => direction.name(),
+            NavigationShortcut::NearestEmpty => "nearestEmpty",
+            NavigationShortcut::Focus(shortcut) => shortcut.field(),
+        }
+    }
+}
+
+impl Serialize for NavigationShortcut {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.field())
+    }
+}
+
+impl<'de> Deserialize<'de> for NavigationShortcut {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let field = String::deserialize(deserializer)?;
+        NavigationShortcut::ALL
+            .into_iter()
+            .find(|shortcut| shortcut.field() == field)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown navigation shortcut {field:?}")))
+    }
+}
+
+impl From<Direction> for NavigationShortcut {
+    fn from(direction: Direction) -> Self {
+        NavigationShortcut::Move(direction)
+    }
+}
+
+impl From<FocusShortcut> for NavigationShortcut {
+    fn from(shortcut: FocusShortcut) -> Self {
+        NavigationShortcut::Focus(shortcut)
+    }
+}
+
 impl Navigation {
-    pub fn get(&self, direction: Direction) -> Option<&KeyChord> {
-        match direction {
-            Direction::Left => self.left.as_ref(),
-            Direction::Right => self.right.as_ref(),
-            Direction::Up => self.up.as_ref(),
-            Direction::Down => self.down.as_ref(),
+    pub fn get(&self, shortcut: impl Into<NavigationShortcut>) -> Option<&KeyChord> {
+        match shortcut.into() {
+            NavigationShortcut::Move(Direction::Left) => self.left.as_ref(),
+            NavigationShortcut::Move(Direction::Right) => self.right.as_ref(),
+            NavigationShortcut::Move(Direction::Up) => self.up.as_ref(),
+            NavigationShortcut::Move(Direction::Down) => self.down.as_ref(),
+            NavigationShortcut::NearestEmpty => self.nearest_empty.as_ref(),
+            NavigationShortcut::Focus(FocusShortcut::FocusUp) => self.focus_up.as_ref(),
+            NavigationShortcut::Focus(FocusShortcut::FocusLeft) => self.focus_left.as_ref(),
+            NavigationShortcut::Focus(FocusShortcut::FocusDown) => self.focus_down.as_ref(),
+            NavigationShortcut::Focus(FocusShortcut::FocusRight) => self.focus_right.as_ref(),
+            NavigationShortcut::Focus(FocusShortcut::SelectWindow) => self.select_window.as_ref(),
+            NavigationShortcut::Focus(FocusShortcut::ClearSelection) => self.clear_selection.as_ref(),
         }
     }
 
-    pub fn set(&mut self, direction: Direction, chord: Option<KeyChord>) {
-        let slot = match direction {
-            Direction::Left => &mut self.left,
-            Direction::Right => &mut self.right,
-            Direction::Up => &mut self.up,
-            Direction::Down => &mut self.down,
-        };
-        *slot = chord;
+    pub fn set(&mut self, shortcut: impl Into<NavigationShortcut>, chord: Option<KeyChord>) {
+        *self.slot(shortcut.into()) = chord;
     }
 
-    pub fn chords(&self) -> impl Iterator<Item = (Direction, &KeyChord)> {
-        Direction::ALL
-            .into_iter()
-            .filter_map(|direction| self.get(direction).map(|chord| (direction, chord)))
-    }
-
-    pub fn focus_shortcut(&self, shortcut: FocusShortcut) -> Option<&KeyChord> {
+    fn slot(&mut self, shortcut: NavigationShortcut) -> &mut Option<KeyChord> {
         match shortcut {
-            FocusShortcut::FocusUp => self.focus_up.as_ref(),
-            FocusShortcut::FocusLeft => self.focus_left.as_ref(),
-            FocusShortcut::FocusDown => self.focus_down.as_ref(),
-            FocusShortcut::FocusRight => self.focus_right.as_ref(),
-            FocusShortcut::SelectWindow => self.select_window.as_ref(),
-            FocusShortcut::ClearSelection => self.clear_selection.as_ref(),
+            NavigationShortcut::Move(Direction::Left) => &mut self.left,
+            NavigationShortcut::Move(Direction::Right) => &mut self.right,
+            NavigationShortcut::Move(Direction::Up) => &mut self.up,
+            NavigationShortcut::Move(Direction::Down) => &mut self.down,
+            NavigationShortcut::NearestEmpty => &mut self.nearest_empty,
+            NavigationShortcut::Focus(FocusShortcut::FocusUp) => &mut self.focus_up,
+            NavigationShortcut::Focus(FocusShortcut::FocusLeft) => &mut self.focus_left,
+            NavigationShortcut::Focus(FocusShortcut::FocusDown) => &mut self.focus_down,
+            NavigationShortcut::Focus(FocusShortcut::FocusRight) => &mut self.focus_right,
+            NavigationShortcut::Focus(FocusShortcut::SelectWindow) => &mut self.select_window,
+            NavigationShortcut::Focus(FocusShortcut::ClearSelection) => &mut self.clear_selection,
         }
     }
 
-    pub fn set_focus_shortcut(&mut self, shortcut: FocusShortcut, chord: Option<KeyChord>) {
-        let slot = match shortcut {
-            FocusShortcut::FocusUp => &mut self.focus_up,
-            FocusShortcut::FocusLeft => &mut self.focus_left,
-            FocusShortcut::FocusDown => &mut self.focus_down,
-            FocusShortcut::FocusRight => &mut self.focus_right,
-            FocusShortcut::SelectWindow => &mut self.select_window,
-            FocusShortcut::ClearSelection => &mut self.clear_selection,
-        };
-        *slot = chord;
-    }
-
-    /// Every assigned focus and selection chord.
-    pub fn focus_shortcuts(&self) -> impl Iterator<Item = (FocusShortcut, &KeyChord)> {
-        FocusShortcut::ALL
+    /// Every assigned chord, in `NavigationShortcut::ALL` order.
+    pub fn chords(&self) -> impl Iterator<Item = (NavigationShortcut, &KeyChord)> {
+        NavigationShortcut::ALL
             .into_iter()
-            .filter_map(|shortcut| self.focus_shortcut(shortcut).map(|chord| (shortcut, chord)))
+            .filter_map(|shortcut| self.get(shortcut).map(|chord| (shortcut, chord)))
     }
 }
 
@@ -243,11 +306,14 @@ impl MoveHistory {
     }
 
     pub fn set(&mut self, step: HistoryStep, chord: Option<KeyChord>) {
-        let slot = match step {
+        *self.slot(step) = chord;
+    }
+
+    fn slot(&mut self, step: HistoryStep) -> &mut Option<KeyChord> {
+        match step {
             HistoryStep::Undo => &mut self.undo,
             HistoryStep::Redo => &mut self.redo,
-        };
-        *slot = chord;
+        }
     }
 
     pub fn chords(&self) -> impl Iterator<Item = (HistoryStep, &KeyChord)> {
@@ -289,6 +355,25 @@ impl LayoutOptions {
         self.zone_shortcuts.len() <= layout::MAX_ZONES
             && self.select_shortcut.as_ref().is_none_or(KeyChord::is_valid)
             && self.zone_shortcuts.values().all(KeyChord::is_valid)
+    }
+}
+
+/// A layout's own shortcuts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutShortcut {
+    /// Apply the layout to the display under the pointer.
+    Select,
+    /// Move the focused window into the zone at this index of the layout's zones.
+    Zone(usize),
+}
+
+impl LayoutShortcut {
+    /// The name the settings app and conflict messages use for the layout named `layout`.
+    pub fn title(self, layout: &str) -> String {
+        match self {
+            LayoutShortcut::Select => format!("Select {layout}"),
+            LayoutShortcut::Zone(index) => format!("Zone {} of {layout}", index + 1),
+        }
     }
 }
 
@@ -373,14 +458,27 @@ impl Workspace {
         }
     }
 
-    pub fn chords(&self) -> impl Iterator<Item = &KeyChord> {
-        [
-            &self.switch_shortcut,
-            &self.send_shortcut,
-            &self.send_and_switch_shortcut,
-        ]
-        .into_iter()
-        .flatten()
+    pub fn get(&self, shortcut: WorkspaceShortcut) -> Option<&KeyChord> {
+        match shortcut {
+            WorkspaceShortcut::Switch => self.switch_shortcut.as_ref(),
+            WorkspaceShortcut::Send => self.send_shortcut.as_ref(),
+            WorkspaceShortcut::SendAndSwitch => self.send_and_switch_shortcut.as_ref(),
+        }
+    }
+
+    fn slot(&mut self, shortcut: WorkspaceShortcut) -> &mut Option<KeyChord> {
+        match shortcut {
+            WorkspaceShortcut::Switch => &mut self.switch_shortcut,
+            WorkspaceShortcut::Send => &mut self.send_shortcut,
+            WorkspaceShortcut::SendAndSwitch => &mut self.send_and_switch_shortcut,
+        }
+    }
+
+    /// Every assigned chord of this workspace's own.
+    pub fn chords(&self) -> impl Iterator<Item = (WorkspaceShortcut, &KeyChord)> {
+        WorkspaceShortcut::ALL
+            .into_iter()
+            .filter_map(|shortcut| self.get(shortcut).map(|chord| (shortcut, chord)))
     }
 
     fn is_valid(&self) -> bool {
@@ -388,7 +486,51 @@ impl Workspace {
             && self.id.chars().count() <= MAX_WORKSPACE_ID_LENGTH
             && valid_name(&self.name)
             && self.displays.len() <= MAX_DISPLAY_ASSIGNMENTS
-            && self.chords().all(KeyChord::is_valid)
+            && self.chords().all(|(_, chord)| chord.is_valid())
+    }
+}
+
+/// A workspace's own shortcuts. Written as the field of `Workspace` that holds it, such as
+/// `"switchShortcut"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceShortcut {
+    Switch,
+    /// Send the focused window, or the selection, there and stay.
+    Send,
+    /// Send the focused window there, then switch, taking the selection along.
+    SendAndSwitch,
+}
+
+impl WorkspaceShortcut {
+    pub const ALL: [WorkspaceShortcut; 3] = [
+        WorkspaceShortcut::Switch,
+        WorkspaceShortcut::Send,
+        WorkspaceShortcut::SendAndSwitch,
+    ];
+
+    /// The field of `Workspace` that holds this shortcut's chord.
+    fn field(self) -> &'static str {
+        match self {
+            WorkspaceShortcut::Switch => "switchShortcut",
+            WorkspaceShortcut::Send => "sendShortcut",
+            WorkspaceShortcut::SendAndSwitch => "sendAndSwitchShortcut",
+        }
+    }
+
+    /// The name the settings app and conflict messages use for the workspace named
+    /// `workspace`.
+    pub fn title(self, workspace: &str) -> String {
+        match self {
+            WorkspaceShortcut::Switch => format!("Switch to {workspace}"),
+            WorkspaceShortcut::Send => format!("Send window to {workspace}"),
+            WorkspaceShortcut::SendAndSwitch => format!("Send window to {workspace} and switch"),
+        }
+    }
+}
+
+impl Serialize for WorkspaceShortcut {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.field())
     }
 }
 
@@ -429,13 +571,16 @@ impl Workspaces {
     }
 
     pub fn set_step(&mut self, step: WorkspaceStep, chord: Option<KeyChord>) {
-        let slot = match step {
+        *self.step_slot(step) = chord;
+    }
+
+    fn step_slot(&mut self, step: WorkspaceStep) -> &mut Option<KeyChord> {
+        match step {
             WorkspaceStep::Previous => &mut self.previous,
             WorkspaceStep::Next => &mut self.next,
             WorkspaceStep::SendPrevious => &mut self.send_previous,
             WorkspaceStep::SendNext => &mut self.send_next,
-        };
-        *slot = chord;
+        }
     }
 
     /// Every assigned step chord.
@@ -499,6 +644,7 @@ impl Settings {
                 when_taken: WhenTaken::default(),
                 shortcuts_enabled: true,
             },
+            snappy_key: SnappyKey::DEFAULT,
             navigation: Navigation::defaults(),
             layouts: Layouts {
                 default_layout_id: DEFAULT_LAYOUT_ID.to_owned(),
@@ -538,7 +684,7 @@ impl Settings {
         let used = bindings::bound_combos(self);
         workspace.switch_shortcut = workspace
             .switch_shortcut
-            .filter(|chord| !used.contains(&chord.combo()));
+            .filter(|chord| !used.contains(&chord.combo(self.snappy_key)));
         workspace
     }
 
@@ -573,13 +719,33 @@ impl Settings {
     }
 
     /// Check every rule and return the normalized settings, or the first problem.
-    pub fn validate(mut self, platform: Platform) -> Result<Settings, SettingsError> {
+    pub fn validate(self, platform: Platform) -> Result<Settings, SettingsError> {
+        self.checked(platform, bindings::first_conflict)
+    }
+
+    /// These settings with the Snappy key standing for `modifiers`, checked as a whole:
+    /// every Snappy key chord moves to the new modifiers, so each must still differ from
+    /// every other binding and from the chords the OS and apps keep. Chords stored with
+    /// concrete modifiers keep them, even ones the new key's modifiers match, which then
+    /// conflict with any Snappy key chord on the same key. Whether the OS leaves the new
+    /// chords free is the caller's to probe (`bindings::availability_probes`).
+    pub fn with_snappy_key(&self, modifiers: Mods, platform: Platform) -> Result<Settings, SettingsError> {
+        let mut changed = self.clone();
+        changed.snappy_key = SnappyKey::new(modifiers)?;
+        changed.checked(platform, bindings::snappy_key_conflict)
+    }
+
+    fn checked(
+        mut self,
+        platform: Platform,
+        first_conflict: fn(&Settings, Platform) -> Option<String>,
+    ) -> Result<Settings, SettingsError> {
         if self.version != FORMAT_VERSION {
             return Err(SettingsError::UnsupportedVersion(self.version));
         }
         self.check_shapes()?;
         self.normalize();
-        if let Some(conflict) = bindings::first_conflict(&self, platform) {
+        if let Some(conflict) = first_conflict(&self, platform) {
             return Err(SettingsError::Conflict(conflict));
         }
         Ok(self)
@@ -613,15 +779,6 @@ impl Settings {
             && self.workspaces.items.iter().all(Workspace::is_valid)
             && self.workspaces.steps().all(|(_, chord)| chord.is_valid())
             && self.navigation.chords().all(|(_, chord)| chord.is_valid())
-            && self
-                .navigation
-                .nearest_empty
-                .as_ref()
-                .is_none_or(KeyChord::is_valid)
-            && self
-                .navigation
-                .focus_shortcuts()
-                .all(|(_, chord)| chord.is_valid())
             && self.history.chords().all(|(_, chord)| chord.is_valid());
         if valid {
             Ok(())
@@ -662,74 +819,98 @@ impl Settings {
         self.layouts.options = options;
     }
 
+    /// Visit every chord a binding holds.
+    fn for_each_chord(&mut self, mut visit: impl FnMut(&mut KeyChord)) {
+        for shortcut in NavigationShortcut::ALL {
+            self.navigation.slot(shortcut).iter_mut().for_each(&mut visit);
+        }
+        for step in HistoryStep::ALL {
+            self.history.slot(step).iter_mut().for_each(&mut visit);
+        }
+        for step in WorkspaceStep::ALL {
+            self.workspaces.step_slot(step).iter_mut().for_each(&mut visit);
+        }
+        for item in &mut self.workspaces.items {
+            for shortcut in WorkspaceShortcut::ALL {
+                item.slot(shortcut).iter_mut().for_each(&mut visit);
+            }
+        }
+        for options in self.layouts.options.values_mut() {
+            options.select_shortcut.iter_mut().for_each(&mut visit);
+            options.zone_shortcuts.values_mut().for_each(&mut visit);
+        }
+    }
+
     /// Parse a settings file. Fields missing from the file take their defaults, except
     /// that a default shortcut is left unassigned when another binding the file has already
-    /// uses its chord. Shortcuts the file has, cleared ones included, are kept, except
-    /// chords the OS keeps for itself, which read as missing.
+    /// uses its chord. Shortcuts the file has, cleared ones included, are kept as written,
+    /// except chords the OS keeps for itself, which read as missing, and the chords of a
+    /// file from before the Snappy key could be chosen (`read_as_before_the_snappy_key`).
+    /// Defaults and kept chords compare chords with the file's Snappy key, so it is read
+    /// first.
     pub fn from_json(bytes: &[u8], platform: Platform) -> Result<Settings, SettingsError> {
         if bytes.len() > MAX_FILE_BYTES {
             return Err(SettingsError::Invalid);
         }
         let mut written: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|_| SettingsError::Invalid)?;
+        let written_key: Option<SnappyKey> = match written.get("snappyKey") {
+            Some(key) => Some(serde_json::from_value(key.clone()).map_err(|_| SettingsError::Invalid)?),
+            None => None,
+        };
+        let snappy_key = written_key.unwrap_or_default();
         let kept: Vec<Combo> = chords_the_system_keeps(platform)
             .into_iter()
             .map(|kept| kept.combo)
             .collect();
-        forget_kept_chords(&mut written, &kept);
+        forget_kept_chords(&mut written, &kept, snappy_key);
         let file: SettingsFile = serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?;
         let defaults = Settings::defaults(platform);
-        let navigation_missing = file.navigation.is_none();
-        let written_lacks = |field: &str| {
-            file.navigation
-                .as_ref()
-                .is_some_and(|written| written.get(field).is_none())
-        };
-        let nearest_empty_missing = written_lacks("nearestEmpty");
-        let missing_focus_shortcuts: Vec<FocusShortcut> = FocusShortcut::ALL
-            .into_iter()
-            .filter(|shortcut| written_lacks(shortcut.field()))
-            .collect();
+        let missing = MissingChord::in_file(&file, &defaults.workspaces);
         let navigation = match file.navigation {
             Some(written) => serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?,
             None => Navigation::default(),
         };
-        let missing_workspace_chords = match &file.workspaces {
-            Some(written) => MissingChord::in_written(written),
-            None => MissingChord::all(&defaults.workspaces),
-        };
-        let mut workspaces: Workspaces = match file.workspaces {
+        let workspaces = match file.workspaces {
             Some(written) => serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?,
             None => defaults.workspaces.clone(),
         };
-        for missing in &missing_workspace_chords {
-            missing.clear(&mut workspaces);
-        }
         let mut settings = Settings {
             version: file.version.unwrap_or(FORMAT_VERSION),
-            snapping: file.snapping.unwrap_or(defaults.snapping),
+            snapping: file.snapping.unwrap_or_else(|| defaults.snapping.clone()),
+            snappy_key,
             navigation,
-            layouts: file.layouts.unwrap_or(defaults.layouts),
+            layouts: file.layouts.unwrap_or_else(|| defaults.layouts.clone()),
             workspaces,
             history: file.history.unwrap_or_default(),
             debug_log: file.debug_log.unwrap_or(defaults.debug_log),
         };
-        if navigation_missing {
-            settings.navigation = bindings::unused_navigation_defaults(&settings);
+        for chord in &missing {
+            if let Some(slot) = chord.slot(&mut settings) {
+                *slot = None;
+            }
         }
         let mut used = bindings::bound_combos(&settings);
-        let mut unused = |chord: Option<KeyChord>| chord.filter(|chord| used.insert(chord.combo()));
-        if nearest_empty_missing {
-            settings.navigation.nearest_empty = unused(defaults.navigation.nearest_empty.clone());
+        for chord in missing {
+            let default = chord.default(&defaults);
+            if let Some(slot) = chord.slot(&mut settings) {
+                *slot = default.filter(|chord| used.insert(chord.combo(snappy_key)));
+            }
         }
-        for shortcut in missing_focus_shortcuts {
-            let chord = defaults.navigation.focus_shortcut(shortcut).cloned();
-            settings.navigation.set_focus_shortcut(shortcut, unused(chord));
-        }
-        for missing in missing_workspace_chords {
-            missing.fill(&mut settings.workspaces, &mut unused);
+        if written_key.is_none() {
+            settings.read_as_before_the_snappy_key();
         }
         settings.validate(platform)
+    }
+
+    /// Before the Snappy key could be chosen, files had no `snappyKey`, and every chord
+    /// holding all of its default's modifiers (Control, Option, and Command), concrete or
+    /// not, loaded as the Snappy key plus the rest. Such a file still loads that way, as
+    /// recording the chord with the default key would store it. A file that names its key
+    /// was saved with every chord in the form recording gave it, so it is read as written.
+    fn read_as_before_the_snappy_key(&mut self) {
+        let key = SnappyKey::DEFAULT;
+        self.for_each_chord(|chord| chord.mods = ChordMods::recorded(chord.mods.expanded(key), key));
     }
 
     pub fn to_json(&self) -> Result<Vec<u8>, SettingsError> {
@@ -744,83 +925,87 @@ impl Settings {
 /// Remove every shortcut in a written file that the OS keeps for itself. Such a shortcut
 /// never fired, and files saved before Snappy knew that may hold one, so it reads as if
 /// the file never had it instead of failing the whole file.
-fn forget_kept_chords(value: &mut serde_json::Value, kept: &[Combo]) {
+fn forget_kept_chords(value: &mut serde_json::Value, kept: &[Combo], key: SnappyKey) {
     match value {
         serde_json::Value::Object(fields) => {
-            fields.retain(|_, field| !is_kept_chord(field, kept));
+            fields.retain(|_, field| !is_kept_chord(field, kept, key));
             fields
                 .values_mut()
-                .for_each(|field| forget_kept_chords(field, kept));
+                .for_each(|field| forget_kept_chords(field, kept, key));
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(|item| forget_kept_chords(item, kept)),
+        serde_json::Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| forget_kept_chords(item, kept, key)),
         _ => {}
     }
 }
 
-fn is_kept_chord(value: &serde_json::Value, kept: &[Combo]) -> bool {
+fn is_kept_chord(value: &serde_json::Value, kept: &[Combo], key: SnappyKey) -> bool {
     value.get("code").is_some()
-        && serde_json::from_value::<KeyChord>(value.clone()).is_ok_and(|chord| kept.contains(&chord.combo()))
+        && serde_json::from_value::<KeyChord>(value.clone())
+            .is_ok_and(|chord| kept.contains(&chord.combo(key)))
 }
 
-/// A workspace shortcut a settings file doesn't mention, as files written before it
-/// existed don't.
+/// A shortcut a settings file doesn't mention, as files written before it existed don't.
+/// It gets its default unless a binding the file has already uses that chord.
 #[derive(Debug, Clone, Copy)]
 enum MissingChord {
+    Navigation(NavigationShortcut),
     Step(WorkspaceStep),
     /// The switch shortcut of the workspace at this position.
     Switch(usize),
 }
 
 impl MissingChord {
-    fn in_written(workspaces: &serde_json::Value) -> Vec<MissingChord> {
+    /// Every shortcut `file` lacks, in the order their defaults are given out. A file
+    /// without workspaces gets `defaults`, so it lacks every one of their shortcuts.
+    fn in_file(file: &SettingsFile, defaults: &Workspaces) -> Vec<MissingChord> {
+        let lacks = |section: &Option<serde_json::Value>, field: &str| {
+            section
+                .as_ref()
+                .is_none_or(|written| written.get(field).is_none())
+        };
+        let navigation = NavigationShortcut::ALL
+            .into_iter()
+            .filter(|shortcut| lacks(&file.navigation, shortcut.field()))
+            .map(MissingChord::Navigation);
         let steps = WorkspaceStep::ALL
             .into_iter()
-            .filter(|step| workspaces.get(step.field()).is_none())
+            .filter(|step| lacks(&file.workspaces, step.field()))
             .map(MissingChord::Step);
-        let items = workspaces.get("items").and_then(serde_json::Value::as_array);
-        let switches = items
-            .into_iter()
-            .flatten()
-            .enumerate()
-            .filter(|(_, item)| item.get("switchShortcut").is_none())
-            .map(|(index, _)| MissingChord::Switch(index));
-        steps.chain(switches).collect()
+        let switches: Vec<MissingChord> = match &file.workspaces {
+            Some(written) => written
+                .get("items")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter(|(_, item)| item.get("switchShortcut").is_none())
+                .map(|(index, _)| MissingChord::Switch(index))
+                .collect(),
+            None => (0..defaults.items.len()).map(MissingChord::Switch).collect(),
+        };
+        navigation.chain(steps).chain(switches).collect()
     }
 
-    /// Every workspace shortcut, for a file without workspaces.
-    fn all(workspaces: &Workspaces) -> Vec<MissingChord> {
-        let steps = WorkspaceStep::ALL.into_iter().map(MissingChord::Step);
-        let switches = (0..workspaces.items.len()).map(MissingChord::Switch);
-        steps.chain(switches).collect()
-    }
-
-    fn clear(self, workspaces: &mut Workspaces) {
+    /// Where the chord goes in `settings`.
+    fn slot(self, settings: &mut Settings) -> Option<&mut Option<KeyChord>> {
         match self {
-            MissingChord::Step(step) => workspaces.set_step(step, None),
-            MissingChord::Switch(index) => {
-                if let Some(item) = workspaces.items.get_mut(index) {
-                    item.switch_shortcut = None;
-                }
-            }
+            MissingChord::Navigation(shortcut) => Some(settings.navigation.slot(shortcut)),
+            MissingChord::Step(step) => Some(settings.workspaces.step_slot(step)),
+            MissingChord::Switch(index) => settings
+                .workspaces
+                .items
+                .get_mut(index)
+                .map(|item| &mut item.switch_shortcut),
         }
     }
 
-    /// Assign the default chord, passed through `unused`, which drops chords in use.
-    fn fill(
-        self,
-        workspaces: &mut Workspaces,
-        unused: &mut impl FnMut(Option<KeyChord>) -> Option<KeyChord>,
-    ) {
+    fn default(self, defaults: &Settings) -> Option<KeyChord> {
         match self {
-            MissingChord::Step(step) => {
-                let chord = Workspaces::defaults().step(step).cloned();
-                workspaces.set_step(step, unused(chord));
-            }
-            MissingChord::Switch(index) => {
-                if let Some(item) = workspaces.items.get_mut(index) {
-                    item.switch_shortcut = unused(numbered_switch_shortcut(index + 1));
-                }
-            }
+            MissingChord::Navigation(shortcut) => defaults.navigation.get(shortcut).cloned(),
+            MissingChord::Step(step) => defaults.workspaces.step(step).cloned(),
+            MissingChord::Switch(index) => numbered_switch_shortcut(index + 1),
         }
     }
 }
@@ -834,7 +1019,7 @@ struct SettingsFile {
     /// Kept as written so shortcuts added after the file was saved can be told apart.
     navigation: Option<serde_json::Value>,
     layouts: Option<Layouts>,
-    /// Kept as written so steps added after the file was saved can be told apart.
+    /// Kept as written so shortcuts added after the file was saved can be told apart.
     workspaces: Option<serde_json::Value>,
     history: Option<MoveHistory>,
     debug_log: Option<bool>,
@@ -848,6 +1033,8 @@ pub enum SettingsError {
     Invalid,
     #[error("{0}")]
     Conflict(String),
+    #[error("{0}")]
+    SnappyKey(#[from] SnappyKeyError),
     #[error(
         "The existing settings file could not be loaded and has not been changed. Repair or move it, then reopen Snappy before saving."
     )]
@@ -1088,12 +1275,12 @@ mod tests {
     const PLATFORMS: [Platform; 3] = [Platform::MacOs, Platform::Windows, Platform::Linux];
 
     fn snappy(code: &str) -> Option<crate::keys::Combo> {
-        Some(KeyChord::snappy(code, []).combo())
+        Some(KeyChord::snappy(code, []).combo(SnappyKey::DEFAULT))
     }
 
     #[test]
     fn default_shortcuts_are_the_snappy_key_and_one_key_on_every_platform() {
-        let combo = |chord: Option<&KeyChord>| chord.map(KeyChord::combo);
+        let combo = |chord: Option<&KeyChord>| chord.map(|chord| chord.combo(SnappyKey::DEFAULT));
         for platform in PLATFORMS {
             let settings = Settings::defaults(platform).validate(platform).unwrap();
             let workspaces = &settings.workspaces;
@@ -1120,13 +1307,15 @@ mod tests {
                     .iter()
                     .all(|item| item.send_shortcut.is_none() && item.send_and_switch_shortcut.is_none())
             );
-            assert_eq!(combo(settings.navigation.left.as_ref()), snappy("ArrowLeft"));
-            assert_eq!(combo(settings.navigation.nearest_empty.as_ref()), snappy("Space"));
-            let focus =
-                FocusShortcut::ALL.map(|shortcut| combo(settings.navigation.focus_shortcut(shortcut)));
+            let navigation = NavigationShortcut::ALL.map(|shortcut| combo(settings.navigation.get(shortcut)));
             assert_eq!(
-                focus,
+                navigation,
                 [
+                    snappy("ArrowLeft"),
+                    snappy("ArrowRight"),
+                    snappy("ArrowUp"),
+                    snappy("ArrowDown"),
+                    snappy("Space"),
                     snappy("KeyI"),
                     snappy("KeyJ"),
                     snappy("KeyK"),
@@ -1140,7 +1329,7 @@ mod tests {
 
             let every_chord = bindings::bound_combos(&settings);
             assert_eq!(every_chord.len(), 4 + 3 + 5 + 6, "{platform:?}");
-            let snappy_key = crate::keys::snappy_key_modifiers();
+            let snappy_key = SnappyKey::DEFAULT.modifiers();
             assert!(
                 every_chord.iter().all(|combo| combo.mods == snappy_key),
                 "nothing but the Snappy key and one key: {every_chord:?}"
@@ -1173,10 +1362,16 @@ mod tests {
         let bytes = written_without(settings, &["sendPrevious", "sendNext"]);
         let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(
-            loaded.workspaces.send_previous.map(|c| c.combo()),
+            loaded
+                .workspaces
+                .send_previous
+                .map(|c| c.combo(SnappyKey::DEFAULT)),
             snappy("Period")
         );
-        assert_eq!(loaded.workspaces.send_next.map(|c| c.combo()), snappy("Slash"));
+        assert_eq!(
+            loaded.workspaces.send_next.map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("Slash")
+        );
         assert_eq!(loaded.workspaces.next, None, "written steps are kept");
         assert_eq!(loaded.history, MoveHistory::default());
     }
@@ -1189,7 +1384,10 @@ mod tests {
         let bytes = written_without(settings, &["sendPrevious", "sendNext"]);
         let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(
-            loaded.workspaces.send_previous.map(|c| c.combo()),
+            loaded
+                .workspaces
+                .send_previous
+                .map(|c| c.combo(SnappyKey::DEFAULT)),
             snappy("Period")
         );
         assert_eq!(loaded.workspaces.send_next, None);
@@ -1230,12 +1428,21 @@ mod tests {
         let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(loaded.navigation.select_window, None);
         assert_eq!(loaded.navigation.focus_down, None);
-        assert_eq!(loaded.navigation.focus_up.map(|c| c.combo()), snappy("KeyI"));
         assert_eq!(
-            loaded.navigation.clear_selection.map(|c| c.combo()),
+            loaded.navigation.focus_up.map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("KeyI")
+        );
+        assert_eq!(
+            loaded
+                .navigation
+                .clear_selection
+                .map(|c| c.combo(SnappyKey::DEFAULT)),
             snappy("Backslash")
         );
-        assert_eq!(loaded.history.undo.map(|c| c.combo()), snappy("Enter"));
+        assert_eq!(
+            loaded.history.undo.map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("Enter")
+        );
     }
 
     /// The defaults written with the Snappy key and Delete clearing the selection, as
@@ -1265,7 +1472,10 @@ mod tests {
         let bytes = written_clearing_with_delete(settings);
         let loaded = Settings::from_json(&bytes, MAC).unwrap();
         assert_eq!(loaded.navigation.clear_selection, None);
-        assert_eq!(loaded.history.undo.map(|c| c.combo()), snappy("Backslash"));
+        assert_eq!(
+            loaded.history.undo.map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("Backslash")
+        );
     }
 
     #[test]
@@ -1298,7 +1508,10 @@ mod tests {
             let bytes = written_clearing_with_delete(Settings::defaults(platform));
             let loaded = Settings::from_json(&bytes, platform).unwrap();
             assert_eq!(
-                loaded.navigation.clear_selection.map(|c| c.combo()),
+                loaded
+                    .navigation
+                    .clear_selection
+                    .map(|c| c.combo(SnappyKey::DEFAULT)),
                 snappy("Backspace"),
                 "{platform:?}"
             );
@@ -1308,12 +1521,8 @@ mod tests {
     #[test]
     fn a_saved_cleared_focus_or_selection_shortcut_stays_cleared() {
         let mut settings = Settings::defaults(MAC);
-        settings
-            .navigation
-            .set_focus_shortcut(FocusShortcut::SelectWindow, None);
-        settings
-            .navigation
-            .set_focus_shortcut(FocusShortcut::FocusLeft, None);
+        settings.navigation.set(FocusShortcut::SelectWindow, None);
+        settings.navigation.set(FocusShortcut::FocusLeft, None);
         let json = String::from_utf8(settings.to_json().unwrap()).unwrap();
         assert!(json.contains(r#""selectWindow": null"#), "{json}");
         let loaded = Settings::from_json(json.as_bytes(), MAC).unwrap();
@@ -1334,7 +1543,11 @@ mod tests {
         }
         let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
         assert_eq!(
-            loaded.navigation.select_window.as_ref().map(KeyChord::combo),
+            loaded
+                .navigation
+                .select_window
+                .as_ref()
+                .map(|chord| chord.combo(SnappyKey::DEFAULT)),
             snappy("Enter")
         );
         let saved = String::from_utf8(loaded.to_json().unwrap()).unwrap();
@@ -1353,11 +1566,19 @@ mod tests {
         workspaces.insert("moveNext".into(), former("BracketRight"));
         let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
         assert_eq!(
-            loaded.workspaces.send_previous.as_ref().map(KeyChord::combo),
+            loaded
+                .workspaces
+                .send_previous
+                .as_ref()
+                .map(|chord| chord.combo(SnappyKey::DEFAULT)),
             snappy("Period")
         );
         assert_eq!(
-            loaded.workspaces.send_next.as_ref().map(KeyChord::combo),
+            loaded
+                .workspaces
+                .send_next
+                .as_ref()
+                .map(|chord| chord.combo(SnappyKey::DEFAULT)),
             snappy("Slash")
         );
         let saved = String::from_utf8(loaded.to_json().unwrap()).unwrap();
@@ -1396,8 +1617,8 @@ mod tests {
         written.as_object_mut().unwrap().remove("workspaces");
         let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
         assert_eq!(
-            loaded.layouts.options["halves"].zone_shortcuts["halves-0"].combo(),
-            KeyChord::snappy("Digit1", []).combo()
+            loaded.layouts.options["halves"].zone_shortcuts["halves-0"].combo(SnappyKey::DEFAULT),
+            KeyChord::snappy("Digit1", []).combo(SnappyKey::DEFAULT)
         );
         assert!(
             loaded
@@ -1406,7 +1627,10 @@ mod tests {
                 .iter()
                 .all(|item| item.switch_shortcut.is_none())
         );
-        assert_eq!(loaded.workspaces.next.map(|c| c.combo()), snappy("Quote"));
+        assert_eq!(
+            loaded.workspaces.next.map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("Quote")
+        );
         assert_eq!(loaded.workspaces.items.len(), 3);
     }
 
@@ -1436,7 +1660,11 @@ mod tests {
             .workspaces
             .items
             .iter()
-            .map(|item| item.switch_shortcut.as_ref().map(KeyChord::combo))
+            .map(|item| {
+                item.switch_shortcut
+                    .as_ref()
+                    .map(|chord| chord.combo(SnappyKey::DEFAULT))
+            })
             .collect();
         assert_eq!(switches, [snappy("Digit1"), None, snappy("Digit3")]);
     }
@@ -1446,7 +1674,10 @@ mod tests {
         let fourth = Workspace::numbered("workspace-4", 4);
         assert_eq!(fourth.name, "Workspace 4");
         assert_eq!(
-            fourth.switch_shortcut.as_ref().map(KeyChord::combo),
+            fourth
+                .switch_shortcut
+                .as_ref()
+                .map(|chord| chord.combo(SnappyKey::DEFAULT)),
             snappy("Digit4")
         );
         assert_eq!(
@@ -1464,7 +1695,10 @@ mod tests {
         let mut settings = Settings::defaults(MAC);
         let added = settings.new_workspace("workspace-4", 4);
         assert_eq!(
-            added.switch_shortcut.as_ref().map(KeyChord::combo),
+            added
+                .switch_shortcut
+                .as_ref()
+                .map(|chord| chord.combo(SnappyKey::DEFAULT)),
             snappy("Digit4")
         );
 
@@ -1473,6 +1707,47 @@ mod tests {
         assert_eq!(added.switch_shortcut, None);
         settings.workspaces.items.push(added);
         assert_eq!(settings.validate(MAC).map(|_| ()), Ok(()));
+    }
+
+    #[test]
+    fn a_file_without_an_arrow_shortcut_gets_its_default_unless_another_binding_uses_it() {
+        let mut settings = Settings::defaults(MAC);
+        settings.history.redo = Some(KeyChord::snappy("ArrowRight", []));
+        let bytes = written_without_navigation(settings, &["left", "right"]);
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
+        assert_eq!(loaded.navigation.left, Navigation::defaults().left);
+        assert_eq!(loaded.navigation.right, None);
+        assert_eq!(
+            loaded.history.redo.map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("ArrowRight")
+        );
+    }
+
+    #[test]
+    fn a_file_without_navigation_gets_the_defaults_no_other_binding_uses() {
+        let mut settings = Settings::defaults(MAC);
+        settings.workspaces.items[0].send_and_switch_shortcut = Navigation::defaults().left;
+        settings.workspaces.items[1].send_shortcut = Some(KeyChord::snappy("Space", []));
+        settings.workspaces.items[2].send_shortcut = Some(KeyChord::snappy("Enter", []));
+        settings.history.redo = Navigation::defaults().up;
+        settings.history.undo = Some(KeyChord::snappy("KeyL", []));
+        let mut written = serde_json::to_value(settings).unwrap();
+        written.as_object_mut().unwrap().remove("navigation");
+        let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
+
+        let taken = [
+            NavigationShortcut::Move(Direction::Left),
+            NavigationShortcut::Move(Direction::Up),
+            NavigationShortcut::NearestEmpty,
+            NavigationShortcut::Focus(FocusShortcut::SelectWindow),
+            NavigationShortcut::Focus(FocusShortcut::FocusRight),
+        ];
+        for shortcut in NavigationShortcut::ALL {
+            let expected = (!taken.contains(&shortcut))
+                .then(|| Navigation::defaults().get(shortcut).cloned())
+                .flatten();
+            assert_eq!(loaded.navigation.get(shortcut), expected.as_ref(), "{shortcut:?}");
+        }
     }
 
     /// The defaults written without the nearest-empty-zone shortcut, as older files are.
@@ -1488,7 +1763,10 @@ mod tests {
         let loaded =
             Settings::from_json(&written_without_nearest_empty(Settings::defaults(MAC)), MAC).unwrap();
         assert_eq!(
-            loaded.navigation.nearest_empty.map(|c| c.combo()),
+            loaded
+                .navigation
+                .nearest_empty
+                .map(|c| c.combo(SnappyKey::DEFAULT)),
             snappy("Space")
         );
         assert_eq!(loaded.navigation.left, Navigation::defaults().left);
@@ -1501,7 +1779,10 @@ mod tests {
         settings.history.undo = Some(KeyChord::snappy("Space", []));
         let loaded = Settings::from_json(&written_without_nearest_empty(settings), MAC).unwrap();
         assert_eq!(loaded.navigation.nearest_empty, None);
-        assert_eq!(loaded.history.undo.map(|c| c.combo()), snappy("Space"));
+        assert_eq!(
+            loaded.history.undo.map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("Space")
+        );
     }
 
     #[test]
@@ -1529,10 +1810,16 @@ mod tests {
 
         let registered: Vec<_> = bindings::desired_hotkeys(&valid, &[], false)
             .into_iter()
-            .map(|hotkey| hotkey.chord.combo())
+            .map(|hotkey| hotkey.combo.clone())
             .collect();
-        assert!(registered.contains(&KeyChord::new("KeyW", [Modifier::Ctrl, Modifier::Alt]).combo()));
-        assert!(registered.contains(&KeyChord::new("KeyN", [Modifier::Ctrl, Modifier::Alt]).combo()));
+        assert!(
+            registered
+                .contains(&KeyChord::new("KeyW", [Modifier::Ctrl, Modifier::Alt]).combo(SnappyKey::DEFAULT))
+        );
+        assert!(
+            registered
+                .contains(&KeyChord::new("KeyN", [Modifier::Ctrl, Modifier::Alt]).combo(SnappyKey::DEFAULT))
+        );
         assert!(!registered.contains(&snappy("Semicolon").unwrap()));
         assert!(registered.contains(&snappy("Period").unwrap()));
     }
@@ -1555,8 +1842,9 @@ mod tests {
     }
 
     #[test]
-    fn a_file_with_concrete_snappy_key_modifiers_loads_them_as_the_snappy_key() {
+    fn a_file_from_before_the_snappy_key_setting_loads_its_modifiers_as_the_snappy_key() {
         let mut written = serde_json::to_value(Settings::defaults(MAC)).unwrap();
+        written.as_object_mut().unwrap().remove("snappyKey");
         let concrete = serde_json::json!(["ctrl", "alt", "meta"]);
         written["navigation"]["left"]["mods"] = concrete.clone();
         written["workspaces"]["previous"]["mods"] = concrete;
@@ -1569,11 +1857,48 @@ mod tests {
             Some(KeyChord::snappy("Slash", [Modifier::Shift]).with_label("/"))
         );
 
-        let saved: serde_json::Value = serde_json::from_slice(&loaded.to_json().unwrap()).unwrap();
-        assert_eq!(saved["navigation"]["left"]["mods"], serde_json::json!(["snappy"]));
+        let saved = loaded.to_json().unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&saved).unwrap();
         assert_eq!(
-            saved["workspaces"]["sendNext"]["mods"],
+            written["navigation"]["left"]["mods"],
+            serde_json::json!(["snappy"])
+        );
+        assert_eq!(
+            written["workspaces"]["sendNext"]["mods"],
             serde_json::json!(["snappy", "shift"])
+        );
+        assert_eq!(written["snappyKey"], serde_json::json!(["ctrl", "alt", "meta"]));
+        assert_eq!(Settings::from_json(&saved, MAC).unwrap(), loaded);
+
+        let mut partial = serde_json::to_value(Settings::defaults(MAC)).unwrap();
+        partial.as_object_mut().unwrap().remove("snappyKey");
+        partial["history"]["undo"] = serde_json::json!({ "code": "KeyU", "mods": ["ctrl", "alt"] });
+        assert_eq!(
+            Settings::from_json(&serde_json::to_vec(&partial).unwrap(), MAC)
+                .unwrap()
+                .history
+                .undo,
+            Some(KeyChord::new("KeyU", [Modifier::Ctrl, Modifier::Alt])),
+            "only the default key's modifiers were ever read as the Snappy key"
+        );
+    }
+
+    #[test]
+    fn a_file_with_a_snappy_key_keeps_chords_written_with_its_modifiers_as_they_are() {
+        let mut settings = Settings::defaults(MAC);
+        let by_hand = KeyChord::new("ArrowLeft", [Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
+        settings.navigation.left = Some(by_hand.clone());
+        let saved = settings.to_json().unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(
+            written["navigation"]["left"]["mods"],
+            serde_json::json!(["ctrl", "alt", "meta"])
+        );
+        let loaded = Settings::from_json(&saved, MAC).unwrap();
+        assert_eq!(loaded.navigation.left, Some(by_hand));
+        assert_eq!(
+            Settings::from_json(&loaded.to_json().unwrap(), MAC).unwrap(),
+            loaded
         );
     }
 
@@ -1602,5 +1927,140 @@ mod tests {
                 None
             ]
         );
+    }
+
+    #[test]
+    fn a_file_without_a_snappy_key_loads_with_the_default() {
+        let mut written = serde_json::to_value(Settings::defaults(MAC)).unwrap();
+        assert_eq!(written["snappyKey"], serde_json::json!(["ctrl", "alt", "meta"]));
+        written.as_object_mut().unwrap().remove("snappyKey");
+        let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC).unwrap();
+        assert_eq!(loaded.snappy_key, SnappyKey::DEFAULT);
+        assert_eq!(loaded, Settings::defaults(MAC).validate(MAC).unwrap());
+    }
+
+    #[test]
+    fn a_file_with_a_chosen_snappy_key_keeps_it_and_its_chords_as_written() {
+        let mut written = serde_json::to_value(Settings::defaults(Platform::Windows)).unwrap();
+        written["snappyKey"] = serde_json::json!(["alt", "ctrl"]);
+        written["history"] = serde_json::json!({
+            "undo": { "code": "KeyU", "mods": ["shift", "ctrl", "alt"] },
+            "redo": { "code": "KeyR", "mods": ["snappy", "ctrl"] },
+        });
+        let loaded = Settings::from_json(&serde_json::to_vec(&written).unwrap(), Platform::Windows).unwrap();
+        let control_alt = Mods::from_iter([Modifier::Ctrl, Modifier::Alt]);
+        assert_eq!(loaded.snappy_key.modifiers(), control_alt);
+        assert_eq!(
+            loaded.history.undo,
+            Some(KeyChord::new(
+                "KeyU",
+                [Modifier::Shift, Modifier::Ctrl, Modifier::Alt]
+            ))
+        );
+        assert_eq!(
+            loaded.history.redo,
+            Some(KeyChord::snappy("KeyR", [Modifier::Ctrl]))
+        );
+        assert_eq!(
+            loaded
+                .history
+                .redo
+                .as_ref()
+                .map(|chord| chord.combo(loaded.snappy_key)),
+            Some(crate::keys::Combo::new("KeyR", [Modifier::Ctrl, Modifier::Alt]))
+        );
+        assert_eq!(
+            loaded
+                .navigation
+                .left
+                .as_ref()
+                .map(|chord| chord.combo(loaded.snappy_key)),
+            Some(crate::keys::Combo::new(
+                "ArrowLeft",
+                [Modifier::Ctrl, Modifier::Alt]
+            ))
+        );
+        let saved = loaded.to_json().unwrap();
+        assert_eq!(Settings::from_json(&saved, Platform::Windows).unwrap(), loaded);
+    }
+
+    #[test]
+    fn a_file_whose_snappy_key_has_one_modifier_is_invalid() {
+        let mut written = serde_json::to_value(Settings::defaults(MAC)).unwrap();
+        written["snappyKey"] = serde_json::json!(["meta"]);
+        assert_eq!(
+            Settings::from_json(&serde_json::to_vec(&written).unwrap(), MAC),
+            Err(SettingsError::Invalid)
+        );
+    }
+
+    #[test]
+    fn a_concrete_chord_stays_as_recorded_when_the_snappy_key_comes_to_match_it() {
+        let mut settings = Settings::defaults(MAC);
+        let concrete = KeyChord::new("KeyU", [Modifier::Ctrl, Modifier::Alt, Modifier::Shift]);
+        settings.history.undo = Some(concrete.clone());
+        let settings = settings.validate(MAC).unwrap();
+        assert_eq!(settings.history.undo, Some(concrete.clone()));
+
+        let control_option = Mods::from_iter([Modifier::Ctrl, Modifier::Alt]);
+        let changed = settings.with_snappy_key(control_option, MAC).unwrap();
+        assert_eq!(changed.history.undo, Some(concrete.clone()));
+        assert_eq!(
+            changed
+                .history
+                .undo
+                .as_ref()
+                .map(|chord| chord.combo(changed.snappy_key)),
+            Some(crate::keys::Combo::new(
+                "KeyU",
+                [Modifier::Ctrl, Modifier::Alt, Modifier::Shift]
+            )),
+            "the keys to press stay the same"
+        );
+
+        let matching = changed
+            .with_snappy_key(
+                Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Shift]),
+                MAC,
+            )
+            .unwrap();
+        assert_eq!(
+            matching.history.undo,
+            Some(concrete.clone()),
+            "exactly the key's modifiers, and still not a Snappy key chord"
+        );
+        let saved = matching.to_json().unwrap();
+        assert_eq!(Settings::from_json(&saved, MAC).unwrap(), matching);
+
+        let back = matching
+            .with_snappy_key(SnappyKey::DEFAULT.modifiers(), MAC)
+            .unwrap();
+        assert_eq!(back.history.undo, Some(concrete));
+        assert_eq!(
+            back.history
+                .undo
+                .as_ref()
+                .map(|chord| chord.combo(back.snappy_key)),
+            Some(crate::keys::Combo::new(
+                "KeyU",
+                [Modifier::Ctrl, Modifier::Alt, Modifier::Shift]
+            )),
+            "the keys to press never changed"
+        );
+    }
+
+    #[test]
+    fn navigation_shortcuts_are_written_as_their_settings_file_fields() {
+        let written = serde_json::to_value(Navigation::defaults()).unwrap();
+        for shortcut in NavigationShortcut::ALL {
+            let name = serde_json::to_value(shortcut).unwrap();
+            let field = name.as_str().unwrap();
+            assert!(written.get(field).is_some(), "{field} is a navigation field");
+            assert_eq!(
+                serde_json::from_value::<NavigationShortcut>(name).unwrap(),
+                shortcut
+            );
+        }
+        assert!(serde_json::from_str::<NavigationShortcut>(r#""items""#).is_err());
     }
 }

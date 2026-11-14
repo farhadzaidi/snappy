@@ -37,9 +37,12 @@ pub struct RecoveryKey {
 }
 
 impl RecoveryKey {
+    /// Start times this close, in seconds, are one start, whatever a save and a read round.
+    const SAME_LAUNCH: f64 = 0.001;
+
     /// The same process; a reused process ID with another start time is not.
     pub fn same_process(&self, other: &RecoveryKey) -> bool {
-        self.pid == other.pid && (self.launch_time - other.launch_time).abs() < 0.001
+        self.pid == other.pid && (self.launch_time - other.launch_time).abs() < Self::SAME_LAUNCH
     }
 
     /// The same window of the same process.

@@ -23,7 +23,7 @@ pub(crate) fn pointer_down<P: Platform + 'static>(
 ) {
     {
         let mut core = shared.core.borrow_mut();
-        if !core.live {
+        if !core.is_live() {
             return;
         }
         protect_pressed_windows(&mut core, at, window);

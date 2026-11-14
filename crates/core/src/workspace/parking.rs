@@ -5,7 +5,7 @@ const SLIVER: f64 = 1.1;
 /// Off-screen parking keeps windows this far outside every display.
 const OFF_SCREEN_MARGIN: f64 = 64.0;
 /// A window this close to its parking position counts as parked.
-pub const PARKED_TOLERANCE: f64 = 4.0;
+const PARKED_TOLERANCE: f64 = 4.0;
 
 /// How a platform hides workspace windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,9 +83,18 @@ pub fn is_parked(policy: ParkingPolicy, frame: Rect, displays: &[Rect], on_parki
     if !policy.moves_windows() {
         return on_parking_desktop;
     }
-    parking_origin(policy, frame, displays).is_some_and(|origin| {
-        (frame.x - origin.x).abs() < PARKED_TOLERANCE && (frame.y - origin.y).abs() < PARKED_TOLERANCE
-    })
+    parking_origin(policy, frame, displays).is_some_and(|origin| sits_at(frame, origin))
+}
+
+/// True when a window at `frame` sits at `origin`, within what parking and returning leave
+/// it off by.
+pub fn sits_at(frame: Rect, origin: Point) -> bool {
+    (frame.x - origin.x).abs() < PARKED_TOLERANCE && (frame.y - origin.y).abs() < PARKED_TOLERANCE
+}
+
+/// True when two windows have the same size, within the same allowance.
+pub(super) fn same_size(a: Size, b: Size) -> bool {
+    (a.width - b.width).abs() < PARKED_TOLERANCE && (a.height - b.height).abs() < PARKED_TOLERANCE
 }
 
 /// `frame` moved into the work area it overlaps most, so as much of it as possible is

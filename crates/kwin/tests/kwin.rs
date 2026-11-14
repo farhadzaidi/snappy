@@ -124,7 +124,7 @@ impl FakeInput {
     }
 
     fn press_chord(&mut self, chord: &KeyChord) {
-        let combo = chord.combo();
+        let combo = chord.combo(snappy_core::keys::SnappyKey::DEFAULT);
         let modifiers: Vec<Modifier> = combo.mods.iter().collect();
         for modifier in &modifiers {
             self.modifier(*modifier, true);
@@ -650,10 +650,13 @@ fn a_drag_reports_the_modifiers_held_when_the_button_came_up() {
 fn a_registered_shortcut_reports_its_id_and_kwins_own_chords_are_taken() {
     let mut kwin = kwin!();
     let chord = KeyChord::snappy("Digit1", []);
-    let refused = kwin.platform.register(&[(41, chord.combo())]);
+    let refused = kwin
+        .platform
+        .register(&[(41, chord.combo(snappy_core::keys::SnappyKey::DEFAULT))]);
     assert!(refused.is_empty(), "{refused:?}");
     assert!(
-        kwin.platform.is_available(&chord.combo()),
+        kwin.platform
+            .is_available(&chord.combo(snappy_core::keys::SnappyKey::DEFAULT)),
         "Snappy's own shortcut counts as free"
     );
     kwin.drain();
@@ -667,16 +670,24 @@ fn a_registered_shortcut_reports_its_id_and_kwins_own_chords_are_taken() {
 
     // KWin closes windows with Alt+F4.
     let close = KeyChord::new("F4", [Modifier::Alt]);
-    assert!(!kwin.platform.is_available(&close.combo()));
-    assert_eq!(kwin.platform.register(&[(42, close.combo())]), vec![42]);
+    assert!(
+        !kwin
+            .platform
+            .is_available(&close.combo(snappy_core::keys::SnappyKey::DEFAULT))
+    );
+    assert_eq!(
+        kwin.platform
+            .register(&[(42, close.combo(snappy_core::keys::SnappyKey::DEFAULT))]),
+        vec![42]
+    );
     kwin.platform.unregister_all();
 }
 
 #[test]
 fn snappys_own_shortcuts_never_count_as_taken() {
     let mut kwin = kwin!();
-    let one = KeyChord::snappy("Digit1", []).combo();
-    let two = KeyChord::snappy("Digit2", []).combo();
+    let one = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
+    let two = KeyChord::snappy("Digit2", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
 
     // A run that crashed leaves its actions with KDE's shortcut service.
     let bus = zbus::blocking::Connection::session().unwrap();

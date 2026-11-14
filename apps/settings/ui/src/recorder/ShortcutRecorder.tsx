@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { commandModifierHint, compactLabel, recorderHelp, unavailableMessage } from "../core/labels";
 import type { KeyChord } from "../core/model";
 import { core } from "../core/snappyCore";
-import { usePlatform, useServices } from "../state/services";
+import { useAppState, useServices } from "../state/services";
 import { IconButton } from "../ui/Button";
 import { CloseIcon } from "../ui/icons";
 import { interpretKey } from "./interpretKey";
@@ -25,7 +25,8 @@ interface ShortcutRecorderProps {
  */
 export function ShortcutRecorder({ title, chord, conflictOf, onChange }: ShortcutRecorderProps) {
   const { client } = useServices();
-  const platform = usePlatform();
+  const { platform, settings } = useAppState();
+  const snappyKey = settings.snappyKey;
   const [recording, setRecording] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const recordingRef = useRef(false);
@@ -95,7 +96,7 @@ export function ShortcutRecorder({ title, chord, conflictOf, onChange }: Shortcu
     if (probing.current) {
       return;
     }
-    const outcome = interpretKey(event);
+    const outcome = interpretKey(event, snappyKey);
     switch (outcome.kind) {
       case "cancel":
         finish();
@@ -128,7 +129,7 @@ export function ShortcutRecorder({ title, chord, conflictOf, onChange }: Shortcu
         data-assigned={chord !== null}
         aria-label={title}
         aria-describedby={descriptionId}
-        title={hint ?? recorderHelp(platform)}
+        title={hint ?? recorderHelp(platform, snappyKey)}
         disabled={!onChange}
         onClick={begin}
         onKeyDown={onKeyDown}

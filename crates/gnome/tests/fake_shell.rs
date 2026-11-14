@@ -421,7 +421,10 @@ fn the_extension_starting_makes_snappy_live_and_gets_back_what_it_held() {
     assert!(
         adapter
             .platform
-            .register(&[(3, KeyChord::snappy("Digit1", []).combo())])
+            .register(&[(
+                3,
+                KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT)
+            )])
             .is_empty()
     );
     adapter.platform.update(&TrayMenu::default());
@@ -526,8 +529,8 @@ fn shortcuts_sharing_an_accelerator_share_a_grab_and_refusals_name_every_id() {
     fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
     fake.state().taken = vec!["<Super>0x26".into()];
     let mut adapter = Adapter::start();
-    let one = KeyChord::snappy("Digit1", []).combo();
-    let super_a = KeyChord::new("KeyA", [Modifier::Meta]).combo();
+    let one = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
+    let super_a = KeyChord::new("KeyA", [Modifier::Meta]).combo(snappy_core::keys::SnappyKey::DEFAULT);
     let refused = adapter.platform.register(&[
         (1, one.clone()),
         (2, one.clone()),
@@ -720,7 +723,7 @@ fn shortcuts_registered_while_gnome_is_away_are_kept_and_grabbed_when_it_returns
     let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
     fake.reset(None, None);
     let mut adapter = Adapter::start();
-    let one = KeyChord::snappy("Digit1", []).combo();
+    let one = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
     assert!(
         adapter.platform.register(&[(1, one.clone())]).is_empty(),
         "an unanswered request says nothing about the chord"

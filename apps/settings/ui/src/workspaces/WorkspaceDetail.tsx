@@ -1,8 +1,9 @@
 import { useState } from "react";
 
 import { allLayouts, isEnabled } from "../core/layouts";
-import type { KeyChord, Workspace } from "../core/model";
-import { workspaceConflict, type WorkspaceSlot } from "../recorder/conflicts";
+import type { KeyChord, Workspace, WorkspaceShortcut } from "../core/model";
+import { core } from "../core/snappyCore";
+import { workspaceConflict } from "../recorder/conflicts";
 import { ShortcutRecorder } from "../recorder/ShortcutRecorder";
 import { useAppState, useSend } from "../state/services";
 import { Button } from "../ui/Button";
@@ -12,11 +13,9 @@ import { Group, Row } from "../ui/Group";
 import { TrashIcon } from "../ui/icons";
 import { WorkspaceName } from "./WorkspaceName";
 
-const SHORTCUTS: readonly { slot: WorkspaceSlot; title: string }[] = [
-  { slot: "switchShortcut", title: "Switch to this workspace" },
-  { slot: "sendShortcut", title: "Move window here" },
-  { slot: "sendAndSwitchShortcut", title: "Move here and switch" },
-];
+const SHORTCUTS: readonly WorkspaceShortcut[] = ["switchShortcut", "sendShortcut", "sendAndSwitchShortcut"];
+/** How the shortcuts' titles name the workspace they belong to, which the page shows. */
+const THIS_WORKSPACE = "this workspace";
 
 /** The selected workspace's name, deleting, layouts, and shortcuts. */
 export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace; onDeleted: () => void }) {
@@ -26,6 +25,7 @@ export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace
   const workspaces = app.settings.workspaces;
   const running = app.workspaces.running;
   const update = (changed: Workspace) => void send({ kind: "updateWorkspace", workspace: changed });
+  const titles = core.workspaceShortcutTitles(THIS_WORKSPACE);
 
   return (
     <div className="workspace-detail">
@@ -67,15 +67,15 @@ export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace
       </Group>
 
       <Group title="Shortcuts">
-        {SHORTCUTS.map(({ slot, title }) => (
-          <Row key={slot} label={<span className="muted">{title}</span>}>
+        {SHORTCUTS.map((shortcut) => (
+          <Row key={shortcut} label={<span className="muted">{titles[shortcut]}</span>}>
             <ShortcutRecorder
-              title={title}
-              chord={workspace[slot]}
+              title={titles[shortcut]}
+              chord={workspace[shortcut]}
               conflictOf={(chord: KeyChord) =>
-                workspaceConflict(app.settings, workspace, slot, chord, app.platform)
+                workspaceConflict(app.settings, workspace, shortcut, chord, app.platform)
               }
-              onChange={(chord) => update({ ...workspace, [slot]: chord })}
+              onChange={(chord) => update({ ...workspace, [shortcut]: chord })}
             />
           </Row>
         ))}

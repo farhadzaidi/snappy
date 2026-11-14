@@ -84,7 +84,7 @@ describe("fake daemon", () => {
     const before = initialState("macos");
     const { state, error } = run(before, {
       kind: "setNavigationShortcut",
-      direction: "left",
+      shortcut: "left",
       chord: { code: "KeyQ", mods: ["meta"] },
     });
     expect(error).toBe("Command + Q is already assigned to a standard app command.");
@@ -95,7 +95,7 @@ describe("fake daemon", () => {
     const { error } = run(initialState("macos"), {
       kind: "saveLayout",
       layout: custom,
-      options: { ...noOptions, zoneShortcuts: { a: { code: "ArrowLeft", mods: ["ctrl", "alt", "meta"] } } },
+      options: { ...noOptions, zoneShortcuts: { a: snappy("ArrowLeft") } },
       display: "display-1",
     });
     expect(error).toBe("Snappy + ← is already assigned to Move window left.");
@@ -109,15 +109,27 @@ describe("fake daemon", () => {
 
   it("the nearest-empty-zone shortcut is saved, cleared, and checked for conflicts", () => {
     const start = initialState("macos");
-    const changed = run(start, { kind: "setNearestEmptyShortcut", chord: snappy("KeyE") });
+    const changed = run(start, {
+      kind: "setNavigationShortcut",
+      shortcut: "nearestEmpty",
+      chord: snappy("KeyE"),
+    });
     expect(changed.error).toBeNull();
     expect(changed.state.settings.navigation.nearestEmpty).toEqual(snappy("KeyE"));
 
-    const clash = run(changed.state, { kind: "setNearestEmptyShortcut", chord: snappy("ArrowUp") });
+    const clash = run(changed.state, {
+      kind: "setNavigationShortcut",
+      shortcut: "nearestEmpty",
+      chord: snappy("ArrowUp"),
+    });
     expect(clash.error).toBe("Snappy + ↑ is already assigned to Move window up.");
     expect(clash.state.settings.navigation.nearestEmpty).toEqual(snappy("KeyE"));
 
-    const cleared = run(changed.state, { kind: "setNearestEmptyShortcut", chord: null });
+    const cleared = run(changed.state, {
+      kind: "setNavigationShortcut",
+      shortcut: "nearestEmpty",
+      chord: null,
+    });
     expect(cleared.state.settings.navigation.nearestEmpty).toBeNull();
   });
 
@@ -195,7 +207,7 @@ describe("fake daemon", () => {
 
   it("only macOS refuses the Snappy key with Delete, which it never passes on", () => {
     const refused = run(initialState("macos"), {
-      kind: "setFocusShortcut",
+      kind: "setNavigationShortcut",
       shortcut: "clearSelection",
       chord: snappy("Backspace"),
     });
@@ -204,7 +216,7 @@ describe("fake daemon", () => {
 
     for (const platform of ["windows", "linux"] as const) {
       const accepted = run(initialState(platform), {
-        kind: "setFocusShortcut",
+        kind: "setNavigationShortcut",
         shortcut: "clearSelection",
         chord: snappy("Backspace"),
       });
@@ -215,19 +227,27 @@ describe("fake daemon", () => {
 
   it("focus and selection shortcuts are saved, cleared, and checked for conflicts", () => {
     const start = initialState("macos");
-    const changed = run(start, { kind: "setFocusShortcut", shortcut: "selectWindow", chord: snappy("KeyS") });
+    const changed = run(start, {
+      kind: "setNavigationShortcut",
+      shortcut: "selectWindow",
+      chord: snappy("KeyS"),
+    });
     expect(changed.error).toBeNull();
     expect(changed.state.settings.navigation.selectWindow).toEqual(snappy("KeyS"));
 
     const clash = run(changed.state, {
-      kind: "setFocusShortcut",
+      kind: "setNavigationShortcut",
       shortcut: "clearSelection",
       chord: snappy("KeyS"),
     });
     expect(clash.error).toBe("Snappy + S is already assigned to Select window.");
     expect(clash.state.settings.navigation.clearSelection).toMatchObject(snappy("Backslash"));
 
-    const cleared = run(changed.state, { kind: "setFocusShortcut", shortcut: "clearSelection", chord: null });
+    const cleared = run(changed.state, {
+      kind: "setNavigationShortcut",
+      shortcut: "clearSelection",
+      chord: null,
+    });
     expect(cleared.state.settings.navigation.clearSelection).toBeNull();
   });
 
@@ -236,7 +256,7 @@ describe("fake daemon", () => {
     const moved = run(start, { kind: "setWorkspaceStepShortcut", step: "sendNext", chord: snappy("KeyN") });
     expect(moved.state.settings.workspaces.sendNext).toEqual(snappy("KeyN"));
     const taken = run(moved.state, {
-      kind: "setFocusShortcut",
+      kind: "setNavigationShortcut",
       shortcut: "selectWindow",
       chord: snappy("KeyN"),
     });
@@ -245,7 +265,7 @@ describe("fake daemon", () => {
     expect(undo.state.settings.history.undo).toEqual(snappy("KeyU"));
     const byHand: KeyChord = { code: "KeyU", mods: ["ctrl", "alt", "meta"] };
     const clash = run(undo.state, { kind: "setHistoryShortcut", step: "redo", chord: byHand });
-    expect(clash.error).toBe("Snappy + U is already assigned to Undo window move.");
+    expect(clash.error).toBe("Control + Option + Command + U is already assigned to Undo window move.");
     expect(clash.state.settings.history.redo).toBeNull();
   });
 
@@ -289,5 +309,52 @@ describe("fake daemon", () => {
       },
     );
     expect(outcome.probe).toBe(false);
+  });
+
+  it("changing the Snappy key keeps every Snappy shortcut stored as Snappy and says so", () => {
+    const before = initialState("windows");
+    const { state, error } = run(before, { kind: "setSnappyKey", modifiers: ["ctrl", "alt"] });
+    expect(error).toBeNull();
+    expect(state.settings.snappyKey).toEqual(["ctrl", "alt"]);
+    expect(state.settings.navigation).toEqual(before.settings.navigation);
+    expect(state.status?.message).toBe("The Snappy key is now Ctrl + Alt.");
+  });
+
+  it("a Snappy key change that clashes is refused with the reason and changes nothing", () => {
+    const withUndo = run(initialState("macos"), {
+      kind: "setHistoryShortcut",
+      step: "undo",
+      chord: { code: "KeyJ", mods: ["ctrl", "alt"] },
+    }).state;
+    const clash = run(withUndo, { kind: "setSnappyKey", modifiers: ["ctrl", "alt"] });
+    expect(clash.error).toBe("Snappy + J for Focus left would collide with Undo window move.");
+    expect(clash.state.settings).toEqual(withUndo.settings);
+
+    const single = run(withUndo, { kind: "setSnappyKey", modifiers: ["meta"] });
+    expect(single.error).toBe("The Snappy key needs at least two modifiers.");
+  });
+
+  it("a shortcut recorded without the Snappy key keeps its keys when the key comes to match them", () => {
+    const byHand: KeyChord = { code: "KeyU", mods: ["shift", "ctrl", "alt"] };
+    const withUndo = run(initialState("macos"), { kind: "setHistoryShortcut", step: "undo", chord: byHand });
+    const changed = run(withUndo.state, { kind: "setSnappyKey", modifiers: ["ctrl", "alt", "shift"] });
+    expect(changed.error).toBeNull();
+    expect(changed.state.settings.history.undo).toEqual(byHand);
+    const back = run(changed.state, { kind: "setSnappyKey", modifiers: ["ctrl", "alt", "meta"] });
+    expect(back.state.settings.history.undo).toEqual(byHand);
+  });
+
+  it("a Snappy key change onto a chord the system holds is refused naming the chord", () => {
+    const taken = (chord: KeyChord) =>
+      chord.code === "Space" && chord.mods.length === 2 && chord.mods.includes("ctrl");
+    const outcome = applyCommand(
+      initialState("macos"),
+      { kind: "setSnappyKey", modifiers: ["ctrl", "alt"] },
+      { isAvailable: (chord) => !taken(chord) },
+    );
+    expect(outcome.error).toBe(
+      "Snappy + Space for Move to the nearest empty zone would be Control + Option + Space, which macOS or another app already uses.",
+    );
+    expect(outcome.state.settings.snappyKey).toEqual(["ctrl", "alt", "meta"]);
   });
 });

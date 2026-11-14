@@ -38,7 +38,8 @@ const MODIFIER_CODES = new Set([
 /** Delete (Backspace) and Forward Delete clear the shortcut when pressed alone. */
 const CLEARING_CODES = new Set(["Backspace", "Delete"]);
 
-export function interpretKey(press: KeyPress): KeyOutcome {
+/** `snappyKey` is the modifiers the Snappy key stands for, which decide whether the chord records it. */
+export function interpretKey(press: KeyPress, snappyKey: Modifier[]): KeyOutcome {
   if (press.code === "Escape") {
     return { kind: "cancel" };
   }
@@ -55,7 +56,7 @@ export function interpretKey(press: KeyPress): KeyOutcome {
   const label = keyLabel(press);
   const recorded: KeyChord =
     label === undefined ? { code: press.code, mods } : { code: press.code, mods, label };
-  return { kind: "candidate", chord: core.normalizeChord(recorded) };
+  return { kind: "candidate", chord: core.recordChord(recorded, snappyKey) };
 }
 
 /** Modifiers in the order settings files write them. */

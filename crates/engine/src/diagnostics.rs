@@ -64,6 +64,35 @@ pub struct SwitchTiming {
     pub succeeded: bool,
 }
 
+/// Times a switch phase by phase: each phase lasts from the end of the one before, the
+/// first from when the switch was asked for. Times are the platform's clock, in seconds.
+pub(crate) struct PhaseClock {
+    requested_at: f64,
+    phase_began: f64,
+}
+
+impl PhaseClock {
+    pub fn new(requested_at: f64) -> Self {
+        Self {
+            requested_at,
+            phase_began: requested_at,
+        }
+    }
+
+    /// End the current phase at `now`, returning how long it took in milliseconds; the
+    /// next phase begins then.
+    pub fn lap(&mut self, now: f64) -> f64 {
+        let elapsed = (now - self.phase_began) * 1000.0;
+        self.phase_began = now;
+        elapsed
+    }
+
+    /// Milliseconds from the request to `now`.
+    pub fn total(&self, now: f64) -> f64 {
+        (now - self.requested_at) * 1000.0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LifecycleRecord {
@@ -170,6 +199,15 @@ mod tests {
             })
         );
         assert_eq!(records[29]["active"], "workspace-34");
+    }
+
+    #[test]
+    fn each_phase_of_a_switch_lasts_from_the_end_of_the_one_before() {
+        let mut clock = PhaseClock::new(10.0);
+        assert_eq!(clock.lap(10.25), 250.0, "the first phase begins at the request");
+        assert_eq!(clock.lap(10.25), 0.0);
+        assert_eq!(clock.lap(11.0), 750.0);
+        assert_eq!(clock.total(11.5), 1500.0);
     }
 
     #[test]

@@ -145,7 +145,7 @@ impl Shell {
     }
 
     fn press_chord(&self, chord: &KeyChord) {
-        let combo = chord.combo();
+        let combo = chord.combo(snappy_core::keys::SnappyKey::DEFAULT);
         let modifiers: Vec<u8> = MODIFIERS
             .into_iter()
             .filter(|modifier| combo.mods.contains(*modifier))
@@ -333,21 +333,22 @@ fn the_default_shortcuts_are_free() {
         .chords()
         .map(|(_, chord)| chord.clone())
         .collect();
-    chords.extend(settings.navigation.nearest_empty.clone());
-    chords.extend(
-        settings
-            .navigation
-            .focus_shortcuts()
-            .map(|(_, chord)| chord.clone()),
-    );
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
     assert_eq!(chords.len(), 5 + 6 + 4 + 9);
-    let clear_selection = KeyChord::snappy("Backslash", []).combo();
-    assert!(chords.iter().any(|chord| chord.combo() == clear_selection));
+    let clear_selection = KeyChord::snappy("Backslash", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
+    assert!(
+        chords
+            .iter()
+            .any(|chord| chord.combo(snappy_core::keys::SnappyKey::DEFAULT) == clear_selection)
+    );
     let taken: Vec<String> = chords
         .iter()
-        .filter(|chord| !shell.platform.is_available(&chord.combo()))
+        .filter(|chord| {
+            !shell
+                .platform
+                .is_available(&chord.combo(snappy_core::keys::SnappyKey::DEFAULT))
+        })
         .map(|chord| chord.long_label(PlatformName::Linux))
         .collect();
     assert!(taken.is_empty(), "GNOME holds {taken:?}");
@@ -356,8 +357,9 @@ fn the_default_shortcuts_are_free() {
 #[test]
 fn chords_gnome_binds_are_reported_taken_and_snappys_own_are_free() {
     let mut shell = shell!();
-    let super_a = KeyChord::new("KeyA", [Modifier::Meta]).combo();
-    let ctrl_super_one = KeyChord::new("Digit1", [Modifier::Ctrl, Modifier::Meta]).combo();
+    let super_a = KeyChord::new("KeyA", [Modifier::Meta]).combo(snappy_core::keys::SnappyKey::DEFAULT);
+    let ctrl_super_one = KeyChord::new("Digit1", [Modifier::Ctrl, Modifier::Meta])
+        .combo(snappy_core::keys::SnappyKey::DEFAULT);
     assert!(
         !shell.platform.is_available(&super_a),
         "Super+A shows the app grid"
@@ -366,7 +368,7 @@ fn chords_gnome_binds_are_reported_taken_and_snappys_own_are_free() {
         !shell.platform.is_available(&ctrl_super_one),
         "Super+Ctrl+1 opens a new window"
     );
-    let own = KeyChord::snappy("Digit1", []).combo();
+    let own = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
     assert!(shell.platform.register(&[(4, own.clone())]).is_empty());
     assert!(shell.platform.is_available(&own));
     assert_eq!(
@@ -480,7 +482,12 @@ fn windows_appearing_and_closing_report_their_process() {
 fn a_shortcut_press_arrives_as_its_hotkey_once() {
     let mut shell = shell!();
     let chord = KeyChord::snappy("Digit2", []);
-    assert!(shell.platform.register(&[(7, chord.combo())]).is_empty());
+    assert!(
+        shell
+            .platform
+            .register(&[(7, chord.combo(snappy_core::keys::SnappyKey::DEFAULT))])
+            .is_empty()
+    );
     shell.drain();
     shell.press_chord(&chord);
     shell.wait_for("the shortcut", |event| *event == PlatformEvent::HotKey(7));
@@ -791,7 +798,7 @@ fn the_menu_appears_in_the_top_bar_and_its_choices_come_back() {
 #[test]
 fn the_extension_lets_go_of_shortcuts_when_snappy_goes_away() {
     let mut shell = shell!();
-    let combo = KeyChord::snappy("Digit3", []).combo();
+    let combo = KeyChord::snappy("Digit3", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
     let accelerator = snappy_gnome::reference::accelerator(&combo).unwrap();
     {
         let other = Connection::session().unwrap();
@@ -821,7 +828,12 @@ fn the_extension_lets_go_of_shortcuts_when_snappy_goes_away() {
 fn turning_the_extension_off_and_on_reports_why_and_restores_what_it_held() {
     let mut shell = shell!();
     let chord = KeyChord::snappy("Digit4", []);
-    assert!(shell.platform.register(&[(9, chord.combo())]).is_empty());
+    assert!(
+        shell
+            .platform
+            .register(&[(9, chord.combo(snappy_core::keys::SnappyKey::DEFAULT))])
+            .is_empty()
+    );
     shell.drain();
 
     let toggle = |command: &str| {

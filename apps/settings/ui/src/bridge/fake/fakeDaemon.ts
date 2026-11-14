@@ -1,19 +1,22 @@
 // An in-memory daemon for `pnpm dev` and the tests. It speaks the same messages as the real
 // one, applies commands with the real `snappy-core` rules, and records every command.
 
-import type { AppState, Command, KeyChord, PlatformName, ToSettings } from "../../core/model";
+import type { AppState, Command, KeyChord, Modifier, PlatformName, ToSettings } from "../../core/model";
 import { core } from "../../core/snappyCore";
 import type { Bridge, Transport } from "../bridge";
 import { EXPORT_FILE_NAME } from "../bridge";
 import { FAKE_DISPLAYS, initialState } from "./fixtures";
 import { applyCommand } from "./reducer";
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 
-/** The same key for every spelling of one shortcut, such as Snappy + K and its modifiers held by hand. */
-function comboKey(chord: KeyChord): string {
-  const normalized = core.normalizeChord(chord);
-  return `${[...normalized.mods].sort().join("+")}+${normalized.code}`;
+/**
+ * The same key for every spelling of one shortcut, such as Snappy + K and its modifiers held
+ * by hand: the modifiers to hold with the Snappy key standing for `snappyKey`.
+ */
+function comboKey(chord: KeyChord, snappyKey: Modifier[]): string {
+  const expanded = core.expandChord(chord, snappyKey);
+  return `${[...expanded.mods].sort().join("+")}+${expanded.code}`;
 }
 
 export class FakeDaemon implements Transport {
@@ -34,8 +37,9 @@ export class FakeDaemon implements Transport {
 
   send(id: number, command: Command): void {
     this.commands.push(command);
+    const snappyKey = this.state.settings.snappyKey;
     const outcome = applyCommand(this.state, command, {
-      isAvailable: (chord) => !this.takenByOtherApps.has(comboKey(chord)),
+      isAvailable: (chord) => !this.takenByOtherApps.has(comboKey(chord, snappyKey)),
     });
     this.state = outcome.state;
 
@@ -47,9 +51,12 @@ export class FakeDaemon implements Transport {
     this.listeners.forEach((listener) => this.deliver(listener, messages));
   }
 
-  /** Make the availability probe refuse `chord`, as if another app had registered it. */
+  /**
+   * Make the availability probe refuse `chord`, as if another app had registered it. A
+   * Snappy key chord is taken with the modifiers the Snappy key stands for now.
+   */
   takeShortcut(chord: KeyChord): void {
-    this.takenByOtherApps.add(comboKey(chord));
+    this.takenByOtherApps.add(comboKey(chord, this.state.settings.snappyKey));
   }
 
   /** Replace part of the state and broadcast it, as the daemon does after a change. */

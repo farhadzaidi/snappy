@@ -1,12 +1,18 @@
 //! Typed requests and handlers behind each exported function.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
-use snappy_core::bindings::{conflict_with_layout, first_conflict};
+use snappy_core::bindings::{availability_probes, conflict_with_layout, first_conflict};
 use snappy_core::editor::{self, ALIGN_TOLERANCE, ResizeHandle};
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{self, KeyChord, Modifier};
+use snappy_core::guide::{self, GuideEntry};
+use snappy_core::keys::{KeyChord, Modifier, Mods, SnappyKey};
 use snappy_core::layout::{self, Layout, Spacing, UnitRect, Zone, zone_frame};
-use snappy_core::settings::{LayoutOptions, Settings, Workspace};
+use snappy_core::settings::{
+    HistoryStep, LayoutOptions, LayoutShortcut, NavigationShortcut, Settings, Workspace, WorkspaceShortcut,
+    WorkspaceStep,
+};
 
 use crate::gestures::{self, Drawn, Edit};
 use crate::wire::{Axis, Divider, Field, Handle, HandlePosition, Platform};
@@ -107,8 +113,24 @@ pub struct ChordRequest {
 }
 
 #[derive(Deserialize)]
-pub struct RecordedChordRequest {
+#[serde(rename_all = "camelCase")]
+pub struct KeyedChordRequest {
     chord: KeyChord,
+    snappy_key: SnappyKey,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnappyKeyRequest {
+    snappy_key: SnappyKey,
+    platform: Platform,
+}
+
+#[derive(Deserialize)]
+pub struct SnappyKeyChangeRequest {
+    settings: Settings,
+    modifiers: Mods,
+    platform: Platform,
 }
 
 #[derive(Deserialize)]
@@ -154,16 +176,55 @@ pub struct LayoutOptionsRequest {
 }
 
 #[derive(Deserialize)]
+pub struct WorkspaceNameRequest {
+    workspace: String,
+}
+
+#[derive(Deserialize)]
+pub struct LayoutTitlesRequest {
+    layout: String,
+    zones: usize,
+}
+
+#[derive(Deserialize)]
 pub struct NewWorkspaceRequest {
     settings: Settings,
     id: String,
     number: usize,
 }
 
+/// Titles by the name the settings file gives each shortcut, such as `"focusUp"`.
+type Titles = BTreeMap<String, String>;
+
+/// The titles of a layout's own shortcuts.
+#[derive(Serialize)]
+pub struct LayoutShortcutTitles {
+    select: String,
+    /// One per zone, in the layout's order.
+    zones: Vec<String>,
+}
+
+/// Every shortcut's title, by section, as the settings app shows them.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutTitles {
+    navigation: Titles,
+    workspace_steps: Titles,
+    history: Titles,
+}
+
 #[derive(Serialize)]
 pub struct ChordLabels {
     compact: String,
     long: String,
+}
+
+/// A chord to ask the OS about before the Snappy key changes: its concrete modifiers, and
+/// what to say when it is taken.
+#[derive(Serialize)]
+pub struct AvailabilityProbe {
+    chord: KeyChord,
+    refusal: String,
 }
 
 #[derive(Serialize)]
@@ -291,15 +352,82 @@ pub fn is_valid_chord(request: ChordRequest) -> bool {
     request.chord.is_valid()
 }
 
-/// A recorded chord in stored form: holding every modifier the Snappy key stands for makes
-/// it the Snappy key plus the rest. Parsing the chord normalizes it.
-pub fn normalize_chord(request: RecordedChordRequest) -> KeyChord {
-    request.chord
+/// A chord pressed with its modifiers held, as recording stores it: holding every modifier
+/// the Snappy key stands for makes it the Snappy key plus the rest, and anything else stays
+/// exactly as held.
+pub fn record_chord(request: KeyedChordRequest) -> KeyChord {
+    request.chord.recorded(request.snappy_key)
+}
+
+/// The chord with the Snappy key expanded: the concrete modifiers to hold.
+pub fn expand_chord(request: KeyedChordRequest) -> KeyChord {
+    request.chord.combo(request.snappy_key).into()
 }
 
 /// What the Snappy key is on the platform, for example "Control + Option + Command".
-pub fn snappy_key_label(request: PlatformRequest) -> String {
-    keys::snappy_key_label(request.platform.into())
+pub fn snappy_key_label(request: SnappyKeyRequest) -> String {
+    request.snappy_key.label(request.platform.into())
+}
+
+/// The settings with the Snappy key changed, or why the change is refused.
+pub fn change_snappy_key(request: SnappyKeyChangeRequest) -> Validation {
+    match request
+        .settings
+        .with_snappy_key(request.modifiers, request.platform.into())
+    {
+        Ok(settings) => Validation::Valid(Box::new(settings)),
+        Err(error) => Validation::Invalid(error.to_string()),
+    }
+}
+
+/// The chords to ask the OS about for settings whose Snappy key just changed.
+pub fn snappy_key_probes(request: SettingsRequest) -> Vec<AvailabilityProbe> {
+    availability_probes(&request.settings, request.platform.into())
+        .into_iter()
+        .map(|probe| AvailabilityProbe {
+            chord: probe.combo.into(),
+            refusal: probe.refusal,
+        })
+        .collect()
+}
+
+/// Each shortcut by the name its settings field has, with its title.
+fn titles<T: Serialize>(shortcuts: impl IntoIterator<Item = (T, String)>) -> Titles {
+    shortcuts
+        .into_iter()
+        .filter_map(|(shortcut, title)| match serde_json::to_value(shortcut) {
+            Ok(serde_json::Value::String(name)) => Some((name, title)),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn shortcut_titles(_: Empty) -> ShortcutTitles {
+    ShortcutTitles {
+        navigation: titles(NavigationShortcut::ALL.map(|shortcut| (shortcut, shortcut.title()))),
+        workspace_steps: titles(WorkspaceStep::ALL.map(|step| (step, step.title().to_owned()))),
+        history: titles(HistoryStep::ALL.map(|step| (step, step.title().to_owned()))),
+    }
+}
+
+/// The titles of a workspace's own shortcuts, for the workspace named `workspace`.
+pub fn workspace_shortcut_titles(request: WorkspaceNameRequest) -> Titles {
+    titles(WorkspaceShortcut::ALL.map(|shortcut| (shortcut, shortcut.title(&request.workspace))))
+}
+
+/// The titles of a layout's own shortcuts, for the layout named `layout` with `zones` zones.
+pub fn layout_shortcut_titles(request: LayoutTitlesRequest) -> LayoutShortcutTitles {
+    LayoutShortcutTitles {
+        select: LayoutShortcut::Select.title(&request.layout),
+        zones: (0..request.zones)
+            .map(|index| LayoutShortcut::Zone(index).title(&request.layout))
+            .collect(),
+    }
+}
+
+/// What each family of default shortcuts does, as help lists them.
+pub fn default_shortcuts(request: PlatformRequest) -> Vec<GuideEntry> {
+    guide::default_shortcuts(request.platform.into())
 }
 
 pub fn modifier_names(request: ModifierRequest) -> ModifierNames {

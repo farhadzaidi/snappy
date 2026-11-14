@@ -41,6 +41,8 @@ pub struct Tabs {
 /// What a session needs from the platform and the store.
 pub trait WorkspaceIo {
     fn frame(&mut self, window: WindowId) -> Result<Rect, WindowError>;
+    /// Closed for good, as opposed to unavailable for now.
+    fn is_closed(&mut self, window: WindowId) -> bool;
     /// Present, not full screen, and without an open sheet.
     fn is_movable(&mut self, window: WindowId) -> bool;
     fn is_minimized(&mut self, window: WindowId) -> bool;
@@ -135,11 +137,31 @@ impl Session {
         self.tabs.get(&window).copied().unwrap_or(window)
     }
 
+    /// The windows that stand for `windows`' tab groups, each once, in the order of the
+    /// first window of each group.
+    pub fn tab_roots(&self, windows: &[WindowId]) -> Vec<WindowId> {
+        let mut roots: Vec<WindowId> = Vec::new();
+        for window in windows {
+            let root = self.tab_root(*window);
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        roots
+    }
+
+    /// Whether `window` is tracked in the active workspace and not parked.
+    pub fn shows(&self, window: WindowId) -> bool {
+        self.members
+            .get(&window)
+            .is_some_and(|member| member.workspace == self.active && member.parked.is_none())
+    }
+
     /// The members hidden as tabs behind `shown`.
     pub fn tabs_behind(&self, shown: WindowId) -> Vec<WindowId> {
         self.tabs
             .iter()
-            .filter(|(_, lead)| **lead == shown)
+            .filter(|(_, in_front)| **in_front == shown)
             .map(|(hidden, _)| *hidden)
             .collect()
     }
@@ -165,16 +187,16 @@ impl Session {
 
         let mut moved = Vec::new();
         for (hidden, shown) in self.tabs.clone() {
-            let Some(lead) = self.members.get(&shown).cloned() else {
+            let Some(shown_tab) = self.members.get(&shown).cloned() else {
                 continue;
             };
             if let Some(member) = self.members.get_mut(&hidden)
-                && *member != lead
+                && *member != shown_tab
             {
-                if member.workspace != lead.workspace {
+                if member.workspace != shown_tab.workspace {
                     moved.push(hidden);
                 }
-                *member = lead;
+                *member = shown_tab;
             }
         }
         self.forget_focus_elsewhere();
@@ -184,10 +206,10 @@ impl Session {
     /// Give every hidden tab in `next` its shown tab's place.
     fn follow_tabs(&self, next: &mut Members) {
         for (hidden, shown) in &self.tabs {
-            if let Some(lead) = next.get(shown).cloned()
+            if let Some(shown_tab) = next.get(shown).cloned()
                 && next.contains_key(hidden)
             {
-                next.insert(*hidden, lead);
+                next.insert(*hidden, shown_tab);
             }
         }
     }
@@ -263,16 +285,16 @@ impl Session {
         focus_incoming: bool,
         io: &mut impl WorkspaceIo,
     ) -> Result<bool, WindowError> {
-        self.switch_carrying(target, &[], displays, focus_incoming, io)
+        self.switch_taking_along(target, &[], displays, focus_incoming, io)
     }
 
-    /// Like `switch_to`, except that the active workspace's visible `carried` windows join
+    /// Like `switch_to`, except that the active workspace's visible windows in `along` join
     /// `target` where they are instead of being parked, and the last of them that can take
-    /// focus gets it. A carried tab carries its whole group.
-    pub fn switch_carrying(
+    /// focus gets it. A tab taken along takes its whole group.
+    pub fn switch_taking_along(
         &mut self,
         target: &str,
-        carried: &[WindowId],
+        along: &[WindowId],
         displays: &[Rect],
         focus_incoming: bool,
         io: &mut impl WorkspaceIo,
@@ -280,21 +302,14 @@ impl Session {
         if target == self.active {
             return Ok(true);
         }
-        let mut roots: Vec<WindowId> = Vec::new();
-        for window in carried {
-            let root = self.tab_root(*window);
-            if !roots.contains(&root) {
-                roots.push(root);
-            }
-        }
-        let carried = roots.as_slice();
+        let along = self.tab_roots(along);
         let mut next = self.members.clone();
         let mut arriving = Vec::new();
         for (window, member) in next.iter_mut() {
             if self.tabs.contains_key(window) {
                 continue;
             }
-            if member.workspace == self.active && member.parked.is_none() && carried.contains(window) {
+            if member.workspace == self.active && member.parked.is_none() && along.contains(window) {
                 member.workspace = target.to_owned();
                 member.frame = io.frame(*window)?;
                 arriving.push(*window);
@@ -329,12 +344,12 @@ impl Session {
         if !focus_incoming {
             return Ok(true);
         }
-        let last_carried = carried
+        let last_along = along
             .iter()
             .rev()
             .copied()
             .find(|window| arriving.contains(window) && self.can_focus(*window, io));
-        match last_carried {
+        match last_along {
             Some(window) => {
                 io.focus(window);
                 self.note_focus(window);
@@ -344,7 +359,7 @@ impl Session {
         }
     }
 
-    /// Move a window to another workspace without switching. A tab moves its whole group.
+    /// Send a window to another workspace without switching. A tab takes its whole group.
     pub fn send(
         &mut self,
         window: WindowId,
@@ -358,7 +373,7 @@ impl Session {
         };
         if !io.is_movable(window) {
             return Err(WindowError::unavailable(
-                "Close the window's dialog or leave full screen before moving it to a workspace.",
+                "Close the window's dialog or leave full screen before sending it to a workspace.",
             ));
         }
         if member.workspace == self.active && member.parked.is_none() {
@@ -545,7 +560,10 @@ impl Session {
             }
         }
         for (hidden, shown) in &self.tabs {
-            let back = self.members.get(shown).is_some_and(|lead| lead.parked.is_none());
+            let back = self
+                .members
+                .get(shown)
+                .is_some_and(|shown_tab| shown_tab.parked.is_none());
             if let (true, Some(member)) = (back, self.members.get_mut(hidden)) {
                 member.parked = None;
             }
@@ -584,19 +602,54 @@ impl Session {
 
     fn can_focus(&self, window: WindowId, io: &mut impl WorkspaceIo) -> bool {
         // Focusing a hidden tab would make its app show that tab instead.
-        let visible_here = !self.tabs.contains_key(&window)
-            && self
-                .members
-                .get(&window)
-                .is_some_and(|member| member.workspace == self.active && member.parked.is_none());
-        visible_here && io.is_movable(window) && !io.is_minimized(window)
+        !self.tabs.contains_key(&window)
+            && self.shows(window)
+            && io.is_movable(window)
+            && !io.is_minimized(window)
+    }
+
+    /// Move `window` where `after` puts it and check it got there, noting where it was in
+    /// `done` so a later refusal can put it back. A minimized window stays put.
+    fn move_member(
+        &self,
+        window: WindowId,
+        after: &Member,
+        done: &mut Vec<(WindowId, Point, bool)>,
+        io: &mut impl WorkspaceIo,
+    ) -> Result<(), WindowError> {
+        if !io.is_movable(window) {
+            return Err(WindowError::unavailable(
+                "A window became unavailable during the workspace change. Its workspace tracking has been kept.",
+            ));
+        }
+        if io.is_minimized(window) {
+            return Ok(());
+        }
+        let before = io.frame(window)?.origin();
+        let was_hidden = self
+            .members
+            .get(&window)
+            .is_some_and(|member| member.parked.is_some());
+        done.push((window, before, was_hidden));
+
+        let target = after.parked.unwrap_or(after.frame.origin());
+        let hidden = after.parked.is_some();
+        io.place(window, target, hidden)?;
+        if lands_at(io.frame(window)?, target) && hidden_as(self.policy, window, hidden, io) {
+            Ok(())
+        } else {
+            Err(WindowError::refused(
+                "An app refused the workspace move. Your previous workspace has been restored.",
+            ))
+        }
     }
 
     /// Apply `next`: journal first, windows coming into view before windows being
-    /// parked, every move checked, everything reversed on a refusal.
+    /// parked, every move checked, everything reversed on a refusal. A window that closes
+    /// during the change leaves the session.
     fn transition(
         &mut self,
-        next: Members,
+        mut next: Members,
         forced: &BTreeSet<WindowId>,
         io: &mut impl WorkspaceIo,
     ) -> Result<(), WindowError> {
@@ -640,33 +693,31 @@ impl Session {
         let mut order = moving;
         order.sort_by_key(|window| next[window].parked.is_some());
         let mut done: Vec<(WindowId, Point, bool)> = Vec::new();
-        let outcome = order.iter().try_for_each(|&window| {
-            if !io.is_movable(window) {
-                return Err(WindowError::unavailable(
-                    "A window became unavailable during the workspace change. Its workspace tracking has been kept.",
-                ));
+        let mut closed = Vec::new();
+        let mut outcome = Ok(());
+        for window in order {
+            match self.move_member(window, &next[&window], &mut done, io) {
+                // A window closed meanwhile has nothing left to move; it leaves the
+                // session rather than undoing the change for every other window.
+                Err(_) if io.is_closed(window) => {
+                    done.retain(|(moved, ..)| *moved != window);
+                    next.remove(&window);
+                    closed.push(window);
+                }
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
+                }
+                Ok(()) => {}
             }
-            if io.is_minimized(window) {
-                return Ok(());
-            }
-            let before = io.frame(window)?.origin();
-            let was_hidden = self.members.get(&window).is_some_and(|member| member.parked.is_some());
-            done.push((window, before, was_hidden));
-
-            let after = &next[&window];
-            let target = after.parked.unwrap_or(after.frame.origin());
-            let hidden = after.parked.is_some();
-            io.place(window, target, hidden)?;
-            if lands_at(io.frame(window)?, target) && hidden_as(policy, window, hidden, io) {
-                Ok(())
-            } else {
-                Err(WindowError::refused("An app refused the workspace move. Your previous workspace has been restored."))
-            }
-        });
+        }
 
         match outcome.and_then(|()| io.write_journal(&journal_of(&next, &self.tabs, &BTreeMap::new()))) {
             Ok(()) => {
                 self.members = next;
+                for window in closed {
+                    self.discard(window);
+                }
                 Ok(())
             }
             Err(error) => {

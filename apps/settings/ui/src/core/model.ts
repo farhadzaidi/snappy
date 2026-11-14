@@ -75,6 +75,8 @@ export interface Settings {
     whenTaken: WhenTaken;
     shortcutsEnabled: boolean;
   };
+  /** The modifiers the Snappy key stands for, at least two. */
+  snappyKey: Modifier[];
   navigation: Navigation;
   layouts: {
     defaultLayoutId: string;
@@ -99,8 +101,10 @@ export interface Settings {
  * Move-between-zones shortcuts, the one that moves to the nearest empty zone, and the ones
  * that move focus between windows and change the selection.
  */
-export type Navigation = Record<Direction, KeyChord | null> &
-  Record<FocusShortcut, KeyChord | null> & { nearestEmpty: KeyChord | null };
+export type Navigation = Record<NavigationShortcut, KeyChord | null>;
+
+/** A shortcut of the navigation section, named by the field that holds it. */
+export type NavigationShortcut = Direction | "nearestEmpty" | FocusShortcut;
 
 export type FocusShortcut =
   "focusUp" | "focusLeft" | "focusDown" | "focusRight" | "selectWindow" | "clearSelection";
@@ -169,9 +173,8 @@ export type Command =
   | { kind: "setSwapModifier"; modifier: SwapModifier }
   | { kind: "setWhenTaken"; choice: WhenTaken }
   | { kind: "setShortcutsEnabled"; enabled: boolean }
-  | { kind: "setNavigationShortcut"; direction: Direction; chord: KeyChord | null }
-  | { kind: "setNearestEmptyShortcut"; chord: KeyChord | null }
-  | { kind: "setFocusShortcut"; shortcut: FocusShortcut; chord: KeyChord | null }
+  | { kind: "setSnappyKey"; modifiers: Modifier[] }
+  | { kind: "setNavigationShortcut"; shortcut: NavigationShortcut; chord: KeyChord | null }
   | { kind: "applyLayout"; display: string; layout: string }
   | { kind: "saveLayout"; layout: Layout; options: LayoutOptions; display: string }
   | { kind: "deleteLayout"; layout: string }
@@ -197,6 +200,9 @@ export type Command =
   | { kind: "dismissStatus" };
 
 export type WorkspaceStep = "previous" | "next" | "sendPrevious" | "sendNext";
+
+/** A workspace's own shortcut, named by the field that holds it. */
+export type WorkspaceShortcut = "switchShortcut" | "sendShortcut" | "sendAndSwitchShortcut";
 
 export type HistoryStep = "undo" | "redo";
 

@@ -1,39 +1,27 @@
-//! Keyboard focus and the selection: moving focus to the next window in a direction,
-//! selecting windows, and placing the selected windows into empty zones. Workspace
-//! switches and sends take the selection along (`workspaces`).
+//! The selection: selecting windows, and placing the selected windows into empty zones.
+//! Workspace switches and sends take the selection along (`workspaces`).
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
-use std::time::Duration;
 
 use snappy_core::bounds::{BoundsStep, CancelToken};
 use snappy_core::empty_zone::place_selection;
 use snappy_core::error::WindowError;
-use snappy_core::focus::focus_target;
-use snappy_core::geometry::{Point, Rect};
-use snappy_core::navigate::Direction;
-use snappy_core::operations::{self, GroupMove, Placement, WindowOps};
+use snappy_core::geometry::Rect;
+use snappy_core::operations::{self, GroupMove, WindowOps};
 use snappy_core::window::WindowSnapshot;
 use snappy_platform::{Platform, WindowId};
 
 use crate::core::Core;
 use crate::drag::zone_slots;
-use crate::ops::{Live, Shared, debug_steps};
+use crate::ops::{Live, Shared, log_snap};
 use crate::workspaces;
 
-/// How long a window that just got focus from a focus shortcut stays outlined.
-const FOCUS_FLASH: Duration = Duration::from_millis(400);
-
-/// The selected windows, and the window briefly outlined after a focus shortcut. Kept in
-/// memory only: quitting forgets them and moves nothing.
+/// The selected windows, in the order they were selected. Kept in memory only: quitting
+/// forgets them and moves nothing.
 #[derive(Default)]
 pub(crate) struct Selection {
-    /// In the order they were selected.
     pub windows: Vec<WindowId>,
-    /// Outlined in the focus style until its flash ends, over its selection outline.
-    pub flash: Option<WindowId>,
-    /// Only the latest flash's timer takes it away.
-    flash_generation: u64,
 }
 
 impl Selection {
@@ -46,134 +34,6 @@ impl Selection {
     }
 }
 
-// MARK: Focus
-
-/// Focus and raise the next window in `direction` from the focused window, or from the
-/// middle of the display under the pointer when nothing is focused, and outline it briefly.
-/// While any window is in a zone, focus moves between zones (`focus_target`).
-pub(crate) fn focus_toward<P: Platform + 'static>(shared: &Rc<Shared<P>>, direction: Direction) {
-    let target = {
-        let mut core = shared.core.borrow_mut();
-        let focused = core.platform.focused_window().ok();
-        let focused_frame = focused
-            .as_ref()
-            .map(|window| core.platform.frame(window.id).unwrap_or(window.frame));
-        let from = match focused_frame {
-            Some(frame) => frame.center(),
-            None => pointer_display_center(&mut core),
-        };
-        // A window of a workspace that isn't showing never counts as in a zone.
-        let zoned_frame = focused
-            .as_ref()
-            .filter(|window| !core.workspaces.is_inactive(window.id))
-            .and(focused_frame);
-        let candidates = focus_candidates(&mut core, focused.as_ref().map(|window| window.id));
-        let slots = zone_slots(&core);
-        let choice = focus_target(zoned_frame, from, direction, &slots, &candidates);
-        let target = choice.window;
-        let from_window = focused.as_ref().map(|window| window.id.0);
-        let to_window = target.map(|window| window.0);
-        let considered = candidates.len();
-        let mode = choice.mode.name();
-        let zone = choice
-            .zone
-            .map(|slot| serde_json::json!({ "display": slot.display_id, "zone": slot.zone_id }));
-        core.trace("focusMove", || {
-            serde_json::json!({
-                "direction": direction.name(),
-                "from": from_window,
-                "to": to_window,
-                "candidates": considered,
-                "mode": mode,
-                "zone": zone,
-            })
-        });
-        match target {
-            Some(window) => core.platform.focus(window),
-            None => core.announce_quietly(nothing_toward(direction)),
-        }
-        target
-    };
-    if let Some(window) = target {
-        flash(shared, window);
-    }
-}
-
-fn nothing_toward(direction: Direction) -> &'static str {
-    match direction {
-        Direction::Up => "No window above.",
-        Direction::Down => "No window below.",
-        Direction::Left => "No window to the left.",
-        Direction::Right => "No window to the right.",
-    }
-}
-
-fn pointer_display_center<P: Platform>(core: &mut Core<P>) -> Point {
-    let pointer = core.platform.pointer();
-    core.display_at(pointer)
-        .or_else(|| core.displays.first())
-        .map_or(pointer, |display| display.frame.center())
-}
-
-/// The windows focus can move to: visible, not minimized, on the active workspace, and not
-/// a hidden tab, other than `focused`. They come in the order ties go: the most recently
-/// focused first, then the rest in the order the platform lists them.
-fn focus_candidates<P: Platform>(core: &mut Core<P>, focused: Option<WindowId>) -> Vec<WindowSnapshot> {
-    let visible = core.platform.visible_windows(None);
-    let mut candidates: Vec<WindowSnapshot> = Vec::new();
-    for info in visible {
-        let hidden_tab = core.workspaces.is_hidden_tab(info.id);
-        if Some(info.id) == focused || core.workspaces.is_inactive(info.id) || hidden_tab {
-            continue;
-        }
-        let shown = core
-            .platform
-            .state(info.id)
-            .is_ok_and(|state| !state.minimized && !state.on_parking_desktop);
-        if shown {
-            candidates.push(WindowSnapshot {
-                id: info.id,
-                frame: info.frame,
-            });
-        }
-    }
-    let recency: BTreeMap<WindowId, usize> = core
-        .workspaces
-        .session
-        .as_ref()
-        .map(|session| {
-            session
-                .recently_focused()
-                .enumerate()
-                .map(|(rank, window)| (window, rank))
-                .collect()
-        })
-        .unwrap_or_default();
-    candidates.sort_by_key(|candidate| recency.get(&candidate.id).copied().unwrap_or(usize::MAX));
-    candidates
-}
-
-/// Outline `window` in the focus style until `FOCUS_FLASH` has passed, unless a newer
-/// flash replaces it first.
-fn flash<P: Platform + 'static>(shared: &Rc<Shared<P>>, window: WindowId) {
-    let generation = {
-        let mut core = shared.core.borrow_mut();
-        core.selection.flash = Some(window);
-        core.selection.flash_generation += 1;
-        core.refresh_marks();
-        core.selection.flash_generation
-    };
-    let shared = Rc::clone(shared);
-    tokio::task::spawn_local(async move {
-        tokio::time::sleep(FOCUS_FLASH).await;
-        let mut core = shared.core.borrow_mut();
-        if core.selection.flash_generation == generation {
-            core.selection.flash = None;
-            core.refresh_marks();
-        }
-    });
-}
-
 // MARK: Selecting
 
 /// Add the focused window to the selection, or take it out when it is already in it. A
@@ -184,7 +44,7 @@ pub(crate) fn toggle<P: Platform>(core: &mut Core<P>) {
         Ok(info) => info,
         Err(error) => {
             let reason = error.to_string();
-            core.trace("selectSkipped", || serde_json::json!({ "reason": reason }));
+            core.trace("selectionSkipped", || serde_json::json!({ "reason": reason }));
             core.announce_quietly("Focus a window to select it.");
             return;
         }
@@ -204,7 +64,7 @@ pub(crate) fn toggle<P: Platform>(core: &mut Core<P>) {
     }
     if !workspaces::shown_on_active_workspace(core, &focused) {
         core.trace(
-            "selectSkipped",
+            "selectionSkipped",
             || serde_json::json!({ "window": focused.id.0, "app": focused.app, "reason": "not on the current workspace" }),
         );
         core.announce_quietly("Focus a window on the current workspace first.");
@@ -261,11 +121,24 @@ pub(crate) fn prune<P: Platform>(core: &mut Core<P>) {
     }
 }
 
-pub(crate) fn window_closed<P: Platform>(core: &mut Core<P>, window: WindowId) {
-    remove(core, window, "closed");
-    if core.selection.flash == Some(window) {
-        core.selection.flash = None;
-        core.refresh_marks();
+/// Prune closed windows, then say whether any are selected.
+pub(crate) fn has_windows<P: Platform>(core: &mut Core<P>) -> bool {
+    prune(core);
+    !core.selection.is_empty()
+}
+
+/// Take out every selected window that stands for one of `groups`, by its tab group's
+/// shown tab.
+pub(crate) fn remove_groups<P: Platform>(core: &mut Core<P>, groups: &[WindowId], reason: &str) {
+    let gone: Vec<WindowId> = core
+        .selection
+        .windows
+        .iter()
+        .copied()
+        .filter(|window| groups.contains(&core.workspaces.tab_root(*window)))
+        .collect();
+    for window in gone {
+        remove(core, window, reason);
     }
 }
 
@@ -294,42 +167,20 @@ pub(crate) fn place<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
 fn plan_placement<P: Platform>(core: &mut Core<P>) -> Result<Option<PlacementPlan>, WindowError> {
     prune(core);
     let mut selected: Vec<WindowSnapshot> = Vec::new();
-    for window in core.selection.windows.clone() {
-        // A selected tab that its app has since hidden moves its group's shown tab.
-        let window = core.workspaces.tab_root(window);
-        if selected.iter().any(|snapshot| snapshot.id == window) {
-            continue;
-        }
-        let shown = !core.workspaces.is_inactive(window)
-            && core
-                .platform
-                .state(window)
-                .is_ok_and(|state| !state.minimized && !state.on_parking_desktop);
-        if let (true, Ok(frame)) = (shown, core.platform.frame(window)) {
+    // A selected tab that its app has since hidden moves its group's shown tab.
+    for window in core.workspaces.tab_roots(&core.selection.windows) {
+        if let (true, Ok(frame)) = (core.is_on_screen(window), core.platform.frame(window)) {
             selected.push(WindowSnapshot { id: window, frame });
         }
     }
     let slots = zone_slots(core);
     let frames: Vec<Rect> = slots.iter().map(|slot| slot.frame).collect();
-    let windows: Vec<WindowSnapshot> = core
-        .platform
-        .windows_occupying(&frames)?
-        .iter()
-        .map(|found| WindowSnapshot {
-            id: found.id,
-            frame: found.frame,
-        })
-        .collect();
-    let pointer = core.platform.pointer();
+    let windows = core.occupants(&frames)?;
     let first_display = core
-        .display_at(pointer)
-        .or_else(|| core.displays.first())
+        .display_under_pointer()
         .map(|display| display.id.clone())
         .unwrap_or_default();
-    let workspaces = &core.workspaces;
-    let plan = place_selection(&selected, &first_display, &slots, &windows, |id| {
-        workspaces.is_inactive(id)
-    });
+    let plan = place_selection(&selected, &first_display, &slots, &windows);
 
     if plan.moves.is_empty() {
         let message = if plan.left_over.is_empty() {
@@ -375,23 +226,14 @@ async fn run_placement<P: Platform + 'static>(
     let mut failure = None;
     for (planned, outcome) in plan.moves.iter().zip(&outcomes) {
         let steps = stepped.steps.remove(&planned.window).unwrap_or_default();
-        log_snap(&mut core, planned, outcome, &steps);
+        log_snap(&mut core, planned.window, planned.frame, outcome, &steps);
         match outcome {
             Ok(_) => placed.push(planned.window),
             Err(WindowError::Cancelled) => {}
             Err(error) => failure = failure.or_else(|| Some(error.to_string())),
         }
     }
-    let gone: Vec<WindowId> = core
-        .selection
-        .windows
-        .iter()
-        .copied()
-        .filter(|window| placed.contains(&core.workspaces.tab_root(*window)))
-        .collect();
-    for window in &gone {
-        remove(&mut core, *window, "placed");
-    }
+    remove_groups(&mut core, &placed, "placed");
     let (placed_ids, left_over, in_zones) = (
         placed.iter().map(|window| window.0).collect::<Vec<_>>(),
         plan.left_over.iter().map(|window| window.0).collect::<Vec<_>>(),
@@ -408,37 +250,6 @@ async fn run_placement<P: Platform + 'static>(
         (None, 0, count) => core.announce_quietly(&format!("Snapped {count} windows.")),
         (None, 1, _) => core.announce_quietly("1 window didn't fit."),
         (None, count, _) => core.announce_quietly(&format!("{count} windows didn't fit.")),
-    }
-}
-
-/// A snap of a group, recorded like any other snap.
-fn log_snap<P: Platform>(
-    core: &mut Core<P>,
-    planned: &GroupMove,
-    outcome: &Result<Placement, WindowError>,
-    steps: &[BoundsStep],
-) {
-    let (label, failed) = match outcome {
-        Ok(placement) if placement.constrained() => ("appConstrainedBounds", false),
-        Ok(_) => ("snapped", false),
-        Err(WindowError::Cancelled) => ("interruptedByNewInteraction", false),
-        Err(_) => ("windowWriteFailed", true),
-    };
-    let actual = outcome.as_ref().ok().map(|placement| placement.actual);
-    let steps = debug_steps(steps);
-    let details = || {
-        serde_json::json!({
-            "window": planned.window.0,
-            "requested": planned.frame,
-            "actual": actual,
-            "outcome": label,
-            "steps": steps,
-        })
-    };
-    if failed {
-        core.flag("snap", details);
-    } else {
-        core.trace("snap", details);
     }
 }
 

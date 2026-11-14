@@ -182,16 +182,9 @@ impl FakePlatform {
     /// Open a new tab in `shown`'s window, as its app does: the new tab shows, at the
     /// group's frame, with focus, and every other tab hides behind it.
     pub fn add_tab(&mut self, id: u64, shown: WindowId) -> WindowId {
-        let lead = self.windows[&shown].clone();
-        let tab = self.open(id, FakeWindow::new(&lead.app, lead.pid, lead.frame));
-        for window in self.windows.values_mut() {
-            if window.tab_of == Some(shown) {
-                window.tab_of = Some(tab);
-            }
-        }
-        if let Some(window) = self.windows.get_mut(&shown) {
-            window.tab_of = Some(tab);
-        }
+        let group = self.windows[&shown].clone();
+        let tab = self.open(id, FakeWindow::new(&group.app, group.pid, group.frame));
+        self.hide_group_behind(shown, tab);
         tab
     }
 
@@ -202,6 +195,16 @@ impl FakePlatform {
             return;
         };
         let frame = self.windows[&shown].frame;
+        self.hide_group_behind(shown, tab);
+        if let Some(window) = self.windows.get_mut(&tab) {
+            window.tab_of = None;
+            window.frame = frame;
+        }
+        self.focus(tab);
+    }
+
+    /// Hide `shown` and every tab behind it behind `tab`, which shows in their place.
+    fn hide_group_behind(&mut self, shown: WindowId, tab: WindowId) {
         for window in self.windows.values_mut() {
             if window.tab_of == Some(shown) {
                 window.tab_of = Some(tab);
@@ -210,11 +213,6 @@ impl FakePlatform {
         if let Some(window) = self.windows.get_mut(&shown) {
             window.tab_of = Some(tab);
         }
-        if let Some(window) = self.windows.get_mut(&tab) {
-            window.tab_of = None;
-            window.frame = frame;
-        }
-        self.focus(tab);
     }
 
     /// Drag `tab` out of its group into a window of its own at `frame`, focused. When it
@@ -495,8 +493,9 @@ impl HotKeys for FakePlatform {
         self.registered.clear();
     }
 
+    /// A chord Snappy holds itself reads as taken, as macOS's Carbon hotkeys report it.
     fn is_available(&mut self, combo: &Combo) -> bool {
-        !self.taken_elsewhere.contains(combo)
+        !self.taken_elsewhere.contains(combo) && !self.registered.iter().any(|(_, held)| held == combo)
     }
 }
 

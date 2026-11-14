@@ -14,8 +14,8 @@ export function longLabel(chord: KeyChord, platform: PlatformName): string {
 }
 
 /** What the Snappy key is: "Control + Option + Command". */
-export function snappyKeyLabel(platform: PlatformName): string {
-  return core.snappyKeyLabel(platform);
+export function snappyKeyLabel(snappyKey: Modifier[], platform: PlatformName): string {
+  return core.snappyKeyLabel(snappyKey, platform);
 }
 
 export function modifierName(modifier: Modifier, platform: PlatformName): string {
@@ -37,9 +37,10 @@ export function commandModifierHint(platform: PlatformName): string {
   return `Include ${ctrl}, ${alt}, or ${meta}.`;
 }
 
-export function recorderHelp(platform: PlatformName): string {
+export function recorderHelp(platform: PlatformName, snappyKey: Modifier[]): string {
   const [ctrl, alt, meta] = commandModifiers(platform);
-  return `Click and press a combination with ${ctrl}, ${alt}, or ${meta}. Escape cancels; Delete clears.`;
+  const snappy = snappyKeyLabel(snappyKey, platform);
+  return `Click and press a combination with ${ctrl}, ${alt}, or ${meta}; hold ${snappy} for the Snappy key. Escape cancels; Delete clears.`;
 }
 
 const SYSTEM_NAMES: Record<PlatformName, string> = { macos: "macOS", windows: "Windows", linux: "Linux" };

@@ -455,7 +455,7 @@ fn drag(from: Point, to: Point, steps: u32) {
 }
 
 fn snappy(code: &str) -> Combo {
-    KeyChord::snappy(code, []).combo()
+    KeyChord::snappy(code, []).combo(snappy_core::keys::SnappyKey::DEFAULT)
 }
 
 fn near(a: Rect, b: Rect, tolerance: f64) -> bool {
@@ -620,21 +620,22 @@ fn the_windows_default_shortcuts_are_free() {
         .chords()
         .map(|(_, chord)| chord.clone())
         .collect();
-    chords.extend(settings.navigation.nearest_empty.clone());
-    chords.extend(
-        settings
-            .navigation
-            .focus_shortcuts()
-            .map(|(_, chord)| chord.clone()),
-    );
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
     assert_eq!(chords.len(), 5 + 6 + 4 + 9);
-    let clear_selection = KeyChord::snappy("Backslash", []).combo();
-    assert!(chords.iter().any(|chord| chord.combo() == clear_selection));
+    let clear_selection = KeyChord::snappy("Backslash", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
+    assert!(
+        chords
+            .iter()
+            .any(|chord| chord.combo(snappy_core::keys::SnappyKey::DEFAULT) == clear_selection)
+    );
     let taken: Vec<String> = chords
         .iter()
-        .filter(|chord| !session.platform.is_available(&chord.combo()))
+        .filter(|chord| {
+            !session
+                .platform
+                .is_available(&chord.combo(snappy_core::keys::SnappyKey::DEFAULT))
+        })
         .map(|chord| chord.long_label(Platform::Windows))
         .collect();
     assert!(taken.is_empty(), "Windows holds {taken:?}");

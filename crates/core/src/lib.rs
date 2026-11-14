@@ -10,6 +10,7 @@ pub mod empty_zone;
 pub mod error;
 pub mod focus;
 pub mod geometry;
+pub mod guide;
 pub mod keys;
 pub mod layout;
 pub mod navigate;

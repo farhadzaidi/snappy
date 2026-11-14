@@ -7,12 +7,13 @@ use serde::{Deserialize, Serialize};
 use crate::geometry::{Point, Rect};
 use crate::layout::{Layout, Spacing, Zone, zone_frame};
 
-/// A zone counts as ahead only when its center is further than this in the direction.
-const AHEAD_THRESHOLD: f64 = 0.5;
+/// A zone or window counts as ahead only when its center is further than this in the
+/// direction.
+pub(crate) const AHEAD_THRESHOLD: f64 = 0.5;
 /// Zones whose spans across the direction share more than this are aligned.
 const ALIGNED_THRESHOLD: f64 = 0.5;
-/// Areas and distances closer than this tie.
-const TIE_TOLERANCE: f64 = 0.001;
+/// Areas, distances, and scores closer than this tie.
+pub(crate) const TIE_TOLERANCE: f64 = 0.001;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -40,7 +41,7 @@ impl Direction {
     }
 
     /// +1 when travel increases the coordinate, -1 when it decreases it.
-    pub(crate) fn sign(self) -> f64 {
+    fn sign(self) -> f64 {
         match self {
             Direction::Right | Direction::Down => 1.0,
             Direction::Left | Direction::Up => -1.0,
@@ -48,7 +49,7 @@ impl Direction {
     }
 
     /// Position along the direction of travel.
-    pub(crate) fn along(self, point: Point) -> f64 {
+    fn along(self, point: Point) -> f64 {
         if self.is_horizontal() { point.x } else { point.y }
     }
 
@@ -57,8 +58,20 @@ impl Direction {
         if self.is_horizontal() { point.y } else { point.x }
     }
 
+    /// How far `to` lies past `from` in the direction of travel; negative when behind.
+    pub(crate) fn ahead(self, from: Point, to: Point) -> f64 {
+        (self.along(to) - self.along(from)) * self.sign()
+    }
+
+    /// `point`'s position across the direction of travel, kept within `zone`'s span, which
+    /// is where a move out of `zone` starts across it.
+    pub(crate) fn anchor(self, point: Point, zone: Rect) -> f64 {
+        let (low, high) = self.cross_span(zone);
+        self.across(point).clamp(low, high)
+    }
+
     /// A rectangle's extent across the direction of travel.
-    pub(crate) fn cross_span(self, rect: Rect) -> (f64, f64) {
+    fn cross_span(self, rect: Rect) -> (f64, f64) {
         if self.is_horizontal() {
             (rect.min_y(), rect.max_y())
         } else {
@@ -106,8 +119,7 @@ pub fn destination<'a>(
     }?;
 
     let origin = frames[start];
-    let (low, high) = direction.cross_span(origin);
-    let anchor = direction.across(window.center()).clamp(low, high);
+    let anchor = direction.anchor(window.center(), origin);
     let others = frames
         .iter()
         .enumerate()
@@ -132,10 +144,7 @@ pub(crate) fn next_zone(
 ) -> Option<usize> {
     zones
         .into_iter()
-        .filter(|(_, frame)| {
-            (direction.along(frame.center()) - direction.along(origin.center())) * direction.sign()
-                > AHEAD_THRESHOLD
-        })
+        .filter(|(_, frame)| direction.ahead(origin.center(), frame.center()) > AHEAD_THRESHOLD)
         .map(|(index, frame)| (index, rank(direction, origin, frame, anchor, index)))
         .min_by(|a, b| a.1.cmp(&b.1))
         .map(|(index, _)| index)
@@ -221,7 +230,7 @@ fn rank(direction: Direction, origin: Rect, candidate: Rect, anchor: f64, index:
         travel: if misaligned {
             0.0
         } else {
-            (direction.along(candidate.center()) - direction.along(origin.center())).abs()
+            direction.ahead(origin.center(), candidate.center())
         },
         index,
     }

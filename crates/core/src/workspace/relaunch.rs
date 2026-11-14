@@ -1,8 +1,8 @@
 //! What a new daemon does with a window a previous run left parked: one restarted while apps
 //! kept running finds its parked windows still hidden and keeps them that way.
 
-use super::parking::{PARKED_TOLERANCE, ParkingPolicy, is_parked};
-use crate::geometry::{Point, Rect};
+use super::parking::{ParkingPolicy, is_parked, same_size, sits_at};
+use crate::geometry::{Point, Rect, Size};
 
 /// A window the journal lists as parked.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -10,9 +10,27 @@ pub struct Journaled<'a> {
     pub workspace: &'a str,
     /// The workspace is still in the settings.
     pub workspace_exists: bool,
+    /// The window's size, which parking never changes.
+    pub size: Size,
     pub parked: Point,
     /// Where it was parked before, while it was moving to a new parking spot.
     pub prior_parked: Option<Point>,
+}
+
+impl Journaled<'_> {
+    /// Whether a window at `frame` is at one of the spots this window was parked at.
+    pub fn at_parked_spot(&self, frame: Rect) -> bool {
+        [Some(self.parked), self.prior_parked]
+            .into_iter()
+            .flatten()
+            .any(|spot| sits_at(frame, spot))
+    }
+
+    /// Whether a window of the same process at `frame` can be this one when its token
+    /// changed: the same size, at one of its parked spots.
+    pub fn found_at(&self, frame: Rect) -> bool {
+        same_size(frame.size(), self.size) && self.at_parked_spot(frame)
+    }
 }
 
 /// The window found for a journal entry, as it is now.
@@ -51,10 +69,7 @@ pub fn relaunch(
         return Relaunch::StaysParked;
     }
     let at_parked_spot = if policy.moves_windows() {
-        [Some(journaled.parked), journaled.prior_parked]
-            .into_iter()
-            .flatten()
-            .any(|spot| near(found.frame, spot))
+        journaled.at_parked_spot(found.frame)
     } else {
         found.on_parking_desktop
     };
@@ -63,10 +78,6 @@ pub fn relaunch(
     } else {
         Relaunch::LeftAlone
     }
-}
-
-fn near(frame: Rect, origin: Point) -> bool {
-    (frame.x - origin.x).abs() < PARKED_TOLERANCE && (frame.y - origin.y).abs() < PARKED_TOLERANCE
 }
 
 #[cfg(test)]
@@ -85,6 +96,7 @@ mod tests {
         Journaled {
             workspace,
             workspace_exists: true,
+            size: HOME.size(),
             parked: parked_spot(),
             prior_parked: None,
         }
@@ -193,5 +205,22 @@ mod tests {
             Relaunch::LeftAlone,
             "brought back while Snappy was away"
         );
+    }
+
+    #[test]
+    fn a_window_whose_token_changed_is_found_only_at_its_size_and_a_parked_spot() {
+        let prior = Point::new(10.0, 20.0);
+        let entry = Journaled {
+            prior_parked: Some(prior),
+            ..journaled("two")
+        };
+        let spot = parked_spot();
+        assert!(entry.found_at(HOME.with_origin(Point::new(spot.x + 3.0, spot.y))));
+        assert!(
+            entry.found_at(HOME.with_origin(prior)),
+            "the spot it was moving from"
+        );
+        assert!(!entry.found_at(HOME.with_origin(Point::new(spot.x + 5.0, spot.y))));
+        assert!(!entry.found_at(Rect::from_origin_size(spot, Size::new(500.0, 600.0))));
     }
 }

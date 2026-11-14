@@ -1,27 +1,26 @@
-import { modifierLabel } from "../core/labels";
+import { type ReactNode, useState } from "react";
+
+import { modifierLabel, modifierName, snappyKeyLabel } from "../core/labels";
 import {
   DIRECTIONS,
   type DragModifier,
   type FocusShortcut,
   type HistoryStep,
   type KeyChord,
+  type Modifier,
+  type NavigationShortcut,
   type SwapModifier,
   type WhenTaken,
   type WorkspaceStep,
 } from "../core/model";
-import {
-  focusConflict,
-  historyConflict,
-  navigationConflict,
-  nearestEmptyConflict,
-  workspaceStepConflict,
-} from "../recorder/conflicts";
+import { core } from "../core/snappyCore";
+import { historyConflict, navigationConflict, workspaceStepConflict } from "../recorder/conflicts";
 import { ShortcutRecorder } from "../recorder/ShortcutRecorder";
 import { useAppState, useSend, useServices } from "../state/services";
 import { Button } from "../ui/Button";
 import { ChoiceMenu } from "../ui/ChoiceMenu";
 import { Group, Row } from "../ui/Group";
-import { ArrowIcon } from "../ui/icons";
+import { AlertIcon, ArrowIcon } from "../ui/icons";
 import { Toggle } from "../ui/Toggle";
 
 const DRAG_MODIFIERS: readonly DragModifier[] = ["shift", "alt", "ctrl"];
@@ -38,6 +37,7 @@ export function SettingsPage() {
       <div className="settings-column">
         <h1 className="page-title">Global settings</h1>
         <SnappingGroup />
+        <SnappyKeyGroup />
         <MoveBetweenZonesGroup />
         <FocusAndSelectionGroup />
         <WorkspaceStepsGroup />
@@ -107,102 +107,150 @@ function SnappingGroup() {
   );
 }
 
-const NEAREST_EMPTY_TITLE = "Move to the nearest empty zone";
+/** The modifiers the Snappy key may hold, in the order labels show them. */
+const SNAPPY_KEY_MODIFIERS: readonly Modifier[] = ["ctrl", "alt", "meta", "shift"];
+const DEFAULT_SNAPPY_KEY: readonly Modifier[] = ["ctrl", "alt", "meta"];
+
+function sameModifiers(a: readonly Modifier[], b: readonly Modifier[]): boolean {
+  return a.length === b.length && a.every((modifier) => b.includes(modifier));
+}
+
+/**
+ * The modifiers the Snappy key stands for. Every shortcut stored with it follows a change,
+ * which the daemon refuses, saying what clashed, unless every one of them still works.
+ */
+function SnappyKeyGroup() {
+  const { settings, platform } = useAppState();
+  const send = useSend();
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const snappyKey = settings.snappyKey;
+
+  const choose = async (modifiers: Modifier[]) => {
+    setRefusal(await send({ kind: "setSnappyKey", modifiers }));
+  };
+  const toggle = (modifier: Modifier) =>
+    choose(
+      snappyKey.includes(modifier)
+        ? snappyKey.filter((held) => held !== modifier)
+        : SNAPPY_KEY_MODIFIERS.filter((held) => held === modifier || snappyKey.includes(held)),
+    );
+
+  return (
+    <Group
+      title="Snappy key"
+      caption={`Shortcuts shown as Snappy hold the Snappy key, ${snappyKeyLabel(snappyKey, platform)}. Choose at least two modifiers.`}
+    >
+      <Row label={<span className="muted">Modifiers</span>}>
+        <div className="segmented" role="group" aria-label="Snappy key modifiers">
+          {SNAPPY_KEY_MODIFIERS.map((modifier) => (
+            <button
+              type="button"
+              key={modifier}
+              className="segment"
+              aria-pressed={snappyKey.includes(modifier)}
+              onClick={() => void toggle(modifier)}
+            >
+              {modifierName(modifier, platform)}
+            </button>
+          ))}
+        </div>
+      </Row>
+      {refusal !== null && (
+        <p className="notice notice-warning" role="alert">
+          <AlertIcon />
+          {refusal}
+        </p>
+      )}
+      <div className="button-row">
+        <Button
+          disabled={sameModifiers(snappyKey, DEFAULT_SNAPPY_KEY)}
+          onClick={() => void choose([...DEFAULT_SNAPPY_KEY])}
+        >
+          Reset to default
+        </Button>
+      </div>
+    </Group>
+  );
+}
+
+/** A row recording one shortcut of the navigation section, with `icon` before its title. */
+function NavigationRow({ shortcut, icon }: { shortcut: NavigationShortcut; icon?: ReactNode }) {
+  const { settings, platform } = useAppState();
+  const send = useSend();
+  const title = core.shortcutTitles().navigation[shortcut];
+  return (
+    <Row
+      label={
+        <span className={icon === undefined ? "muted" : "direction-label muted"}>
+          {icon}
+          {title}
+        </span>
+      }
+    >
+      <ShortcutRecorder
+        title={title}
+        chord={settings.navigation[shortcut]}
+        conflictOf={(chord: KeyChord) => navigationConflict(settings, shortcut, chord, platform)}
+        onChange={(chord) => void send({ kind: "setNavigationShortcut", shortcut, chord })}
+      />
+    </Row>
+  );
+}
 
 /** Move between zones: a recorder for each direction, and one for the nearest empty zone. */
 function MoveBetweenZonesGroup() {
-  const { settings, platform } = useAppState();
-  const send = useSend();
   return (
     <Group
       title="Move between zones"
       caption="Move the focused window to the next zone in that direction, or into the nearest empty zone."
     >
-      {DIRECTIONS.map((direction) => {
-        const title = `Move window ${direction}`;
-        return (
-          <Row
-            key={direction}
-            label={
-              <span className="direction-label muted">
-                <ArrowIcon direction={direction} />
-                {title}
-              </span>
-            }
-          >
-            <ShortcutRecorder
-              title={title}
-              chord={settings.navigation[direction]}
-              conflictOf={(chord: KeyChord) => navigationConflict(settings, direction, chord, platform)}
-              onChange={(chord) => void send({ kind: "setNavigationShortcut", direction, chord })}
-            />
-          </Row>
-        );
-      })}
-      <Row label={<span className="muted">{NEAREST_EMPTY_TITLE}</span>}>
-        <ShortcutRecorder
-          title={NEAREST_EMPTY_TITLE}
-          chord={settings.navigation.nearestEmpty}
-          conflictOf={(chord: KeyChord) => nearestEmptyConflict(settings, chord, platform)}
-          onChange={(chord) => void send({ kind: "setNearestEmptyShortcut", chord })}
-        />
-      </Row>
+      {DIRECTIONS.map((direction) => (
+        <NavigationRow key={direction} shortcut={direction} icon={<ArrowIcon direction={direction} />} />
+      ))}
+      <NavigationRow shortcut="nearestEmpty" />
     </Group>
   );
 }
 
-const FOCUS_SHORTCUTS: readonly { shortcut: FocusShortcut; title: string }[] = [
-  { shortcut: "focusUp", title: "Focus up" },
-  { shortcut: "focusLeft", title: "Focus left" },
-  { shortcut: "focusDown", title: "Focus down" },
-  { shortcut: "focusRight", title: "Focus right" },
-  { shortcut: "selectWindow", title: "Select window" },
-  { shortcut: "clearSelection", title: "Clear selection" },
+const FOCUS_SHORTCUTS: readonly FocusShortcut[] = [
+  "focusUp",
+  "focusLeft",
+  "focusDown",
+  "focusRight",
+  "selectWindow",
+  "clearSelection",
 ];
 
 /** Moving focus to the next window in a direction, and selecting windows. */
 function FocusAndSelectionGroup() {
-  const { settings, platform } = useAppState();
-  const send = useSend();
   return (
     <Group
       title="Focus and selection"
       caption="Move focus to the next window in a direction, from zone to zone when windows are in zones. Select windows to move them together: the nearest-empty-zone shortcut places them into empty zones, and switching or sending to a workspace takes them along."
     >
-      {FOCUS_SHORTCUTS.map(({ shortcut, title }) => (
-        <Row key={shortcut} label={<span className="muted">{title}</span>}>
-          <ShortcutRecorder
-            title={title}
-            chord={settings.navigation[shortcut]}
-            conflictOf={(chord: KeyChord) => focusConflict(settings, shortcut, chord, platform)}
-            onChange={(chord) => void send({ kind: "setFocusShortcut", shortcut, chord })}
-          />
-        </Row>
+      {FOCUS_SHORTCUTS.map((shortcut) => (
+        <NavigationRow key={shortcut} shortcut={shortcut} />
       ))}
     </Group>
   );
 }
 
-const WORKSPACE_STEPS: readonly { step: WorkspaceStep; title: string }[] = [
-  { step: "previous", title: "Previous workspace" },
-  { step: "next", title: "Next workspace" },
-  { step: "sendPrevious", title: "Send window to previous workspace" },
-  { step: "sendNext", title: "Send window to next workspace" },
-];
+const WORKSPACE_STEPS: readonly WorkspaceStep[] = ["previous", "next", "sendPrevious", "sendNext"];
 
 /** The shortcuts for every workspace: stepping, and sending windows away. */
 function WorkspaceStepsGroup() {
   const { settings, platform } = useAppState();
   const send = useSend();
+  const titles = core.shortcutTitles().workspaceSteps;
   return (
     <Group
       title="Workspaces"
       caption="Go to the previous or next workspace in list order, or send the focused window, or the selected windows, there and stay."
     >
-      {WORKSPACE_STEPS.map(({ step, title }) => (
-        <Row key={step} label={<span className="muted">{title}</span>}>
+      {WORKSPACE_STEPS.map((step) => (
+        <Row key={step} label={<span className="muted">{titles[step]}</span>}>
           <ShortcutRecorder
-            title={title}
+            title={titles[step]}
             chord={settings.workspaces[step]}
             conflictOf={(chord: KeyChord) => workspaceStepConflict(settings, step, chord, platform)}
             onChange={(chord) => void send({ kind: "setWorkspaceStepShortcut", step, chord })}
@@ -213,21 +261,19 @@ function WorkspaceStepsGroup() {
   );
 }
 
-const HISTORY_STEPS: readonly { step: HistoryStep; title: string }[] = [
-  { step: "undo", title: "Undo window move" },
-  { step: "redo", title: "Redo window move" },
-];
+const HISTORY_STEPS: readonly HistoryStep[] = ["undo", "redo"];
 
 /** Shortcuts to undo and redo window moves. Neither has a default. */
 function WindowHistoryGroup() {
   const { settings, platform } = useAppState();
   const send = useSend();
+  const titles = core.shortcutTitles().history;
   return (
     <Group title="Window history" caption="Undo or redo the last window move.">
-      {HISTORY_STEPS.map(({ step, title }) => (
-        <Row key={step} label={<span className="muted">{title}</span>}>
+      {HISTORY_STEPS.map((step) => (
+        <Row key={step} label={<span className="muted">{titles[step]}</span>}>
           <ShortcutRecorder
-            title={title}
+            title={titles[step]}
             chord={settings.history[step]}
             conflictOf={(chord: KeyChord) => historyConflict(settings, step, chord, platform)}
             onChange={(chord) => void send({ kind: "setHistoryShortcut", step, chord })}

@@ -3,10 +3,12 @@
 
 import initWasm, * as wasm from "../wasm/snappy_wasm";
 import type {
+  HistoryStep,
   KeyChord,
   Layout,
   LayoutOptions,
   Modifier,
+  NavigationShortcut,
   PlatformName,
   Point,
   Rect,
@@ -14,6 +16,8 @@ import type {
   Size,
   UnitRect,
   Workspace,
+  WorkspaceShortcut,
+  WorkspaceStep,
   Zone,
 } from "./model";
 
@@ -64,6 +68,31 @@ export interface ModifierNames {
 }
 
 export type Validation = { valid: Settings } | { invalid: string };
+
+/** Every shortcut's title, by section and by the field that holds it. */
+export interface ShortcutTitles {
+  navigation: Record<NavigationShortcut, string>;
+  workspaceSteps: Record<WorkspaceStep, string>;
+  history: Record<HistoryStep, string>;
+}
+
+/** The titles of a layout's selection shortcut and of each zone's, in the layout's order. */
+export interface LayoutShortcutTitles {
+  select: string;
+  zones: string[];
+}
+
+/** What a family of default shortcuts does, and its keys as one chord labelled with all of them. */
+export interface GuideEntry {
+  title: string;
+  chord: KeyChord;
+}
+
+/** A chord to ask the OS about before the Snappy key changes, and what to say if it is taken. */
+export interface AvailabilityProbe {
+  chord: KeyChord;
+  refusal: string;
+}
 
 /** Load the WebAssembly module. Call once before rendering. */
 export async function loadCore(): Promise<void> {
@@ -117,12 +146,36 @@ export const core = {
     call<ChordLabels>(wasm.chordLabels, { chord, platform }),
   isValidChord: (chord: KeyChord, platform: PlatformName) =>
     call<boolean>(wasm.isValidChord, { chord, platform }),
-  /** The stored form of a chord: holding every modifier of the Snappy key makes it the Snappy key. */
-  normalizeChord: (chord: KeyChord) => call<KeyChord>(wasm.normalizeChord, { chord }),
+  /**
+   * A chord pressed with its modifiers held, as recording stores it: holding every modifier of
+   * the Snappy key makes it the Snappy key plus the rest, and anything else stays as held.
+   */
+  recordChord: (chord: KeyChord, snappyKey: Modifier[]) =>
+    call<KeyChord>(wasm.recordChord, { chord, snappyKey }),
+  /** The chord with the Snappy key expanded to the modifiers it stands for. */
+  expandChord: (chord: KeyChord, snappyKey: Modifier[]) =>
+    call<KeyChord>(wasm.expandChord, { chord, snappyKey }),
   /** What the Snappy key is on the platform: "Control + Option + Command". */
-  snappyKeyLabel: (platform: PlatformName) => call<string>(wasm.snappyKeyLabel, { platform }),
+  snappyKeyLabel: (snappyKey: Modifier[], platform: PlatformName) =>
+    call<string>(wasm.snappyKeyLabel, { snappyKey, platform }),
+  /** The settings with a new Snappy key, or why it is refused. */
+  changeSnappyKey: (settings: Settings, modifiers: Modifier[], platform: PlatformName) =>
+    call<Validation>(wasm.changeSnappyKey, { settings, modifiers, platform }),
+  /** What to ask the OS about for settings whose Snappy key just changed. */
+  snappyKeyProbes: (settings: Settings, platform: PlatformName) =>
+    call<AvailabilityProbe[]>(wasm.snappyKeyProbes, { settings, platform }),
   modifierNames: (modifier: Modifier, platform: PlatformName) =>
     call<ModifierNames>(wasm.modifierNames, { modifier, platform }),
+  /** The title the app and conflict messages give each shortcut. */
+  shortcutTitles: () => call<ShortcutTitles>(wasm.shortcutTitles, {}),
+  /** The titles of a workspace's own shortcuts, naming it `workspace`. */
+  workspaceShortcutTitles: (workspace: string) =>
+    call<Record<WorkspaceShortcut, string>>(wasm.workspaceShortcutTitles, { workspace }),
+  /** The titles of a layout's own shortcuts, naming it `layout`, with one per zone. */
+  layoutShortcutTitles: (layout: string, zones: number) =>
+    call<LayoutShortcutTitles>(wasm.layoutShortcutTitles, { layout, zones }),
+  /** The default shortcuts as help lists them. */
+  defaultShortcuts: (platform: PlatformName) => call<GuideEntry[]>(wasm.defaultShortcuts, { platform }),
 
   presets: () => call<Layout[]>(wasm.presets, {}),
   isValidLayout: (layout: Layout) => call<boolean>(wasm.isValidLayout, { layout }),

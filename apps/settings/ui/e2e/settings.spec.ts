@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { lastCommandOf, openApp, sentCommands, showPage, toast } from "./support";
+import { lastCommandOf, openApp, sentCommands, showPage, takeShortcut, toast } from "./support";
 
 const group = (page: Page, title: string) => page.getByRole("region", { name: title, exact: true });
 
@@ -14,6 +14,7 @@ test("the groups appear in order, each with its line under the title", async ({ 
   const titles = await page.locator(".group-title").allTextContents();
   expect(titles).toEqual([
     "Snapping",
+    "Snappy key",
     "Move between zones",
     "Focus and selection",
     "Workspaces",
@@ -105,8 +106,9 @@ test("the nearest-empty-zone shortcut is recorded like the others", async ({ pag
   await expect(recorder).toHaveText("Press shortcut…");
   await page.keyboard.press("Control+Alt+Meta+KeyE");
   await expect(recorder).toHaveText("Snappy + E");
-  expect(await lastCommandOf(page, "setNearestEmptyShortcut")).toEqual({
-    kind: "setNearestEmptyShortcut",
+  expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
+    kind: "setNavigationShortcut",
+    shortcut: "nearestEmpty",
     chord: { code: "KeyE", mods: ["snappy"] },
   });
 
@@ -173,8 +175,8 @@ test("the select shortcut can be changed and refuses a chord in use", async ({ p
   await select.click();
   await page.keyboard.press("Control+Alt+Meta+KeyT");
   await expect(select).toHaveText("Snappy + T");
-  expect(await lastCommandOf(page, "setFocusShortcut")).toEqual({
-    kind: "setFocusShortcut",
+  expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
+    kind: "setNavigationShortcut",
     shortcut: "selectWindow",
     chord: { code: "KeyT", mods: ["snappy"] },
   });
@@ -201,7 +203,7 @@ test("clearing the selection refuses the Snappy key with Delete on macOS", async
   await page.keyboard.press("Escape");
   await expect(clear).toHaveText("Snappy + \\");
   expect(await lastCommandOf(page, "probeShortcut")).toBeUndefined();
-  expect(await lastCommandOf(page, "setFocusShortcut")).toBeUndefined();
+  expect(await lastCommandOf(page, "setNavigationShortcut")).toBeUndefined();
 });
 
 test("clearing the selection can use the Snappy key with Backspace on Windows", async ({ page }) => {
@@ -214,8 +216,8 @@ test("clearing the selection can use the Snappy key with Backspace on Windows", 
   await clear.click();
   await page.keyboard.press("Control+Alt+Meta+Backspace");
   await expect(clear).toHaveText("Snappy + ⌫");
-  expect(await lastCommandOf(page, "setFocusShortcut")).toEqual({
-    kind: "setFocusShortcut",
+  expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
+    kind: "setNavigationShortcut",
     shortcut: "clearSelection",
     chord: { code: "Backspace", mods: ["snappy"] },
   });
@@ -226,8 +228,8 @@ test("a focus shortcut can be cleared", async ({ page }) => {
   await right.click();
   await page.keyboard.press("Backspace");
   await expect(right).toHaveText("Record shortcut");
-  expect(await lastCommandOf(page, "setFocusShortcut")).toEqual({
-    kind: "setFocusShortcut",
+  expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
+    kind: "setNavigationShortcut",
     shortcut: "focusRight",
     chord: null,
   });
@@ -365,4 +367,151 @@ test("every button and switch has an accessible name", async ({ page }) => {
     );
     expect(unnamed, `unnamed controls on ${title}`).toBe(0);
   }
+});
+
+const snappyKeyToggles = (page: Page) =>
+  group(page, "Snappy key").getByRole("group", { name: "Snappy key modifiers" }).getByRole("button");
+
+test("the Snappy key shows its modifiers as toggles named for each platform", async ({ page }) => {
+  await expect(snappyKeyToggles(page)).toHaveText(["Control", "Option", "Command", "Shift"]);
+  const pressed = async () =>
+    snappyKeyToggles(page).evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute("aria-pressed")),
+    );
+  expect(await pressed()).toEqual(["true", "true", "true", "false"]);
+  await expect(group(page, "Snappy key").locator(".group-caption")).toHaveText(
+    "Shortcuts shown as Snappy hold the Snappy key, Control + Option + Command. Choose at least two modifiers.",
+  );
+  await expect(group(page, "Snappy key").getByRole("button", { name: "Reset to default" })).toBeDisabled();
+
+  for (const [platform, names] of [
+    ["windows", ["Ctrl", "Alt", "Win", "Shift"]],
+    ["linux", ["Ctrl", "Alt", "Super", "Shift"]],
+  ] as const) {
+    await openApp(page, platform);
+    await showPage(page, "Settings");
+    await expect(snappyKeyToggles(page)).toHaveText([...names]);
+  }
+});
+
+test("changing the Snappy key keeps shortcuts named Snappy and the labels follow it", async ({ page }) => {
+  await group(page, "Snappy key").getByRole("button", { name: "Command", exact: true }).click();
+  expect(await lastCommandOf(page, "setSnappyKey")).toEqual({
+    kind: "setSnappyKey",
+    modifiers: ["ctrl", "alt"],
+  });
+  await expect(toast(page)).toContainText("The Snappy key is now Control + Option.");
+  await expect(group(page, "Snappy key").locator(".group-caption")).toContainText(
+    "the Snappy key, Control + Option.",
+  );
+  await expect(
+    group(page, "Snappy key").getByRole("button", { name: "Command", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  const left = page.getByRole("button", { name: "Move window left", exact: true });
+  await expect(left).toHaveText("Snappy + ←");
+  await expect(left).toHaveAttribute(
+    "title",
+    "Click and press a combination with Control, Option, or Command; hold Control + Option for the Snappy key. Escape cancels; Delete clears.",
+  );
+
+  await left.click();
+  await page.keyboard.press("Control+Alt+KeyM");
+  await expect(left).toHaveText("Snappy + M");
+  expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
+    kind: "setNavigationShortcut",
+    shortcut: "left",
+    chord: { code: "KeyM", mods: ["snappy"] },
+  });
+
+  await page.getByRole("button", { name: "Shortcuts and help" }).click();
+  const help = page.getByRole("dialog", { name: "Shortcuts and help" });
+  await expect(help).toContainText("Snappy keyControl + Option");
+  await expect(help).toContainText("Move to the neighboring zoneSnappy + ← → ↑ ↓");
+  await page.keyboard.press("Escape");
+
+  await group(page, "Snappy key").getByRole("button", { name: "Shift", exact: true }).click();
+  expect(await lastCommandOf(page, "setSnappyKey")).toEqual({
+    kind: "setSnappyKey",
+    modifiers: ["ctrl", "alt", "shift"],
+  });
+  await expect(group(page, "Snappy key").locator(".group-caption")).toContainText(
+    "the Snappy key, Control + Option + Shift.",
+  );
+});
+
+test("reset to default brings back Control, Option, and Command", async ({ page }) => {
+  const reset = group(page, "Snappy key").getByRole("button", { name: "Reset to default" });
+  await group(page, "Snappy key").getByRole("button", { name: "Control", exact: true }).click();
+  await expect(reset).toBeEnabled();
+  await reset.click();
+  expect(await lastCommandOf(page, "setSnappyKey")).toEqual({
+    kind: "setSnappyKey",
+    modifiers: ["ctrl", "alt", "meta"],
+  });
+  await expect(group(page, "Snappy key").locator(".group-caption")).toContainText(
+    "the Snappy key, Control + Option + Command.",
+  );
+  await expect(reset).toBeDisabled();
+});
+
+test("a Snappy key change that clashes shows why and changes nothing", async ({ page }) => {
+  const snappyKey = group(page, "Snappy key");
+  await snappyKey.getByRole("button", { name: "Command", exact: true }).click();
+  await snappyKey.getByRole("button", { name: "Option", exact: true }).click();
+  await expect(snappyKey.getByRole("alert")).toHaveText("The Snappy key needs at least two modifiers.");
+  await expect(snappyKey.getByRole("button", { name: "Option", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await snappyKey.getByRole("button", { name: "Reset to default" }).click();
+  await expect(snappyKey.getByRole("alert")).toHaveCount(0);
+  await takeShortcut(page, { code: "Space", mods: ["ctrl", "alt"] });
+  await snappyKey.getByRole("button", { name: "Command", exact: true }).click();
+  const refusal =
+    "Snappy + Space for Move to the nearest empty zone would be Control + Option + Space, which macOS or another app already uses.";
+  await expect(snappyKey.getByRole("alert")).toHaveText(refusal);
+  await expect(toast(page)).toContainText(refusal);
+  await expect(snappyKey.getByRole("button", { name: "Command", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  const undo = group(page, "Window history").getByRole("button", { name: "Undo window move", exact: true });
+  await undo.click();
+  await page.keyboard.press("Control+Alt+KeyJ");
+  await expect(undo).toHaveText("Ctrl + Opt + J");
+  await snappyKey.getByRole("button", { name: "Command", exact: true }).click();
+  await expect(snappyKey.getByRole("alert")).toHaveText(
+    "Snappy + J for Focus left would collide with Undo window move.",
+  );
+  await expect(undo).toHaveText("Ctrl + Opt + J");
+});
+
+test("a shortcut recorded without the Snappy key keeps its keys when the key comes to match them", async ({
+  page,
+}) => {
+  const snappyKey = group(page, "Snappy key");
+  const undo = group(page, "Window history").getByRole("button", { name: "Undo window move", exact: true });
+  await undo.click();
+  await page.keyboard.press("Control+Alt+Shift+KeyU");
+  await expect(undo).toHaveText("Ctrl + Opt + Shift + U");
+  expect(await lastCommandOf(page, "setHistoryShortcut")).toEqual({
+    kind: "setHistoryShortcut",
+    step: "undo",
+    chord: { code: "KeyU", mods: ["shift", "ctrl", "alt"] },
+  });
+
+  await snappyKey.getByRole("button", { name: "Command", exact: true }).click();
+  await snappyKey.getByRole("button", { name: "Shift", exact: true }).click();
+  await expect(snappyKey.locator(".group-caption")).toContainText(
+    "the Snappy key, Control + Option + Shift.",
+  );
+  await expect(undo).toHaveText("Ctrl + Opt + Shift + U");
+
+  await undo.click();
+  await page.keyboard.press("Control+Alt+Shift+KeyU");
+  await expect(undo).toHaveText("Snappy + U");
+  await snappyKey.getByRole("button", { name: "Reset to default" }).click();
+  await expect(undo).toHaveText("Snappy + U");
 });

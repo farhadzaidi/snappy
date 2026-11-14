@@ -30,7 +30,7 @@ mod platform;
 mod registry;
 mod signals;
 mod system_shortcuts;
-mod tabs;
+mod tab_matching;
 mod thresholds;
 mod tray;
 mod windows;

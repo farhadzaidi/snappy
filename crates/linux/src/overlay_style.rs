@@ -67,23 +67,24 @@ pub fn zone_style(zone: &OverlayZone) -> ZoneStyle {
 }
 
 /// A selected window's outline: the swap source's border, drawn inside the window's frame.
-pub const MARK_BORDER: Paint = Paint {
+pub const SELECTED_BORDER: Paint = Paint {
     color: MINT,
     alpha: 1.0,
 };
 /// The brief outline of a window a focus shortcut just focused, in a color of its own so
 /// it never reads as selected.
-pub const FOCUS_BORDER: Paint = Paint {
+pub const FOCUSED_BORDER: Paint = Paint {
     color: ORANGE,
     alpha: 1.0,
 };
 
 pub fn mark_border(style: MarkStyle) -> Paint {
     match style {
-        MarkStyle::Selected => MARK_BORDER,
-        MarkStyle::Focused => FOCUS_BORDER,
+        MarkStyle::Selected => SELECTED_BORDER,
+        MarkStyle::Focused => FOCUSED_BORDER,
     }
 }
+
 pub const MARK_BORDER_WIDTH: f64 = 3.0;
 /// Close to the corners of the desktops' own windows.
 pub const MARK_CORNER_RADIUS: f64 = 10.0;

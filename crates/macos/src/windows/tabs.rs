@@ -1,4 +1,4 @@
-//! Native tab groups, read through Accessibility. `crate::tabs` says how macOS shows them
+//! Native tab groups, read through Accessibility. `crate::tab_matching` says how macOS shows them
 //! and how hidden tabs are matched to their group.
 
 use std::collections::{BTreeSet, HashMap};
@@ -11,7 +11,7 @@ use super::{Windows, window_facts};
 use crate::apps;
 use crate::ax::{self, AxElement, names};
 use crate::registry;
-use crate::tabs::{MaybeTab, ShownTab};
+use crate::tab_matching::{MaybeTab, ShownTab};
 use crate::thresholds::AX_ENUMERATION_TIMEOUT;
 
 impl Windows {
@@ -68,7 +68,7 @@ impl Windows {
 
         let mut shown = Vec::new();
         let mut alone = Vec::new();
-        let mut leads: HashMap<WindowId, (AxElement, Rect)> = HashMap::new();
+        let mut shown_elements: HashMap<WindowId, (AxElement, Rect)> = HashMap::new();
         for (element, minimized) in listed.iter().zip(minimized) {
             let Ok(frame) = element.frame() else { continue };
             let id = self.identify(element, pid);
@@ -80,7 +80,7 @@ impl Windows {
                         tabs,
                         minimized,
                     });
-                    leads.insert(id, (element.clone(), frame));
+                    shown_elements.insert(id, (element.clone(), frame));
                 }
                 _ if minimized => maybe.push(MaybeTab { id, frame, minimized }),
                 _ => alone.push(id),
@@ -91,8 +91,8 @@ impl Windows {
             .groups(&shown, &maybe, &alone)
             .into_iter()
             .filter(|(_, hidden)| !hidden.is_empty())
-            .filter_map(|(lead, hidden)| {
-                let (element, frame) = leads.get(&lead)?;
+            .filter_map(|(shown, hidden)| {
+                let (element, frame) = shown_elements.get(&shown)?;
                 window_facts(element).check().ok()?;
                 Some(TabGroup {
                     shown: self.describe(element, *frame, &facts),

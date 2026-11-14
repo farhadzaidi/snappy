@@ -20,7 +20,7 @@ use crate::messages::{NOT_RESPONDING, WINDOW_GONE, unavailable};
 use crate::observers;
 use crate::permissions;
 use crate::registry::{self, Entry, Shared};
-use crate::tabs::TabMemory;
+use crate::tab_matching::TabMemory;
 use crate::thresholds::AX_MESSAGING_TIMEOUT;
 
 use chrome::ChromeWorkaround;

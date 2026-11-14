@@ -17,6 +17,17 @@ pub enum Platform {
     Linux,
 }
 
+impl Platform {
+    /// The system's name, as messages show it.
+    pub fn system_name(self) -> &'static str {
+        match self {
+            Platform::MacOs => "macOS",
+            Platform::Windows => "Windows",
+            Platform::Linux => "Linux",
+        }
+    }
+}
+
 /// A modifier key as the operating system reports and registers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,7 +43,7 @@ impl Modifier {
     /// The order modifiers are shown in labels.
     const DISPLAY_ORDER: [Modifier; 4] = [Modifier::Ctrl, Modifier::Alt, Modifier::Shift, Modifier::Meta];
 
-    fn bit(self) -> u8 {
+    const fn bit(self) -> u8 {
         match self {
             Modifier::Shift => 1,
             Modifier::Ctrl => 2,
@@ -80,27 +91,6 @@ impl Modifier {
     }
 }
 
-/// What the Snappy key is: the concrete modifiers it stands for, Control+Option+Command on
-/// macOS, Ctrl+Alt+Win on Windows, and Ctrl+Alt+Super on Linux. This is its only
-/// definition. Shortcuts store the Snappy key as a symbol and are expanded through this
-/// function wherever they meet the OS or each other, so changing it changes every shortcut
-/// that uses it without touching settings files.
-pub fn snappy_key_modifiers() -> Mods {
-    Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta])
-}
-
-/// The Snappy key's name in labels and messages.
-pub const SNAPPY_KEY_NAME: &str = "Snappy";
-
-/// What the Snappy key is on `platform`, for example "Control + Option + Command".
-pub fn snappy_key_label(platform: Platform) -> String {
-    snappy_key_modifiers()
-        .in_display_order()
-        .map(|modifier| modifier.name(platform))
-        .collect::<Vec<_>>()
-        .join(" + ")
-}
-
 /// A set of concrete modifiers, as the OS reports and registers them. Serialized as a list
 /// in a fixed order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
@@ -119,6 +109,11 @@ impl Mods {
 
     pub fn is_empty(self) -> bool {
         self.0 == 0
+    }
+
+    /// How many modifiers the set holds.
+    pub fn count(self) -> u32 {
+        self.0.count_ones()
     }
 
     /// True when every modifier in `other` is in this set too.
@@ -146,7 +141,8 @@ impl Mods {
             .filter(move |modifier| self.contains(*modifier))
     }
 
-    fn in_display_order(self) -> impl Iterator<Item = Modifier> {
+    /// The modifiers in the order labels show them.
+    pub fn in_display_order(self) -> impl Iterator<Item = Modifier> {
         Modifier::DISPLAY_ORDER
             .into_iter()
             .filter(move |modifier| self.contains(*modifier))
@@ -168,6 +164,75 @@ impl Serialize for Mods {
 impl<'de> Deserialize<'de> for Mods {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Ok(Vec::<Modifier>::deserialize(deserializer)?.into_iter().collect())
+    }
+}
+
+/// The Snappy key's name in labels and messages.
+pub const SNAPPY_KEY_NAME: &str = "Snappy";
+
+/// What the Snappy key stands for: the concrete modifiers held for it, at least two of
+/// Control, Option/Alt, Command/Win/Super, and Shift. The user chooses them; the default,
+/// the same on every platform, is Control+Option+Command (Ctrl+Alt+Win, Ctrl+Alt+Super).
+/// Shortcuts store the Snappy key as a symbol and are expanded through the settings' key
+/// wherever they meet the OS or each other, so changing it moves every shortcut that uses
+/// it without rewriting them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "Mods", into = "Mods")]
+pub struct SnappyKey(Mods);
+
+/// Why a set of modifiers can't be the Snappy key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SnappyKeyError {
+    #[error("The Snappy key needs at least two modifiers.")]
+    TooFewModifiers,
+}
+
+impl SnappyKey {
+    pub const DEFAULT: SnappyKey = SnappyKey(Mods(
+        Modifier::Ctrl.bit() | Modifier::Alt.bit() | Modifier::Meta.bit(),
+    ));
+    /// Fewer would make Snappy shortcuts everyday app shortcuts, such as Ctrl+C.
+    pub const MIN_MODIFIERS: u32 = 2;
+
+    pub fn new(modifiers: Mods) -> Result<SnappyKey, SnappyKeyError> {
+        if modifiers.count() < Self::MIN_MODIFIERS {
+            return Err(SnappyKeyError::TooFewModifiers);
+        }
+        Ok(SnappyKey(modifiers))
+    }
+
+    /// The concrete modifiers held for the Snappy key.
+    pub fn modifiers(self) -> Mods {
+        self.0
+    }
+
+    /// What the Snappy key is on `platform`, for example "Control + Option + Command".
+    pub fn label(self, platform: Platform) -> String {
+        self.0
+            .in_display_order()
+            .map(|modifier| modifier.name(platform))
+            .collect::<Vec<_>>()
+            .join(" + ")
+    }
+}
+
+impl Default for SnappyKey {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl TryFrom<Mods> for SnappyKey {
+    type Error = SnappyKeyError;
+
+    fn try_from(modifiers: Mods) -> Result<Self, Self::Error> {
+        SnappyKey::new(modifiers)
+    }
+}
+
+impl From<SnappyKey> for Mods {
+    fn from(key: SnappyKey) -> Self {
+        key.0
     }
 }
 
@@ -194,9 +259,14 @@ impl From<Modifier> for StoredModifier {
 }
 
 /// A shortcut's modifiers: the Snappy key or not, plus the concrete modifiers held with
-/// it. Always normalized: a set holding every modifier the Snappy key stands for is the
-/// Snappy key plus the rest, so `["ctrl","alt","meta"]` and `["snappy"]` are one shortcut.
-/// Serialized as a list such as `["snappy","shift"]`.
+/// it. Serialized as a list such as `["snappy","shift"]` or `["ctrl","alt","meta"]`.
+///
+/// Recording decides which, once (`recorded`): holding every modifier of the Snappy key
+/// records the key plus whatever else is held, and anything else records exactly the
+/// modifiers held. Nothing changes the form afterwards. A Snappy key chord follows the
+/// key wherever it goes, keeping the modifiers recorded with it; a concrete chord keeps
+/// its modifiers whatever the key becomes, even ones the key comes to match, where the
+/// two are told apart only by the conflict between them (their combos).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ChordMods {
     snappy: bool,
@@ -204,25 +274,29 @@ pub struct ChordMods {
 }
 
 impl ChordMods {
-    /// The normalized form of a set of concrete modifiers.
-    pub fn from_concrete(mods: Mods) -> Self {
-        let snappy = snappy_key_modifiers();
-        if !snappy.is_empty() && mods.includes(snappy) {
+    /// What recording a chord with `held` down stores while the Snappy key stands for
+    /// `key`'s modifiers: the Snappy key plus the rest when every one of them is held.
+    pub fn recorded(held: Mods, key: SnappyKey) -> Self {
+        let snappy = key.modifiers();
+        if held.includes(snappy) {
             Self {
                 snappy: true,
-                others: mods.without(snappy),
+                others: held.without(snappy),
             }
         } else {
             Self {
                 snappy: false,
-                others: mods,
+                others: held,
             }
         }
     }
 
-    /// The Snappy key plus `others`.
+    /// The Snappy key plus `others`, whatever the key stands for.
     pub fn snappy_with(others: impl IntoIterator<Item = Modifier>) -> Self {
-        Self::from_concrete(snappy_key_modifiers().union(others.into_iter().collect()))
+        Self {
+            snappy: true,
+            others: others.into_iter().collect(),
+        }
     }
 
     pub fn has_snappy_key(self) -> bool {
@@ -235,16 +309,19 @@ impl ChordMods {
     }
 
     /// The concrete modifiers to hold: the Snappy key's, plus the others.
-    pub fn expanded(self) -> Mods {
+    pub fn expanded(self, key: SnappyKey) -> Mods {
         if self.snappy {
-            snappy_key_modifiers().union(self.others)
+            key.modifiers().union(self.others)
         } else {
             self.others
         }
     }
 
-    pub fn with(self, modifier: Modifier) -> ChordMods {
-        Self::from_concrete(self.expanded().with(modifier))
+    fn with_other(self, modifier: Modifier) -> Self {
+        Self {
+            others: self.others.with(modifier),
+            ..self
+        }
     }
 
     fn stored(self) -> impl Iterator<Item = StoredModifier> {
@@ -263,31 +340,25 @@ impl ChordMods {
     }
 }
 
-impl FromIterator<Modifier> for ChordMods {
-    fn from_iter<I: IntoIterator<Item = Modifier>>(iter: I) -> Self {
-        Self::from_concrete(iter.into_iter().collect())
-    }
-}
-
 impl Serialize for ChordMods {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_seq(self.stored())
     }
 }
 
+/// Read as written: only recording decides whether a chord holds the Snappy key.
 impl<'de> Deserialize<'de> for ChordMods {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let stored = Vec::<StoredModifier>::deserialize(deserializer)?;
-        let mods = stored
+        Ok(stored
             .into_iter()
-            .fold(Mods::NONE, |mods, modifier| match modifier {
-                StoredModifier::Snappy => mods.union(snappy_key_modifiers()),
-                StoredModifier::Shift => mods.with(Modifier::Shift),
-                StoredModifier::Ctrl => mods.with(Modifier::Ctrl),
-                StoredModifier::Alt => mods.with(Modifier::Alt),
-                StoredModifier::Meta => mods.with(Modifier::Meta),
-            });
-        Ok(Self::from_concrete(mods))
+            .fold(ChordMods::default(), |mods, modifier| match modifier {
+                StoredModifier::Snappy => ChordMods { snappy: true, ..mods },
+                StoredModifier::Shift => mods.with_other(Modifier::Shift),
+                StoredModifier::Ctrl => mods.with_other(Modifier::Ctrl),
+                StoredModifier::Alt => mods.with_other(Modifier::Alt),
+                StoredModifier::Meta => mods.with_other(Modifier::Meta),
+            }))
     }
 }
 
@@ -490,13 +561,29 @@ impl Combo {
     }
 }
 
+/// The chord that holds exactly the combo's modifiers, none of them as the Snappy key.
+impl From<Combo> for KeyChord {
+    fn from(combo: Combo) -> Self {
+        Self {
+            code: combo.code,
+            mods: ChordMods {
+                snappy: false,
+                others: combo.mods,
+            },
+            label: None,
+        }
+    }
+}
+
 impl KeyChord {
-    /// A chord of concrete modifiers, normalized so that holding all of the Snappy key's
-    /// modifiers makes it a Snappy key chord.
+    /// A chord of concrete modifiers, as given, which stays so whatever the Snappy key.
     pub fn new(code: &str, mods: impl IntoIterator<Item = Modifier>) -> Self {
         Self {
             code: KeyCode::new(code),
-            mods: mods.into_iter().collect(),
+            mods: ChordMods {
+                snappy: false,
+                others: mods.into_iter().collect(),
+            },
             label: None,
         }
     }
@@ -515,24 +602,34 @@ impl KeyChord {
         self
     }
 
-    /// The key with the Snappy key expanded to its concrete modifiers.
-    pub fn combo(&self) -> Combo {
+    /// This key pressed with this chord's modifiers held, as recording it with `key` as the
+    /// Snappy key stores it (`ChordMods::recorded`).
+    pub fn recorded(mut self, key: SnappyKey) -> Self {
+        self.mods = ChordMods::recorded(self.mods.expanded(key), key);
+        self
+    }
+
+    /// The key with the Snappy key expanded to the modifiers `key` stands for.
+    pub fn combo(&self, key: SnappyKey) -> Combo {
         Combo {
             code: self.code.clone(),
-            mods: self.mods.expanded(),
+            mods: self.mods.expanded(key),
         }
     }
 
+    /// Every Snappy key holds a command modifier: it has at least two modifiers, and only
+    /// one of them can be Shift.
     pub fn is_valid(&self) -> bool {
         self.code.is_known()
-            && self.mods.expanded().has_command_modifier()
+            && (self.mods.has_snappy_key() || self.mods.others().has_command_modifier())
             && self
                 .label
                 .as_ref()
                 .is_none_or(|label| !label.is_empty() && label.chars().count() <= MAX_LABEL_LENGTH)
     }
 
-    fn key_label(&self) -> String {
+    /// The key's own label, without modifiers.
+    pub fn key_label(&self) -> String {
         self.label.clone().unwrap_or_else(|| self.code.default_label())
     }
 
@@ -606,6 +703,12 @@ mod tests {
 
     const HYPER: [Modifier; 3] = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta];
 
+    const DEFAULT: SnappyKey = SnappyKey::DEFAULT;
+
+    fn key(modifiers: &[Modifier]) -> SnappyKey {
+        SnappyKey::new(modifiers.iter().copied().collect()).unwrap()
+    }
+
     #[test]
     fn labels_name_the_snappy_key_then_modifiers_in_display_order() {
         let chord = KeyChord::snappy("Digit1", []);
@@ -623,59 +726,150 @@ mod tests {
                 .compact_label(Platform::MacOs),
             "Cmd + A"
         );
-        assert_eq!(snappy_key_label(Platform::MacOs), "Control + Option + Command");
-        assert_eq!(snappy_key_label(Platform::Linux), "Ctrl + Alt + Super");
+        assert_eq!(DEFAULT.label(Platform::MacOs), "Control + Option + Command");
+        assert_eq!(DEFAULT.label(Platform::Windows), "Ctrl + Alt + Win");
+        assert_eq!(DEFAULT.label(Platform::Linux), "Ctrl + Alt + Super");
     }
 
     #[test]
-    fn holding_every_snappy_key_modifier_is_the_snappy_key() {
+    fn a_chosen_snappy_key_is_labelled_by_its_own_modifiers_and_chords_still_say_snappy() {
+        let chosen = key(&[Modifier::Shift, Modifier::Alt]);
+        assert_eq!(chosen.label(Platform::MacOs), "Option + Shift");
+        assert_eq!(chosen.label(Platform::Windows), "Alt + Shift");
+        let chord = KeyChord::new("KeyJ", [Modifier::Alt, Modifier::Shift]).recorded(chosen);
+        assert_eq!(chord.long_label(Platform::MacOs), "Snappy + J");
+    }
+
+    #[test]
+    fn the_snappy_key_needs_at_least_two_modifiers() {
+        assert_eq!(
+            SnappyKey::new(Mods::from_iter([Modifier::Ctrl])),
+            Err(SnappyKeyError::TooFewModifiers)
+        );
+        assert_eq!(SnappyKey::new(Mods::NONE), Err(SnappyKeyError::TooFewModifiers));
+        assert!(SnappyKey::new(Mods::from_iter([Modifier::Ctrl, Modifier::Shift])).is_ok());
+        assert_eq!(
+            DEFAULT.modifiers(),
+            Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta])
+        );
+        assert_eq!(
+            serde_json::to_string(&DEFAULT).unwrap(),
+            r#"["ctrl","alt","meta"]"#
+        );
+        assert_eq!(
+            serde_json::from_str::<SnappyKey>(r#"["shift","alt"]"#).unwrap(),
+            key(&[Modifier::Alt, Modifier::Shift])
+        );
+        assert!(serde_json::from_str::<SnappyKey>(r#"["meta"]"#).is_err());
+    }
+
+    #[test]
+    fn recording_every_snappy_key_modifier_records_the_snappy_key() {
         let recorded = KeyChord::new(
             "Digit1",
             [Modifier::Shift, Modifier::Ctrl, Modifier::Alt, Modifier::Meta],
-        );
+        )
+        .recorded(DEFAULT);
         assert!(recorded.mods.has_snappy_key());
         assert_eq!(recorded.mods.others(), Mods::from_iter([Modifier::Shift]));
         assert_eq!(recorded, KeyChord::snappy("Digit1", [Modifier::Shift]));
 
-        let partial = KeyChord::new("Digit1", [Modifier::Ctrl, Modifier::Alt]);
+        let partial = KeyChord::new("Digit1", [Modifier::Ctrl, Modifier::Alt]).recorded(DEFAULT);
         assert!(!partial.mods.has_snappy_key());
-        assert_eq!(partial.mods.with(Modifier::Meta), ChordMods::snappy_with([]));
     }
 
     #[test]
-    fn the_snappy_key_expands_to_its_modifiers_wherever_chords_are_compared() {
-        let symbolic = KeyChord::snappy("Digit1", []);
-        assert_eq!(symbolic.combo(), Combo::new("Digit1", HYPER));
+    fn recording_follows_the_chosen_snappy_key() {
+        let control_option = key(&[Modifier::Ctrl, Modifier::Alt]);
+        let held = KeyChord::new("KeyJ", [Modifier::Ctrl, Modifier::Alt, Modifier::Shift]);
         assert_eq!(
-            KeyChord::snappy("Digit1", [Modifier::Ctrl]).combo(),
-            Combo::new("Digit1", HYPER),
-            "a modifier the Snappy key already holds adds nothing"
+            held.clone().recorded(control_option),
+            KeyChord::snappy("KeyJ", [Modifier::Shift])
+        );
+        assert_eq!(
+            held.clone().recorded(DEFAULT),
+            held,
+            "the default key also needs Command"
         );
     }
 
     #[test]
-    fn chord_modifiers_store_the_snappy_key_as_a_symbol() {
+    fn a_snappy_key_chord_keeps_the_modifiers_recorded_with_it_whatever_the_key() {
+        let snappy_shift = KeyChord::snappy("KeyJ", [Modifier::Shift]);
+        let control_shift = key(&[Modifier::Ctrl, Modifier::Shift]);
+        assert_eq!(
+            snappy_shift.combo(control_shift),
+            Combo::new("KeyJ", [Modifier::Ctrl, Modifier::Shift]),
+            "a modifier the key holds adds nothing to the keys pressed"
+        );
+        assert_eq!(snappy_shift.long_label(Platform::MacOs), "Snappy + Shift + J");
+        assert_eq!(
+            snappy_shift.combo(DEFAULT),
+            Combo::new(
+                "KeyJ",
+                [Modifier::Shift, Modifier::Ctrl, Modifier::Alt, Modifier::Meta]
+            ),
+            "back on the default key, Shift is held again"
+        );
+    }
+
+    #[test]
+    fn the_snappy_key_expands_to_the_chosen_modifiers_wherever_chords_are_compared() {
+        let symbolic = KeyChord::snappy("Digit1", []);
+        assert_eq!(symbolic.combo(DEFAULT), Combo::new("Digit1", HYPER));
+        assert_eq!(
+            KeyChord::snappy("Digit1", [Modifier::Ctrl]).combo(DEFAULT),
+            Combo::new("Digit1", HYPER),
+            "a modifier the Snappy key already holds adds nothing"
+        );
+        let chosen = key(&[Modifier::Alt, Modifier::Meta]);
+        assert_eq!(
+            symbolic.combo(chosen),
+            Combo::new("Digit1", [Modifier::Alt, Modifier::Meta])
+        );
+        assert_eq!(
+            KeyChord::new("Digit1", [Modifier::Ctrl]).combo(chosen),
+            Combo::new("Digit1", [Modifier::Ctrl]),
+            "a concrete chord is the same whatever the key"
+        );
+    }
+
+    #[test]
+    fn chord_modifiers_are_read_and_written_as_stored() {
         let json = serde_json::to_string(&KeyChord::snappy("Digit1", [Modifier::Shift])).unwrap();
         assert_eq!(json, r#"{"code":"Digit1","mods":["snappy","shift"]}"#);
-        let concrete: KeyChord =
-            serde_json::from_str(r#"{"code":"Digit1","mods":["ctrl","alt","meta"]}"#).unwrap();
-        assert_eq!(concrete, KeyChord::snappy("Digit1", []));
-        assert_eq!(serde_json::to_string(&concrete.mods).unwrap(), r#"["snappy"]"#);
+        let written = r#"{"code":"Digit1","mods":["ctrl","alt","meta"]}"#;
+        let concrete: KeyChord = serde_json::from_str(written).unwrap();
+        assert!(
+            !concrete.mods.has_snappy_key(),
+            "the default key's modifiers by hand stay so"
+        );
+        assert_eq!(
+            concrete.combo(DEFAULT),
+            KeyChord::snappy("Digit1", []).combo(DEFAULT)
+        );
+        assert_eq!(serde_json::to_string(&concrete).unwrap(), written);
         let doubled: ChordMods = serde_json::from_str(r#"["ctrl","snappy"]"#).unwrap();
-        assert_eq!(doubled, ChordMods::snappy_with([]));
+        assert_eq!(doubled, ChordMods::snappy_with([Modifier::Ctrl]));
+        assert_eq!(serde_json::to_string(&doubled).unwrap(), r#"["snappy","ctrl"]"#);
         assert!(serde_json::from_str::<ChordMods>(r#"["hyper"]"#).is_err());
     }
 
     proptest::proptest! {
         #[test]
-        fn normalizing_keeps_the_held_modifiers_and_survives_a_save(bits in 0u8..16) {
-            let held: Mods = Modifier::ALL
-                .into_iter()
-                .filter(|modifier| bits & modifier.bit() != 0)
-                .collect();
-            let mods = ChordMods::from_concrete(held);
-            proptest::prop_assert_eq!(mods.expanded(), held);
-            proptest::prop_assert_eq!(mods.has_snappy_key(), held.includes(snappy_key_modifiers()));
+        fn recording_keeps_the_held_modifiers_and_survives_a_save(bits in 0u8..16, key_bits in 0u8..16) {
+            let of = |bits: u8| -> Mods {
+                Modifier::ALL
+                    .into_iter()
+                    .filter(|modifier| bits & modifier.bit() != 0)
+                    .collect()
+            };
+            let held = of(bits);
+            let key = SnappyKey::new(of(key_bits)).unwrap_or(DEFAULT);
+            let mods = ChordMods::recorded(held, key);
+            proptest::prop_assert_eq!(mods.expanded(key), held);
+            proptest::prop_assert_eq!(mods.has_snappy_key(), held.includes(key.modifiers()));
+            proptest::prop_assert_eq!(ChordMods::recorded(mods.expanded(key), key), mods);
             let saved = serde_json::to_string(&mods).unwrap();
             proptest::prop_assert_eq!(serde_json::from_str::<ChordMods>(&saved).unwrap(), mods);
         }
@@ -692,7 +886,7 @@ mod tests {
     fn labels_never_affect_identity() {
         let a = KeyChord::new("Digit1", HYPER).with_label("&");
         let b = KeyChord::new("Digit1", HYPER);
-        assert_eq!(a.combo(), b.combo());
+        assert_eq!(a.combo(DEFAULT), b.combo(DEFAULT));
     }
 
     #[test]

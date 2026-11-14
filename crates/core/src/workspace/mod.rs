@@ -8,6 +8,6 @@ mod session;
 mod tests;
 
 pub use focus::{FOCUS_GATE_SECONDS, FocusPolicy};
-pub use parking::{PARKED_TOLERANCE, ParkingPolicy, is_parked, parking_origin, reachable};
+pub use parking::{ParkingPolicy, is_parked, parking_origin, reachable, sits_at};
 pub use relaunch::{Found, Journaled, Relaunch, relaunch};
 pub use session::{JournalEntry, Member, Session, Tabs, WorkspaceIo};

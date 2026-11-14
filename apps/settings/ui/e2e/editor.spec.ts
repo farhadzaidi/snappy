@@ -216,7 +216,7 @@ test("the editor shares the display choice and changing it is not an edit", asyn
 test("the shortcuts tab records zone shortcuts and selects zones", async ({ page }) => {
   await drawLeftHalf(page);
   await page.getByRole("tab", { name: "Shortcuts" }).click();
-  const recorder = page.getByRole("button", { name: "Zone 1 shortcut", exact: true });
+  const recorder = page.getByRole("button", { name: "Zone 1 of this layout", exact: true });
   await expect(recorder).toHaveText("Record shortcut");
   await recorder.click();
   await page.keyboard.press("Control+Alt+Meta+KeyM");
@@ -240,7 +240,7 @@ test("a conflict shows in the sidebar and blocks saving", async ({ page }) => {
             ...state.settings.layouts.options,
             c: {
               enabled: false,
-              selectShortcut: { code: "ArrowLeft", mods: ["ctrl", "alt", "meta"] },
+              selectShortcut: { code: "ArrowLeft", mods: ["snappy"] },
               zoneShortcuts: {},
             },
           },

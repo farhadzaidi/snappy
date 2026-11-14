@@ -7,12 +7,11 @@ use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
-use snappy_core::bounds::{BoundsBackend, CancelToken, Clock, apply_settled};
+use snappy_core::bounds::{BoundsBackend, BoundsStep, CancelToken, Clock, apply_settled};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::operations::{self, Replay, SwapRequest, UndoHistory, WindowOps};
+use snappy_core::operations::{self, Placement, Replay, SwapRequest, UndoHistory, WindowOps};
 use snappy_core::swap::{SwapPlan, SwapSource, ZoneSlot, plan_swap};
-use snappy_core::window::WindowSnapshot;
 use snappy_platform::{Platform, WindowId};
 use tokio::task::JoinHandle;
 
@@ -245,34 +244,18 @@ pub(crate) async fn run_snap<P: Platform + 'static>(
     shared.return_history(scope, history);
 
     let mut core = shared.core.borrow_mut();
-    let outcome = match &result {
+    match &result {
         Ok(placement) if placement.constrained() => {
-            core.announce_quietly("Snapped, limited by the app's window size.");
-            "appConstrainedBounds"
+            core.announce_quietly("Snapped, limited by the app's window size.")
         }
-        Ok(_) => {
-            core.announce_quietly("Snapped.");
-            "snapped"
-        }
-        Err(WindowError::Cancelled) => "interruptedByNewInteraction",
-        Err(error) => {
-            core.announce_error(&error.to_string());
-            "windowWriteFailed"
-        }
-    };
-    let actual = result.as_ref().ok().map(|placement| placement.actual);
-    let steps = debug_steps(&core.diagnostics.last_steps);
-    core.log(level_of(outcome == "windowWriteFailed"), "snap", || {
-        serde_json::json!({
-            "window": request.window.0,
-            "requested": request.frame,
-            "actual": actual,
-            "outcome": outcome,
-            "steps": steps,
-        })
-    });
+        Ok(_) => core.announce_quietly("Snapped."),
+        Err(WindowError::Cancelled) => {}
+        Err(error) => core.announce_error(&error.to_string()),
+    }
+    let steps = core.diagnostics.last_steps.clone();
+    log_snap(&mut core, request.window, request.frame, &result, &steps);
     if let Some(mut record) = request.drop {
-        record.outcome = outcome.to_owned();
+        record.outcome = snap_outcome(&result).to_owned();
         record.requested = Some(request.frame);
         record.actual = result.as_ref().ok().map(|placement| placement.actual);
         record.steps = core.diagnostics.last_steps.iter().map(Step::from).collect();
@@ -387,15 +370,7 @@ fn discover_and_plan<P: Platform>(shared: &Shared<P>, swap: &SwapMove) -> Result
     let mut core = shared.core.borrow_mut();
     let mut frames = vec![swap.destination.frame];
     frames.extend(swap.source.zone().map(|slot| slot.frame));
-    let found = core.platform.windows_occupying(&frames)?;
-    let windows: Vec<WindowSnapshot> = found
-        .iter()
-        .filter(|window| !core.workspaces.is_inactive(window.id))
-        .map(|window| WindowSnapshot {
-            id: window.id,
-            frame: window.frame,
-        })
-        .collect();
+    let windows = core.occupants(&frames)?;
     Ok(plan_swap(swap.window, &swap.source, &swap.destination, &windows))
 }
 
@@ -428,7 +403,7 @@ async fn run_replay<P: Platform + 'static>(shared: Rc<Shared<P>>, which: Replay,
     match result {
         Ok(()) => {
             core.trace(event, || serde_json::json!({ "outcome": done }));
-            core.announce(message, false, true);
+            core.announce(message);
         }
         Err(WindowError::Cancelled) => {}
         Err(error) => {
@@ -442,8 +417,41 @@ fn level_of(failed: bool) -> Level {
     if failed { Level::Warn } else { Level::Info }
 }
 
+/// What a snap came to, as the debug log and the drop records name it.
+fn snap_outcome(result: &Result<Placement, WindowError>) -> &'static str {
+    match result {
+        Ok(placement) if placement.constrained() => "appConstrainedBounds",
+        Ok(_) => "snapped",
+        Err(WindowError::Cancelled) => "interruptedByNewInteraction",
+        Err(_) => "windowWriteFailed",
+    }
+}
+
+/// Record a snap of `window` toward `requested` in the debug log, as a warning when the
+/// write failed.
+pub(crate) fn log_snap<P: Platform>(
+    core: &mut Core<P>,
+    window: WindowId,
+    requested: Rect,
+    result: &Result<Placement, WindowError>,
+    steps: &[BoundsStep],
+) {
+    let outcome = snap_outcome(result);
+    let actual = result.as_ref().ok().map(|placement| placement.actual);
+    let steps = debug_steps(steps);
+    core.log(level_of(outcome == "windowWriteFailed"), "snap", || {
+        serde_json::json!({
+            "window": window.0,
+            "requested": requested,
+            "actual": actual,
+            "outcome": outcome,
+            "steps": steps,
+        })
+    });
+}
+
 /// Settle steps for the debug log: stage, frame, and elapsed milliseconds.
-pub(crate) fn debug_steps(steps: &[snappy_core::bounds::BoundsStep]) -> serde_json::Value {
+fn debug_steps(steps: &[BoundsStep]) -> serde_json::Value {
     steps
         .iter()
         .map(|step| serde_json::json!([step.stage, step.frame, (step.elapsed_ms * 10.0).round() / 10.0]))

@@ -59,7 +59,7 @@ test("each workspace switches with the Snappy key and its number by default", as
     await card(page, `Workspace ${number}`).click();
     await expect(switchRecorder).toHaveText(`Snappy + ${number}`);
   }
-  await expect(page.getByRole("button", { name: "Move window here", exact: true })).toHaveText(
+  await expect(page.getByRole("button", { name: "Send window to this workspace", exact: true })).toHaveText(
     "Record shortcut",
   );
 });
@@ -71,9 +71,9 @@ test("new workspaces are numbered, switch with their number, and are selected", 
   await expect(page.getByRole("button", { name: "Switch to this workspace", exact: true })).toHaveText(
     "Snappy + 4",
   );
-  await expect(page.getByRole("button", { name: "Move here and switch", exact: true })).toHaveText(
-    "Record shortcut",
-  );
+  await expect(
+    page.getByRole("button", { name: "Send window to this workspace and switch", exact: true }),
+  ).toHaveText("Record shortcut");
 });
 
 test("renaming commits trimmed on enter and reverts when blank", async ({ page }) => {
@@ -140,10 +140,12 @@ test("the three per-workspace shortcuts are recorders", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Switch to this workspace", exact: true })).toHaveText(
     "Ctrl + 1",
   );
-  await expect(page.getByRole("button", { name: "Move window here", exact: true })).toHaveText(
+  await expect(page.getByRole("button", { name: "Send window to this workspace", exact: true })).toHaveText(
     "Ctrl + Shift + 1",
   );
-  await expect(page.getByRole("button", { name: "Move here and switch", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Send window to this workspace and switch", exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("Switch between workspaces")).toHaveCount(0);
 });
 

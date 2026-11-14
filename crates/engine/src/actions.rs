@@ -1,6 +1,7 @@
 //! Global shortcut actions: zones and moving between zones (swapping with the occupant or
 //! stacking on it, as the settings say), moving to the nearest empty zone, layout
-//! selection, undo and redo, and workspaces. Focus and the selection are in `selection`.
+//! selection, undo and redo, and workspaces. Focus is in `focus`, and the selection in
+//! `selection`.
 
 use std::rc::Rc;
 
@@ -12,13 +13,12 @@ use snappy_core::keys::Combo;
 use snappy_core::layout::{Zone, zone_frame};
 use snappy_core::navigate::{Direction, destination};
 use snappy_core::swap::ZoneSlot;
-use snappy_core::window::WindowSnapshot;
 use snappy_platform::{Display, Platform, WindowInfo};
 
 use crate::core::{Core, PendingNavigation};
 use crate::drag::{swap_source, zone_slots};
 use crate::ops::{Shared, SnapRequest, SwapMove, run_redo, run_snap, run_swap, run_undo};
-use crate::{selection, workspaces};
+use crate::{focus, selection, workspaces};
 
 pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
     let (action, combo) = {
@@ -26,15 +26,16 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         if core.recording || !core.settings.snapping.shortcuts_enabled {
             return;
         }
-        let Some(hotkey) = core.registered.get(id as usize).cloned() else {
+        let Some(hotkey) = core.hotkey(id).cloned() else {
             return;
         };
-        let live = core.live;
-        core.trace(
-            "shortcut",
-            || serde_json::json!({ "action": format!("{:?}", hotkey.action), "live": live }),
-        );
-        (hotkey.action, hotkey.chord.combo())
+        let live = core.is_live();
+        core.trace("shortcut", || {
+            let mut record = action_record(&hotkey.action);
+            record.insert("live".to_owned(), live.into());
+            serde_json::Value::Object(record)
+        });
+        (hotkey.action, hotkey.combo)
     };
 
     match action {
@@ -45,26 +46,35 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         HotKeyAction::SwitchWorkspace(target) => workspaces::request_switch(shared, &target, false),
         HotKeyAction::SendToWorkspace(target) => workspaces::send_focused(shared, &target, false),
         HotKeyAction::SendAndSwitch(target) => workspaces::send_focused(shared, &target, true),
-        _ if !shared.core.borrow().live => {}
+        _ if !shared.core.borrow().is_live() => {}
         HotKeyAction::UndoMove => shared.submit(run_undo),
         HotKeyAction::RedoMove => shared.submit(run_redo),
         HotKeyAction::SelectLayout(layout) => select_layout_under_pointer(shared, &layout),
         HotKeyAction::Navigate(direction) => move_focused(shared, Target::Direction(direction)),
         HotKeyAction::Zone => move_focused(shared, Target::Zone(combo)),
         HotKeyAction::NearestEmptyZone => fill_empty_zones(shared),
-        HotKeyAction::FocusWindow(direction) => selection::focus_toward(shared, direction),
+        HotKeyAction::FocusWindow(direction) => focus::focus_toward(shared, direction),
         HotKeyAction::SelectWindow => selection::toggle(&mut shared.core.borrow_mut()),
         HotKeyAction::ClearSelection => selection::clear(&mut shared.core.borrow_mut(), "cleared"),
     }
 }
 
+/// What the debug log says of an action: its name, and the workspace or layout it is for.
+pub(crate) fn action_record(action: &HotKeyAction) -> serde_json::Map<String, serde_json::Value> {
+    let mut record = serde_json::Map::new();
+    record.insert("action".to_owned(), action.name().into());
+    if let Some(workspace) = action.workspace() {
+        record.insert("workspace".to_owned(), workspace.into());
+    }
+    if let Some(layout) = action.layout() {
+        record.insert("layout".to_owned(), layout.into());
+    }
+    record
+}
+
 /// The selection into empty zones, or without one, the focused window into the nearest.
 fn fill_empty_zones<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
-    let has_selection = {
-        let mut core = shared.core.borrow_mut();
-        selection::prune(&mut core);
-        !core.selection.is_empty()
-    };
+    let has_selection = selection::has_windows(&mut shared.core.borrow_mut());
     if has_selection {
         selection::place(shared);
     } else {
@@ -107,20 +117,8 @@ fn nearest_empty_snap<P: Platform>(
     };
     let slots = zone_slots(core);
     let frames: Vec<Rect> = slots.iter().map(|slot| slot.frame).collect();
-    let windows: Vec<WindowSnapshot> = core
-        .platform
-        .windows_occupying(&frames)?
-        .iter()
-        .map(|found| WindowSnapshot {
-            id: found.id,
-            frame: found.frame,
-        })
-        .collect();
-    let workspaces = &core.workspaces;
-    let chosen = nearest_empty_zone(window.id, frame, &display.id, &slots, &windows, |id| {
-        workspaces.is_inactive(id)
-    });
-    let Some(slot) = chosen else {
+    let windows = core.occupants(&frames)?;
+    let Some(slot) = nearest_empty_zone(window.id, frame, &display.id, &slots, &windows) else {
         core.announce_quietly("No empty zone on this display.");
         return Ok(None);
     };
@@ -135,11 +133,7 @@ fn nearest_empty_snap<P: Platform>(
 
 fn select_layout_under_pointer<P: Platform + 'static>(shared: &Rc<Shared<P>>, layout: &str) {
     let mut core = shared.core.borrow_mut();
-    let pointer = core.platform.pointer();
-    let display = core
-        .display_at(pointer)
-        .or_else(|| core.displays.first())
-        .map(|display| display.id.clone());
+    let display = core.display_under_pointer().map(|display| display.id.clone());
     if let Some(display) = display {
         crate::commands::apply_layout(&mut core, &display, layout);
     }
@@ -249,7 +243,8 @@ fn zone_by_chord<P: Platform>(core: &Core<P>, display: &Display, combo: &Combo) 
     if !options.enabled {
         return None;
     }
-    let pressed = |chord: &snappy_core::keys::KeyChord| &chord.combo() == combo;
+    let key = core.settings.snappy_key;
+    let pressed = |chord: &snappy_core::keys::KeyChord| &chord.combo(key) == combo;
     layout
         .zones
         .iter()

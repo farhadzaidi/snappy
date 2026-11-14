@@ -66,9 +66,10 @@ mod tests {
 
     #[test]
     fn the_snappy_key_expands_to_control_alt_and_super_on_the_physical_key() {
-        let combo = KeyChord::snappy("Digit1", []).combo();
+        let combo = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
         assert_eq!(accelerator(&combo).as_deref(), Some("<Control><Alt><Super>0x0a"));
-        let shifted = KeyChord::snappy("ArrowLeft", [Modifier::Shift]).combo();
+        let shifted =
+            KeyChord::snappy("ArrowLeft", [Modifier::Shift]).combo(snappy_core::keys::SnappyKey::DEFAULT);
         assert_eq!(
             accelerator(&shifted).as_deref(),
             Some("<Control><Alt><Super><Shift>0x71")

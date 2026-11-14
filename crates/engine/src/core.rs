@@ -4,18 +4,23 @@ use std::collections::BTreeMap;
 
 use snappy_core::bindings::{HotKey, desired_hotkeys};
 use snappy_core::drag::DragIntent;
+use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::Platform as PlatformName;
 use snappy_core::layout::{Layout, Spacing, zone_frame};
 use snappy_core::settings::Settings;
+use snappy_core::window::WindowSnapshot;
 use snappy_ipc::{AppState, SnappingState, Status, ToSettings, WorkspacesState};
 use snappy_platform::{
-    Capabilities, Caption, Display, LiveControl, MarkStyle, MarkedWindow, OverlayMarks, OverlayScene,
-    OverlayZone, Platform, TrayDisplay, TrayItem, TrayMenu, WindowId,
+    Capabilities, Caption, Display, LiveControl, OverlayScene, OverlayZone, Platform, TrayDisplay, TrayItem,
+    TrayMenu, WindowId,
 };
 
+use crate::actions::action_record;
 use crate::debug_log::{DebugLog, Level};
 use crate::diagnostics::Diagnostics;
+use crate::focus::FocusFlash;
+use crate::marks::Marks;
 use crate::selection::{self, Selection};
 use crate::store::{Paths, SettingsStore};
 use crate::workspaces::WorkspaceController;
@@ -55,8 +60,10 @@ pub(crate) struct Core<P> {
     pub store: SettingsStore,
     pub settings: Settings,
     pub displays: Vec<Display>,
-    pub permission_granted: bool,
-    pub live: bool,
+    /// Whether the platform's permission is granted, and whether live control runs; both
+    /// follow from the settings and the platform, so only `refresh_live` changes them.
+    permission_granted: bool,
+    live: bool,
     pub drag: DragSession,
     pub op_in_flight: bool,
     /// Windows an in-flight swap or undo may write to.
@@ -64,22 +71,26 @@ pub(crate) struct Core<P> {
     /// Windows a new gesture has claimed; recovery leaves them alone.
     pub protected: Vec<WindowId>,
     pub pending_navigation: Option<PendingNavigation>,
-    pub preview: Option<(String, String)>,
+    /// The display and layout the settings app is previewing.
+    preview: Option<(String, String)>,
     pub recording: bool,
-    pub registered: Vec<HotKey>,
-    pub registration_failed: bool,
+    /// The shortcuts registered, by ID, and whether the platform refused any; only
+    /// `configure_hotkeys` and `release_hotkeys` change them.
+    registered: Vec<HotKey>,
+    registration_failed: bool,
     pub workspaces: WorkspaceController,
     pub selection: Selection,
     /// The settings app's process, so its window can be found.
     pub settings_app_pid: Option<u32>,
-    pub status: Option<Status>,
+    /// The latest message, which only the `announce` family sets.
+    status: Option<Status>,
     status_counter: u64,
     pub outbox: Vec<ToSettings>,
     pub diagnostics: Diagnostics,
     pub debug: DebugLog,
     pub added_workspace: Option<String>,
-    /// The marks each display was last sent; displays without any are absent.
-    marked: BTreeMap<String, OverlayMarks>,
+    pub focus_flash: FocusFlash,
+    pub marks: Marks,
 }
 
 impl<P: Platform> Core<P> {
@@ -120,7 +131,8 @@ impl<P: Platform> Core<P> {
             diagnostics,
             debug,
             added_workspace: None,
-            marked: BTreeMap::new(),
+            focus_flash: FocusFlash::default(),
+            marks: Marks::default(),
         }
     }
 
@@ -143,6 +155,37 @@ impl<P: Platform> Core<P> {
     /// The display under `point`, by full frame.
     pub fn display_at(&self, point: Point) -> Option<&Display> {
         self.displays.iter().find(|display| display.frame.contains(point))
+    }
+
+    /// The display under the pointer, else the first, for shortcuts that act on a display
+    /// rather than a window.
+    pub fn display_under_pointer(&mut self) -> Option<&Display> {
+        let pointer = self.platform.pointer();
+        self.display_at(pointer).or_else(|| self.displays.first())
+    }
+
+    /// Whether `window` is on screen: on the active workspace, not minimized, and not on
+    /// the parking desktop.
+    pub fn is_on_screen(&mut self, window: WindowId) -> bool {
+        !self.workspaces.is_inactive(window)
+            && self
+                .platform
+                .state(window)
+                .is_ok_and(|state| !state.minimized && !state.on_parking_desktop)
+    }
+
+    /// The windows filling any of `frames` that count as occupants: those of workspaces
+    /// that aren't showing never do.
+    pub fn occupants(&mut self, frames: &[Rect]) -> Result<Vec<WindowSnapshot>, WindowError> {
+        let found = self.platform.windows_occupying(frames)?;
+        Ok(found
+            .iter()
+            .filter(|window| !self.workspaces.is_inactive(window.id))
+            .map(|window| WindowSnapshot {
+                id: window.id,
+                frame: window.frame,
+            })
+            .collect())
     }
 
     /// The display a window overlaps most.
@@ -171,6 +214,14 @@ impl<P: Platform> Core<P> {
 
     // MARK: Live control
 
+    pub fn is_live(&self) -> bool {
+        self.live
+    }
+
+    pub fn has_permission(&self) -> bool {
+        self.permission_granted
+    }
+
     /// Recompute whether live control runs, and reconfigure what depends on it.
     pub fn refresh_live(&mut self, announce: bool) {
         self.permission_granted = !self.capabilities.needs_permission || self.platform.is_granted();
@@ -193,12 +244,10 @@ impl<P: Platform> Core<P> {
             if announce {
                 let reason = self.live_control.reason().map(str::to_owned);
                 match (should_run, reason) {
-                    (true, _) => self.announce("Snapping is on.", false, true),
+                    (true, _) => self.announce("Snapping is on."),
                     // The settings window already shows the reason where it stays.
                     (false, Some(reason)) => self.announce_quietly(&reason),
-                    (false, None) => {
-                        self.announce("Accessibility access is off. Snapping is paused.", false, true)
-                    }
+                    (false, None) => self.announce("Accessibility access is off. Snapping is paused."),
                 }
             }
         }
@@ -224,7 +273,7 @@ impl<P: Platform> Core<P> {
         let keys: Vec<(u32, _)> = wanted
             .iter()
             .enumerate()
-            .map(|(i, hotkey)| (i as u32, hotkey.chord.combo()))
+            .map(|(i, hotkey)| (i as u32, hotkey.combo.clone()))
             .collect();
         let refused = if keys.is_empty() {
             self.platform.unregister_all();
@@ -235,9 +284,13 @@ impl<P: Platform> Core<P> {
         self.registration_failed = !refused.is_empty();
         let platform = self.platform_name();
         self.trace("shortcutsRegistered", || {
-            let shortcuts: Vec<String> = wanted
+            let shortcuts: Vec<serde_json::Value> = wanted
                 .iter()
-                .map(|hotkey| format!("{} → {:?}", hotkey.chord.long_label(platform), hotkey.action))
+                .map(|hotkey| {
+                    let mut record = action_record(&hotkey.action);
+                    record.insert("chord".to_owned(), hotkey.chord.long_label(platform).into());
+                    serde_json::Value::Object(record)
+                })
                 .collect();
             serde_json::json!({ "shortcuts": shortcuts })
         });
@@ -248,9 +301,26 @@ impl<P: Platform> Core<P> {
                 .collect();
             let all = labels.clone();
             self.trace("shortcutsTaken", || serde_json::json!({ "shortcuts": all }));
-            self.announce(&taken_message(&labels), true, true);
+            self.announce_error(&taken_message(&labels));
         }
         self.registered = wanted;
+    }
+
+    /// The registered shortcut with this ID.
+    pub fn hotkey(&self, id: u32) -> Option<&HotKey> {
+        self.registered.get(id as usize)
+    }
+
+    /// Whether the platform refused any shortcut the last time they were registered.
+    pub fn shortcuts_refused(&self) -> bool {
+        self.registration_failed
+    }
+
+    /// Unregister every shortcut, as asking the OS about chords Snappy holds needs. The
+    /// next `configure_hotkeys` registers them again.
+    pub fn release_hotkeys(&mut self) {
+        self.platform.unregister_all();
+        self.registered.clear();
     }
 
     // MARK: Overlay
@@ -324,58 +394,6 @@ impl<P: Platform> Core<P> {
         self.publish_state();
     }
 
-    /// Outline the selected windows, and the window a focus shortcut just focused, on each
-    /// display they show on, where they are now. Only displays whose outlines changed are
-    /// sent.
-    pub fn refresh_marks(&mut self) {
-        let flash = self.selection.flash;
-        // A selected tab is outlined on its group's shown tab, the one on screen.
-        let mut wanted: Vec<(WindowId, MarkStyle)> = Vec::new();
-        for window in &self.selection.windows {
-            let shown = self.workspaces.tab_root(*window);
-            if Some(shown) != flash && !wanted.iter().any(|(marked, _)| *marked == shown) {
-                wanted.push((shown, MarkStyle::Selected));
-            }
-        }
-        wanted.extend(flash.map(|window| (window, MarkStyle::Focused)));
-        let mut marked = Vec::new();
-        for (window, style) in wanted {
-            let shown = !self.workspaces.is_inactive(window)
-                && self
-                    .platform
-                    .state(window)
-                    .is_ok_and(|state| !state.minimized && !state.on_parking_desktop);
-            if let (true, Ok(frame)) = (shown, self.platform.frame(window)) {
-                marked.push(MarkedWindow { frame, style });
-            }
-        }
-        for display in self.displays.clone() {
-            let marks = OverlayMarks {
-                work_area: display.work_area,
-                windows: marked
-                    .iter()
-                    .copied()
-                    .filter(|mark| mark.frame.intersection_area(display.work_area) > 0.0)
-                    .collect(),
-            };
-            let unchanged = match self.marked.get(&display.id) {
-                Some(sent) => *sent == marks,
-                None => marks.windows.is_empty(),
-            };
-            if unchanged {
-                continue;
-            }
-            self.platform.mark(&display.id, &marks);
-            if marks.windows.is_empty() {
-                self.marked.remove(&display.id);
-            } else {
-                self.marked.insert(display.id.clone(), marks);
-            }
-        }
-        let displays = self.display_ids();
-        self.marked.retain(|display, _| displays.contains(display));
-    }
-
     /// Forget the current press; the overlay disappears.
     pub fn end_drag(&mut self) {
         self.drag = DragSession::Idle;
@@ -435,7 +453,6 @@ impl<P: Platform> Core<P> {
 
     // MARK: Status and the settings app
 
-    /// Report a message. Quiet messages aren't shown; they clear a visible error.
     /// Add a record to the debug log, building it only when the log is on.
     pub fn trace(&mut self, event: &str, details: impl FnOnce() -> serde_json::Value) {
         self.log(Level::Info, event, details);
@@ -453,7 +470,30 @@ impl<P: Platform> Core<P> {
         }
     }
 
-    pub fn announce(&mut self, message: &str, is_error: bool, notify: bool) {
+    /// Report a message the settings app shows.
+    pub fn announce(&mut self, message: &str) {
+        self.post(message, false, true);
+    }
+
+    /// Report a routine confirmation the settings app doesn't show; it clears a visible
+    /// error.
+    pub fn announce_quietly(&mut self, message: &str) {
+        self.post(message, false, false);
+    }
+
+    pub fn announce_error(&mut self, message: &str) {
+        self.post(message, true, true);
+    }
+
+    pub fn status(&self) -> Option<&Status> {
+        self.status.as_ref()
+    }
+
+    pub fn dismiss_status(&mut self) {
+        self.status = None;
+    }
+
+    fn post(&mut self, message: &str, is_error: bool, notify: bool) {
         let details = || serde_json::json!({ "message": message });
         if is_error {
             self.flag("status", details);
@@ -468,14 +508,6 @@ impl<P: Platform> Core<P> {
             notify,
         });
         self.publish_state();
-    }
-
-    pub fn announce_quietly(&mut self, message: &str) {
-        self.announce(message, false, false);
-    }
-
-    pub fn announce_error(&mut self, message: &str) {
-        self.announce(message, true, true);
     }
 
     pub fn publish_state(&mut self) {

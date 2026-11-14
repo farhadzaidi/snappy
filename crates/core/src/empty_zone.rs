@@ -15,9 +15,9 @@ const TIE_BREAK_SCALE: i128 = 1 << 40;
 /// The empty zone nearest `window`, which sits at `frame` on the display `display_id`.
 ///
 /// `slots` are the zones of every display's current layout, in display and zone order,
-/// and `windows` the windows filling any of them. A zone is empty when no window fills
-/// it, leaving out the moving window itself and windows `is_inactive` says belong to a
-/// workspace that isn't showing. A zone the window already fills is never chosen.
+/// and `windows` the windows filling any of them that count, which leaves out windows of
+/// workspaces that aren't showing. A zone is empty when no window but the moving one
+/// fills it. A zone the window already fills is never chosen.
 ///
 /// Zones on the window's own display come first; other displays are considered only
 /// when it has no empty zone. Nearest means the smallest distance between the window's
@@ -28,11 +28,10 @@ pub fn nearest_empty_zone<'a>(
     display_id: &str,
     slots: &'a [ZoneSlot],
     windows: &[WindowSnapshot],
-    is_inactive: impl Fn(WindowId) -> bool,
 ) -> Option<&'a ZoneSlot> {
     let blocking: Vec<Rect> = windows
         .iter()
-        .filter(|other| other.id != window && !is_inactive(other.id))
+        .filter(|other| other.id != window)
         .map(|other| other.frame)
         .collect();
     let is_empty = |slot: &&ZoneSlot| {
@@ -69,8 +68,8 @@ pub struct SelectionPlan<'a> {
 /// Plan putting the `selected` windows, in selection order, into empty zones.
 ///
 /// Selected windows already filling a zone stay. The others each get an empty zone of
-/// their own. Empty means what it means for `nearest_empty_zone`: `windows` are those
-/// filling any of `slots`, and windows `is_inactive` names don't count.
+/// their own. Empty means what it means for `nearest_empty_zone`: no window of `windows`,
+/// those filling any of `slots` that count, fills it.
 ///
 /// Zones on `first_display`, the display under the pointer, are used first; other
 /// displays' zones, in slot order, only when it hasn't enough. Among the zones that may be
@@ -83,14 +82,12 @@ pub fn place_selection<'a>(
     first_display: &str,
     slots: &'a [ZoneSlot],
     windows: &[WindowSnapshot],
-    is_inactive: impl Fn(WindowId) -> bool,
 ) -> SelectionPlan<'a> {
     let (in_zones, moving): (Vec<&WindowSnapshot>, Vec<&WindowSnapshot>) = selected
         .iter()
         .partition(|window| slots.iter().any(|slot| fills_zone(window.frame, slot.frame)));
     let blocking: Vec<Rect> = windows
         .iter()
-        .filter(|other| !is_inactive(other.id))
         .chain(in_zones.iter().copied())
         .map(|other| other.frame)
         .collect();
@@ -210,7 +207,7 @@ mod tests {
     }
 
     fn chosen(frame: Rect, slots: &[ZoneSlot], windows: &[WindowSnapshot]) -> Option<String> {
-        nearest_empty_zone(MOVING, frame, "main", slots, windows, |_| false).map(|slot| slot.zone_id.clone())
+        nearest_empty_zone(MOVING, frame, "main", slots, windows).map(|slot| slot.zone_id.clone())
     }
 
     #[test]
@@ -282,16 +279,6 @@ mod tests {
     }
 
     #[test]
-    fn windows_of_inactive_workspaces_never_block_a_zone() {
-        let slots = columns("main", MAIN);
-        let near_right = Rect::new(900.0, 300.0, 200.0, 200.0);
-        let parked_in_right = window(7, slots[2].frame);
-        let inactive = |id: WindowId| id == WindowId(7);
-        let chosen = nearest_empty_zone(MOVING, near_right, "main", &slots, &[parked_in_right], inactive);
-        assert_eq!(chosen.map(|slot| slot.zone_id.as_str()), Some("main-2"));
-    }
-
-    #[test]
     fn a_tie_goes_to_the_earlier_zone() {
         let slots = columns("main", MAIN);
         let between_left_and_right = Rect::new(500.0, 300.0, 200.0, 200.0);
@@ -323,7 +310,7 @@ mod tests {
         slots: &'a [ZoneSlot],
         windows: &[WindowSnapshot],
     ) -> SelectionPlan<'a> {
-        place_selection(selected, "main", slots, windows, |_| false)
+        place_selection(selected, "main", slots, windows)
     }
 
     /// A small floating window centered on `x`, halfway down the main display.
@@ -387,7 +374,7 @@ mod tests {
         assert_eq!(zones, ["main-0", "main-2"]);
 
         let crowded = [window(9, slots[0].frame), window(10, slots[1].frame)];
-        let plan = place_selection(&selected, "main", &slots, &crowded, |_| false);
+        let plan = place_selection(&selected, "main", &slots, &crowded);
         let zones: Vec<String> = placed(&plan).into_iter().map(|(_, zone)| zone).collect();
         assert!(
             zones.contains(&"main-2".to_owned()),
@@ -399,7 +386,7 @@ mod tests {
             "the rest go to the nearest elsewhere"
         );
 
-        let from_side = place_selection(&selected, "side", &slots, &[], |_| false);
+        let from_side = place_selection(&selected, "side", &slots, &[]);
         assert_eq!(
             placed(&from_side),
             [(1, "side-0".to_owned()), (2, "side-2".to_owned())]
@@ -420,15 +407,6 @@ mod tests {
             );
             assert_eq!(plan.left_over, [WindowId(3)]);
         }
-    }
-
-    #[test]
-    fn windows_of_inactive_workspaces_leave_their_zones_empty_for_the_selection() {
-        let slots = columns("main", MAIN);
-        let parked = window(7, slots[2].frame);
-        let selected = [floating_at(1, 1000.0)];
-        let plan = place_selection(&selected, "main", &slots, &[parked], |id| id == WindowId(7));
-        assert_eq!(placed(&plan), [(1, "main-2".to_owned())]);
     }
 
     #[test]

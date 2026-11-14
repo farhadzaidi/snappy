@@ -26,7 +26,7 @@ test("recording captures a combination between begin and end", async ({ page }) 
   ]);
   expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
     kind: "setNavigationShortcut",
-    direction: "left",
+    shortcut: "left",
     chord: { code: "KeyM", mods: ["snappy"] },
   });
 });
@@ -37,7 +37,7 @@ test("holding the Snappy key's modifiers with Shift records the Snappy key plus 
   await expect(recorder(page)).toHaveText("Snappy + Shift + J");
   expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
     kind: "setNavigationShortcut",
-    direction: "left",
+    shortcut: "left",
     chord: { code: "KeyJ", mods: ["snappy", "shift"] },
   });
 });
@@ -56,7 +56,7 @@ test("delete without modifiers clears the shortcut", async ({ page }) => {
   await expect(recorder(page)).toHaveText("Record shortcut");
   expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
     kind: "setNavigationShortcut",
-    direction: "left",
+    shortcut: "left",
     chord: null,
   });
 });

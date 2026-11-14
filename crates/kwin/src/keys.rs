@@ -94,9 +94,10 @@ mod tests {
 
     #[test]
     fn the_snappy_key_expands_to_control_alt_and_meta() {
-        let combo = KeyChord::snappy("Digit1", []).combo();
+        let combo = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
         assert_eq!(key_code(&combo), Some(CONTROL | ALT | META | 0x31));
-        let shifted = KeyChord::snappy("ArrowLeft", [Modifier::Shift]).combo();
+        let shifted =
+            KeyChord::snappy("ArrowLeft", [Modifier::Shift]).combo(snappy_core::keys::SnappyKey::DEFAULT);
         assert_eq!(
             key_code(&shifted),
             Some(SHIFT | CONTROL | ALT | META | 0x0100_0012)
@@ -112,9 +113,17 @@ mod tests {
         for combo in snappy_core::bindings::bound_combos(&settings) {
             assert!(key_code(&combo).is_some(), "{combo:?}");
         }
-        let select = settings.navigation.select_window.unwrap().combo();
+        let select = settings
+            .navigation
+            .select_window
+            .unwrap()
+            .combo(snappy_core::keys::SnappyKey::DEFAULT);
         assert_eq!(key_code(&select), Some(CONTROL | ALT | META | 0x0100_0004));
-        let clear = settings.navigation.clear_selection.unwrap().combo();
+        let clear = settings
+            .navigation
+            .clear_selection
+            .unwrap()
+            .combo(snappy_core::keys::SnappyKey::DEFAULT);
         assert_eq!(key_code(&clear), Some(CONTROL | ALT | META | 0x5c));
     }
 

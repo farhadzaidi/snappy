@@ -2,7 +2,7 @@
 //! windows.
 
 use crate::geometry::{Point, Rect};
-use crate::navigate::{Direction, next_zone, starting_zone};
+use crate::navigate::{AHEAD_THRESHOLD, Direction, TIE_TOLERANCE, next_zone, starting_zone};
 use crate::swap::{ZoneSlot, fills_zone};
 use crate::window::{WindowId, WindowSnapshot};
 
@@ -53,9 +53,12 @@ pub fn focus_target<'a>(
     slots: &'a [ZoneSlot],
     candidates: &[WindowSnapshot],
 ) -> FocusChoice<'a> {
-    let own: Vec<usize> = (0..slots.len())
-        .filter(|&index| focused.is_some_and(|frame| fills_zone(frame, slots[index].frame)))
-        .collect();
+    let filled_by = |frame: Rect| -> Vec<usize> {
+        (0..slots.len())
+            .filter(|&index| fills_zone(frame, slots[index].frame))
+            .collect()
+    };
+    let own: Vec<usize> = focused.map(filled_by).unwrap_or_default();
     let occupied: Vec<usize> = (0..slots.len())
         .filter(|&index| {
             candidates
@@ -75,12 +78,7 @@ pub fn focus_target<'a>(
     let (origin, anchor, start) = match start {
         Some((window, index)) => {
             let origin = slots[index].frame;
-            let (low, high) = direction.cross_span(origin);
-            (
-                origin,
-                direction.across(window.center()).clamp(low, high),
-                Some(index),
-            )
+            (origin, direction.anchor(window.center(), origin), Some(index))
         }
         None => (Rect::new(from.x, from.y, 0.0, 0.0), direction.across(from), None),
     };
@@ -113,10 +111,6 @@ fn start_zone(focused: Rect, own: &[usize], slots: &[ZoneSlot]) -> Option<usize>
 /// straight ahead wins over one as far off to the side: one at 45 degrees must be three
 /// times nearer to win.
 pub const SIDEWAYS_WEIGHT: f64 = 2.0;
-/// A window counts as ahead only when its center is further than this past the start.
-const AHEAD_THRESHOLD: f64 = 0.5;
-/// Scores closer than this tie.
-const TIE_TOLERANCE: f64 = 0.001;
 
 /// The window to focus going `direction` from `from`, the focused window's center or the
 /// center of the display under the pointer.
@@ -129,7 +123,7 @@ pub fn window_toward(from: Point, direction: Direction, candidates: &[WindowSnap
     let mut best: Option<(f64, WindowId)> = None;
     for candidate in candidates {
         let center = candidate.frame.center();
-        let ahead = (direction.along(center) - direction.along(from)) * direction.sign();
+        let ahead = direction.ahead(from, center);
         if ahead <= AHEAD_THRESHOLD {
             continue;
         }

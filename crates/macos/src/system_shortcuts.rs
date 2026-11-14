@@ -170,7 +170,8 @@ mod tests {
     fn mission_control_leaves_the_default_workspace_steps_free() {
         let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
         for (_, chord) in settings.workspaces.steps() {
-            let carbon = CarbonChord::from_combo(&chord.combo()).unwrap();
+            let carbon =
+                CarbonChord::from_combo(&chord.combo(snappy_core::keys::SnappyKey::DEFAULT)).unwrap();
             assert!(!is_taken(carbon, &DEFAULTS), "{chord}");
         }
     }
@@ -199,7 +200,12 @@ mod tests {
             .collect();
         let combos = snappy_core::bindings::bound_combos(&settings);
         assert_eq!(combos.len(), 4 + 9 + 5 + 6);
-        assert!(combos.contains(&snappy_core::keys::KeyChord::snappy("Backslash", []).combo()));
+        assert!(
+            combos.contains(
+                &snappy_core::keys::KeyChord::snappy("Backslash", [])
+                    .combo(snappy_core::keys::SnappyKey::DEFAULT)
+            )
+        );
         for combo in combos {
             let carbon = CarbonChord::from_combo(&combo).unwrap();
             assert!(!is_taken(carbon, &shipped), "{combo:?}");
@@ -210,7 +216,13 @@ mod tests {
     fn turning_on_the_contrast_shortcuts_takes_only_the_previous_send_step() {
         let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
         let step = |chord: &Option<snappy_core::keys::KeyChord>| {
-            CarbonChord::from_combo(&chord.as_ref().unwrap().combo()).unwrap()
+            CarbonChord::from_combo(
+                &chord
+                    .as_ref()
+                    .unwrap()
+                    .combo(snappy_core::keys::SnappyKey::DEFAULT),
+            )
+            .unwrap()
         };
         let previous = step(&settings.workspaces.send_previous);
         let next = step(&settings.workspaces.send_next);
@@ -247,7 +259,11 @@ mod tests {
         ));
 
         let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
-        let nearest_empty = settings.navigation.nearest_empty.unwrap().combo();
+        let nearest_empty = settings
+            .navigation
+            .nearest_empty
+            .unwrap()
+            .combo(snappy_core::keys::SnappyKey::DEFAULT);
         let carbon = CarbonChord::from_combo(&nearest_empty).unwrap();
         assert!(!is_taken(carbon, &shipped));
         assert!(!is_taken(carbon, &DEFAULTS));

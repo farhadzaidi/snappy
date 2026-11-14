@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 
 import { longLabel, modifierLabel, snappyKeyLabel } from "../core/labels";
-import type { KeyChord, PlatformName } from "../core/model";
+import { core } from "../core/snappyCore";
 import { useAppState } from "../state/services";
 import { IconButton } from "../ui/Button";
 import { HelpIcon } from "../ui/icons";
@@ -37,30 +37,6 @@ export function HelpButton() {
   );
 }
 
-/** The Snappy key with one other key: what each default shortcut does. */
-function defaultShortcuts(platform: PlatformName): readonly { title: string; chord: KeyChord }[] {
-  const snappy = (code: string, label: string): KeyChord => ({ code, mods: ["snappy"], label });
-  return [
-    { title: "Move to the neighboring zone", chord: snappy("ArrowLeft", "← → ↑ ↓") },
-    { title: "Focus the window up, left, down, or right", chord: snappy("KeyI", "I J K L") },
-    {
-      title: "Select or unselect the window",
-      chord: snappy("Enter", platform === "macos" ? "Return" : "Enter"),
-    },
-    { title: "Clear the selection", chord: snappy("Backslash", "\\") },
-    {
-      title: "Move to the nearest empty zone, or the selection into empty zones",
-      chord: snappy("Space", "Space"),
-    },
-    { title: "Switch to workspace 1–9, taking the selection along", chord: snappy("Digit1", "1–9") },
-    { title: "Previous or next workspace", chord: snappy("Semicolon", "; '") },
-    {
-      title: "Send the window or selection to the previous or next workspace",
-      chord: snappy("Period", ". /"),
-    },
-  ];
-}
-
 function HelpContent() {
   const { settings, platform } = useAppState();
   const { dragModifier, swapModifier, whenTaken } = settings.snapping;
@@ -83,8 +59,8 @@ function HelpContent() {
         />
       )}
       <hr className="help-divider" />
-      <HelpRow title="Snappy key" keys={snappyKeyLabel(platform)} />
-      {defaultShortcuts(platform).map(({ title, chord }) => (
+      <HelpRow title="Snappy key" keys={snappyKeyLabel(settings.snappyKey, platform)} />
+      {core.defaultShortcuts(platform).map(({ title, chord }) => (
         <HelpRow key={title} title={title} keys={longLabel(chord, platform)} />
       ))}
       <HelpRow title="Hide the screen preview" keys="Escape" />

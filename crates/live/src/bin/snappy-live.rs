@@ -13,7 +13,7 @@ use snappy_core::keys::{KeyChord, Modifier, Platform};
 use snappy_core::settings::Settings;
 use snappy_live::fixture::Fixture;
 use snappy_live::input::{pause, platform_input};
-use snappy_live::scenarios::{ALL, Context};
+use snappy_live::scenarios::{ALL, Context, PLATFORM};
 use snappy_live::screen::screenshot;
 use snappy_live::session::Daemon;
 use snappy_platform::Display;
@@ -74,37 +74,33 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
     })
 }
 
-const PLATFORM: Platform = if cfg!(target_os = "macos") {
-    Platform::MacOs
-} else if cfg!(windows) {
-    Platform::Windows
-} else {
-    Platform::Linux
-};
-
 /// Settings for the run: the defaults with snapping on, the halves layout everywhere, and
 /// workspaces on. Every default shortcut is kept, so the run presses the chords users get.
-/// What has no default, the halves layout's zones and each workspace's send and move here
-/// and switch, gets chords this platform leaves free.
+/// What has no default, the halves layout's zones and each workspace's two send shortcuts,
+/// gets chords this platform leaves free.
 fn test_settings() -> Result<Settings, String> {
-    let mut settings = Settings::defaults(PLATFORM);
-    settings.snapping.enabled = true;
-    settings.layouts.default_layout_id = "halves".to_owned();
-    settings.workspaces.enabled = true;
     let chords = match PLATFORM {
         Platform::MacOs => MACOS_CHORDS,
         Platform::Windows => WINDOWS_CHORDS,
         Platform::Linux if is_gnome() => GNOME_CHORDS,
         Platform::Linux => LINUX_CHORDS,
     };
+    settings_with(&chords, PLATFORM)
+}
+
+fn settings_with(chords: &RunChords, platform: Platform) -> Result<Settings, String> {
+    let mut settings = Settings::defaults(platform);
+    settings.snapping.enabled = true;
+    settings.layouts.default_layout_id = "halves".to_owned();
+    settings.workspaces.enabled = true;
     chords.assign(&mut settings)?;
     settings
-        .validate(PLATFORM)
+        .validate(platform)
         .map_err(|error| format!("the test settings are invalid: {error}"))
 }
 
 /// Chords for the shortcuts without a default: `key(n)` held with `zone` for zone n, with
-/// `send` to send to workspace n, and with `send_and_switch` to move here and switch to it.
+/// `send` to send to workspace n, and with `send_and_switch` to send there and switch to it.
 struct RunChords {
     key: fn(usize) -> (String, String),
     zone: &'static [Modifier],
@@ -142,7 +138,7 @@ fn digit(n: usize) -> (String, String) {
     (format!("Digit{n}"), n.to_string())
 }
 
-/// Control with a digit, plus Shift to send or Option to move here and switch.
+/// Control with a digit, plus Shift to send or Option to send and switch.
 const MACOS_CHORDS: RunChords = RunChords {
     key: digit,
     zone: &[Modifier::Ctrl],
@@ -392,5 +388,23 @@ mod tests {
         assert_eq!(settings.navigation, defaults.navigation);
         let halves = settings.layout("halves").unwrap();
         assert_eq!(settings.options(halves).zone_shortcuts.len(), 2);
+    }
+
+    #[test]
+    fn every_platforms_run_settings_take_the_snappy_key_the_live_scenario_chooses() {
+        for (platform, chords) in [
+            (Platform::MacOs, MACOS_CHORDS),
+            (Platform::Windows, WINDOWS_CHORDS),
+            (Platform::Linux, LINUX_CHORDS),
+            (Platform::Linux, GNOME_CHORDS),
+        ] {
+            let run = settings_with(&chords, platform).unwrap();
+            let chosen = snappy_live::scenarios::with_free_snappy_key(&run, platform).unwrap();
+            assert_eq!(
+                chosen.snappy_key.modifiers(),
+                snappy_live::scenarios::free_snappy_key(platform),
+                "{platform:?}"
+            );
+        }
     }
 }

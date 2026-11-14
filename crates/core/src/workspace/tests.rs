@@ -19,6 +19,8 @@ struct FakeIo {
     on_parking_desktop: BTreeSet<WindowId>,
     journal_fails: bool,
     journals: Vec<Vec<JournalEntry>>,
+    /// Windows that close as soon as they are moved.
+    closing_when_moved: BTreeSet<WindowId>,
     moves: Vec<WindowId>,
     focused: Option<WindowId>,
 }
@@ -47,6 +49,10 @@ impl WorkspaceIo for FakeIo {
             .ok_or_else(|| WindowError::unavailable("gone"))
     }
 
+    fn is_closed(&mut self, window: WindowId) -> bool {
+        !self.frames.contains_key(&window)
+    }
+
     fn is_movable(&mut self, window: WindowId) -> bool {
         self.frames.contains_key(&window) && !self.busy.contains(&window)
     }
@@ -61,6 +67,9 @@ impl WorkspaceIo for FakeIo {
 
     fn place(&mut self, window: WindowId, origin: Point, hidden: bool) -> Result<(), WindowError> {
         self.moves.push(window);
+        if self.closing_when_moved.contains(&window) {
+            self.frames.remove(&window);
+        }
         if !self.refusing.contains(&window)
             && let Some(frame) = self.frames.get_mut(&window)
         {
@@ -268,6 +277,29 @@ fn minimized_windows_never_move() {
 }
 
 #[test]
+fn a_window_closing_during_a_switch_leaves_the_session_and_the_switch_goes_on() {
+    let mut io = two_windows();
+    let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
+    session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
+    io.closing_when_moved.insert(WindowId(2));
+
+    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
+
+    assert_eq!(session.active(), "two");
+    assert!(session.member(WindowId(2)).is_none());
+    assert!(session.member(WindowId(1)).unwrap().parked.is_some());
+    assert_eq!(
+        io.journals
+            .last()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.window)
+            .collect::<Vec<_>>(),
+        [WindowId(1)]
+    );
+}
+
+#[test]
 fn sending_parks_without_switching_and_sending_back_unparks() {
     let mut io = FakeIo::with(&[
         (1, Rect::new(100.0, 100.0, 600.0, 400.0)),
@@ -404,15 +436,15 @@ fn three_windows() -> FakeIo {
 }
 
 #[test]
-fn carried_windows_join_the_target_where_they_are_and_the_last_one_gets_focus() {
+fn windows_taken_along_join_the_target_where_they_are_and_the_last_one_gets_focus() {
     let mut io = three_windows();
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one"), (3, "one")]);
     session.note_focus(WindowId(1));
     io.moves.clear();
 
-    let carried = [WindowId(3), WindowId(2)];
+    let along = [WindowId(3), WindowId(2)];
     let focused = session
-        .switch_carrying("two", &carried, &[DISPLAY], true, &mut io)
+        .switch_taking_along("two", &along, &[DISPLAY], true, &mut io)
         .unwrap();
     assert!(focused);
     assert_eq!(session.active(), "two");
@@ -430,13 +462,13 @@ fn carried_windows_join_the_target_where_they_are_and_the_last_one_gets_focus() 
 }
 
 #[test]
-fn carrying_skips_windows_of_other_workspaces() {
+fn taking_along_skips_windows_of_other_workspaces() {
     let mut io = three_windows();
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one"), (3, "one")]);
     session.send(WindowId(3), "three", &[DISPLAY], &mut io).unwrap();
 
     session
-        .switch_carrying("two", &[WindowId(3)], &[DISPLAY], true, &mut io)
+        .switch_taking_along("two", &[WindowId(3)], &[DISPLAY], true, &mut io)
         .unwrap();
     assert_eq!(session.member(WindowId(3)).unwrap().workspace, "three");
     assert!(io.origin(3).x > 1400.0);
@@ -488,12 +520,12 @@ fn workspace_of(session: &Session, id: u64) -> &str {
 }
 
 #[test]
-fn carrying_a_tab_carries_its_whole_group_without_moving_the_hidden_tabs() {
+fn taking_a_tab_along_takes_its_whole_group_without_moving_the_hidden_tabs() {
     let mut io = FakeIo::default();
     let mut session = tabbed_session(&mut io);
 
     session
-        .switch_carrying("two", &[WindowId(1)], &[DISPLAY], true, &mut io)
+        .switch_taking_along("two", &[WindowId(1)], &[DISPLAY], true, &mut io)
         .unwrap();
     for id in [1, 2, 3] {
         assert_eq!(workspace_of(&session, id), "two", "tab {id}");
@@ -505,12 +537,12 @@ fn carrying_a_tab_carries_its_whole_group_without_moving_the_hidden_tabs() {
 }
 
 #[test]
-fn a_selected_tab_its_app_has_since_hidden_carries_its_group() {
+fn a_selected_tab_its_app_has_since_hidden_takes_its_group_along() {
     let mut io = FakeIo::default();
     let mut session = tabbed_session(&mut io);
 
     session
-        .switch_carrying("two", &[WindowId(3)], &[DISPLAY], true, &mut io)
+        .switch_taking_along("two", &[WindowId(3)], &[DISPLAY], true, &mut io)
         .unwrap();
     for id in [1, 2, 3] {
         assert_eq!(workspace_of(&session, id), "two", "tab {id}");
@@ -589,7 +621,7 @@ fn a_torn_out_tab_keeps_its_groups_workspace_and_moves_on_its_own() {
     let mut io = FakeIo::default();
     let mut session = tabbed_session(&mut io);
     session
-        .switch_carrying("two", &[WindowId(1)], &[DISPLAY], true, &mut io)
+        .switch_taking_along("two", &[WindowId(1)], &[DISPLAY], true, &mut io)
         .unwrap();
 
     // Tab 3 is dragged out: the platform now reports 1 with only 2 behind it.

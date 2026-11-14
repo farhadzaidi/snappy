@@ -10,6 +10,8 @@ mod core;
 mod debug_log;
 mod diagnostics;
 mod drag;
+mod focus;
+mod marks;
 mod ops;
 mod selection;
 mod store;
@@ -115,19 +117,13 @@ impl<P: Platform + 'static> Engine<P> {
             }
             PlatformEvent::WindowMoved(window) => {
                 let mut core = shared.core.borrow_mut();
-                let outlined = core
-                    .selection
-                    .windows
-                    .iter()
-                    .any(|selected| core.workspaces.tab_root(*selected) == window);
-                if outlined || core.selection.flash == Some(window) {
-                    core.refresh_marks();
-                }
+                core.marked_window_moved(window);
                 workspaces::window_moved(&mut core, window)
             }
             PlatformEvent::WindowDestroyed(window) => {
                 let mut core = shared.core.borrow_mut();
-                selection::window_closed(&mut core, window);
+                selection::remove(&mut core, window, "closed");
+                focus::window_closed(&mut core, window);
                 workspaces::window_destroyed(&mut core, window)
             }
             PlatformEvent::AppLaunched { .. } => {}
@@ -257,11 +253,11 @@ impl<P: Platform + 'static> Engine<P> {
 
     /// The latest status message.
     pub fn status(&self) -> Option<snappy_ipc::Status> {
-        self.shared.core.borrow().status.clone()
+        self.shared.core.borrow().status().cloned()
     }
 
     pub fn is_live(&self) -> bool {
-        self.shared.core.borrow().live
+        self.shared.core.borrow().is_live()
     }
 
     /// Direct access to the platform, for the app shell and tests.

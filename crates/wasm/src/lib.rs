@@ -49,9 +49,16 @@ exports! {
     setField => set_field,
     chordLabels => chord_labels,
     isValidChord => is_valid_chord,
-    normalizeChord => normalize_chord,
+    recordChord => record_chord,
+    expandChord => expand_chord,
     snappyKeyLabel => snappy_key_label,
+    changeSnappyKey => change_snappy_key,
+    snappyKeyProbes => snappy_key_probes,
     modifierNames => modifier_names,
+    shortcutTitles => shortcut_titles,
+    workspaceShortcutTitles => workspace_shortcut_titles,
+    layoutShortcutTitles => layout_shortcut_titles,
+    defaultShortcuts => default_shortcuts,
     presets => presets,
     isValidLayout => is_valid_layout,
     defaultSettings => default_settings,
@@ -121,26 +128,132 @@ mod tests {
 
     #[test]
     fn recorded_chords_holding_the_snappy_keys_modifiers_come_back_as_the_snappy_key() {
-        let recorded =
-            json!({ "chord": { "code": "Digit1", "mods": ["shift", "ctrl", "alt", "meta"], "label": "1" } });
-        let normalized = answer(normalize_chord(&recorded.to_string()));
+        let recorded = json!({
+            "chord": { "code": "Digit1", "mods": ["shift", "ctrl", "alt", "meta"], "label": "1" },
+            "snappyKey": ["ctrl", "alt", "meta"],
+        });
+        let stored = answer(record_chord(&recorded.to_string()));
         assert_eq!(
-            normalized,
+            stored,
             json!({ "code": "Digit1", "mods": ["snappy", "shift"], "label": "1" })
         );
-        let partial = json!({ "chord": { "code": "KeyK", "mods": ["ctrl", "alt"] } });
+        let partial = json!({
+            "chord": { "code": "KeyK", "mods": ["ctrl", "alt"] },
+            "snappyKey": ["ctrl", "alt", "meta"],
+        });
         assert_eq!(
-            answer(normalize_chord(&partial.to_string())),
+            answer(record_chord(&partial.to_string())),
             json!({ "code": "KeyK", "mods": ["ctrl", "alt"] })
         );
         assert_eq!(
-            answer(snappy_key_label(&json!({ "platform": "windows" }).to_string())),
+            answer(snappy_key_label(
+                &json!({ "snappyKey": ["ctrl", "alt", "meta"], "platform": "windows" }).to_string()
+            )),
             "Ctrl + Alt + Win"
         );
         let labels = answer(chord_labels(
             &json!({ "chord": { "code": "Digit1", "mods": ["snappy"] }, "platform": "macos" }).to_string(),
         ));
         assert_eq!(labels, json!({ "compact": "Snappy + 1", "long": "Snappy + 1" }));
+    }
+
+    #[test]
+    fn a_chosen_snappy_key_records_expands_and_labels_with_its_own_modifiers() {
+        let control_shift = json!(["ctrl", "shift"]);
+        let recorded = json!({
+            "chord": { "code": "KeyJ", "mods": ["shift", "ctrl"] },
+            "snappyKey": control_shift,
+        });
+        assert_eq!(
+            answer(record_chord(&recorded.to_string())),
+            json!({ "code": "KeyJ", "mods": ["snappy"] })
+        );
+        let symbolic =
+            json!({ "chord": { "code": "KeyJ", "mods": ["snappy", "alt"] }, "snappyKey": control_shift });
+        assert_eq!(
+            answer(expand_chord(&symbolic.to_string())),
+            json!({ "code": "KeyJ", "mods": ["shift", "ctrl", "alt"] })
+        );
+        assert_eq!(
+            answer(snappy_key_label(
+                &json!({ "snappyKey": control_shift, "platform": "macos" }).to_string()
+            )),
+            "Control + Shift"
+        );
+    }
+
+    #[test]
+    fn every_shortcut_title_comes_from_core_by_its_settings_field() {
+        let titles = answer(shortcut_titles("{}"));
+        assert_eq!(titles["navigation"]["left"], "Move window left");
+        assert_eq!(
+            titles["navigation"]["nearestEmpty"],
+            "Move to the nearest empty zone"
+        );
+        assert_eq!(titles["navigation"]["clearSelection"], "Clear selection");
+        assert_eq!(titles["navigation"].as_object().unwrap().len(), 11);
+        assert_eq!(
+            titles["workspaceSteps"]["sendNext"],
+            "Send window to next workspace"
+        );
+        assert_eq!(titles["history"]["undo"], "Undo window move");
+
+        let own = answer(workspace_shortcut_titles(
+            &json!({ "workspace": "Work" }).to_string(),
+        ));
+        assert_eq!(own["switchShortcut"], "Switch to Work");
+        assert_eq!(own["sendShortcut"], "Send window to Work");
+        assert_eq!(own["sendAndSwitchShortcut"], "Send window to Work and switch");
+        assert_eq!(own.as_object().unwrap().len(), 3);
+
+        let layout = answer(layout_shortcut_titles(
+            &json!({ "layout": "Halves", "zones": 2 }).to_string(),
+        ));
+        assert_eq!(
+            layout,
+            json!({ "select": "Select Halves", "zones": ["Zone 1 of Halves", "Zone 2 of Halves"] })
+        );
+
+        let help = answer(default_shortcuts(&json!({ "platform": "windows" }).to_string()));
+        assert_eq!(help[0]["title"], "Move to the neighboring zone");
+        assert_eq!(
+            help[0]["chord"],
+            json!({ "code": "ArrowLeft", "mods": ["snappy"], "label": "← → ↑ ↓" })
+        );
+    }
+
+    #[test]
+    fn changing_the_snappy_key_matches_core() {
+        let settings = Settings::defaults(Platform::MacOs);
+        let changed = answer(change_snappy_key(
+            &json!({ "settings": settings, "modifiers": ["ctrl", "alt"], "platform": "macos" }).to_string(),
+        ));
+        let expected = settings
+            .with_snappy_key(
+                [Modifier::Ctrl, Modifier::Alt].into_iter().collect(),
+                Platform::MacOs,
+            )
+            .unwrap();
+        assert_eq!(changed["valid"], to_value(&expected));
+        let refused = answer(change_snappy_key(
+            &json!({ "settings": settings, "modifiers": ["ctrl"], "platform": "macos" }).to_string(),
+        ));
+        assert_eq!(refused["invalid"], "The Snappy key needs at least two modifiers.");
+
+        let probes = answer(snappy_key_probes(
+            &json!({ "settings": expected, "platform": "macos" }).to_string(),
+        ));
+        let space = probes
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|probe| probe["chord"]["code"] == "Space")
+            .unwrap();
+        assert_eq!(space["chord"]["mods"], json!(["ctrl", "alt"]));
+        assert_eq!(
+            space["refusal"],
+            "Snappy + Space for Move to the nearest empty zone would be Control + Option + Space, which macOS or another app already uses."
+        );
     }
 
     #[test]

@@ -60,17 +60,18 @@ pub fn zone_style(zone: &OverlayZone, accent: u32) -> ZoneStyle {
 }
 
 /// A selected window's outline: the swap source's border, drawn inside the window's frame.
-pub const MARK_BORDER: Color = Color::rgb(MINT, 1.0);
+pub const SELECTED_BORDER: Color = Color::rgb(MINT, 1.0);
 /// The brief outline of a window a focus shortcut just focused, in a color of its own so
 /// it never reads as selected.
-pub const FOCUS_BORDER: Color = Color::rgb(ORANGE, 1.0);
+pub const FOCUSED_BORDER: Color = Color::rgb(ORANGE, 1.0);
 
 pub fn mark_border(style: MarkStyle) -> Color {
     match style {
-        MarkStyle::Selected => MARK_BORDER,
-        MarkStyle::Focused => FOCUS_BORDER,
+        MarkStyle::Selected => SELECTED_BORDER,
+        MarkStyle::Focused => FOCUSED_BORDER,
     }
 }
+
 pub const MARK_BORDER_WIDTH: f64 = 3.0;
 /// Close to Windows 11's own window corners.
 pub const MARK_CORNER_RADIUS: f64 = 8.0;

@@ -2,8 +2,8 @@
 // with the real `snappy-core` rules, and keep the old state if validation fails.
 
 import { findLayout, isPreset, optionsFor } from "../../core/layouts";
-import { modifierLabel } from "../../core/labels";
-import type { AppState, Command, KeyChord, Layout, Settings, Workspace } from "../../core/model";
+import { modifierLabel, snappyKeyLabel } from "../../core/labels";
+import type { AppState, Command, KeyChord, Layout, Modifier, Settings, Workspace } from "../../core/model";
 import { MAX_WORKSPACES } from "../../core/model";
 import { core } from "../../core/snappyCore";
 
@@ -40,17 +40,9 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
         ...settings,
         snapping: { ...settings.snapping, shortcutsEnabled: command.enabled },
       });
+    case "setSnappyKey":
+      return setSnappyKey(state, command.modifiers, system);
     case "setNavigationShortcut":
-      return save(state, {
-        ...settings,
-        navigation: { ...settings.navigation, [command.direction]: command.chord },
-      });
-    case "setNearestEmptyShortcut":
-      return save(state, {
-        ...settings,
-        navigation: { ...settings.navigation, nearestEmpty: command.chord },
-      });
-    case "setFocusShortcut":
       return save(state, {
         ...settings,
         navigation: { ...settings.navigation, [command.shortcut]: command.chord },
@@ -123,6 +115,32 @@ function save(state: AppState, settings: Settings): Outcome {
     return { state, error: validation.invalid };
   }
   return done({ ...state, settings: validation.valid });
+}
+
+/**
+ * Change the Snappy key as the daemon does: check every shortcut with the new modifiers, then
+ * ask about each chord the change moves, refusing with the reason when anything clashes.
+ */
+function setSnappyKey(state: AppState, modifiers: Modifier[], system: FakeSystem): Outcome {
+  if (sameModifiers(modifiers, state.settings.snappyKey)) {
+    return done(state);
+  }
+  const changed = core.changeSnappyKey(state.settings, modifiers, state.platform);
+  if ("invalid" in changed) {
+    return { state, error: changed.invalid };
+  }
+  const taken = core
+    .snappyKeyProbes(changed.valid, state.platform)
+    .find((probe) => !system.isAvailable(probe.chord));
+  if (taken) {
+    return { state, error: taken.refusal };
+  }
+  const label = snappyKeyLabel(changed.valid.snappyKey, state.platform);
+  return withStatus(done({ ...state, settings: changed.valid }), `The Snappy key is now ${label}.`);
+}
+
+function sameModifiers(a: Modifier[], b: Modifier[]): boolean {
+  return a.length === b.length && a.every((modifier) => b.includes(modifier));
 }
 
 function withStatus(outcome: Outcome, message: string, notify = true): Outcome {
