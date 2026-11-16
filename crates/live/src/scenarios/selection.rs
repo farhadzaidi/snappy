@@ -1,7 +1,7 @@
 //! Selecting windows, taking them along, and placing them in empty zones.
 
 use snappy_core::geometry::Rect;
-use snappy_core::settings::{FocusShortcut, NavigationShortcut, WorkspaceStep};
+use snappy_core::settings::{NavigationShortcut, WorkspaceStep};
 
 use super::Outcome;
 use super::support::{Context, floating, side_by_side, timed};
@@ -13,7 +13,7 @@ use crate::screen::screenshot;
 pub(super) fn select_along_by_number(context: &mut Context) -> Result<Outcome, String> {
     context.open("along", floating(&context.display, 120.0))?;
     let before = context.fixture.frame("along")?;
-    context.press(&context.navigation_key(FocusShortcut::SelectWindow)?)?;
+    context.press(&context.navigation_key(NavigationShortcut::SelectWindow)?)?;
     context.wait_outlines(true)?;
     screenshot(&context.out.join("selection_outline.png"));
 
@@ -63,7 +63,7 @@ pub(super) fn select_two_along_by_step(context: &mut Context) -> Result<Outcome,
 pub(super) fn unselect(context: &mut Context) -> Result<Outcome, String> {
     context.open("down", floating(&context.display, 160.0))?;
     let before = context.fixture.frame("down")?;
-    let select = context.navigation_key(FocusShortcut::SelectWindow)?;
+    let select = context.navigation_key(NavigationShortcut::SelectWindow)?;
     context.press(&select)?;
     context.wait_outlines(true)?;
     context.press(&select)?;
@@ -95,7 +95,7 @@ pub(super) fn place_selection(context: &mut Context) -> Result<Outcome, String> 
     context.select(&["place-left", "place-right"])?;
 
     let seen = context.snaps().len();
-    context.press(&context.navigation_key(NavigationShortcut::NearestEmpty)?)?;
+    context.press(&context.navigation_key(NavigationShortcut::NearestEmptyZone)?)?;
     let left = context.wait_in("place-left", context.zone(0)?)?;
     let right = context.wait_in("place-right", context.zone(1)?)?;
     context.wait_outlines(false)?;
@@ -137,7 +137,7 @@ fn select_and_clear(context: &mut Context) -> Result<Outcome, String> {
         frames.push(context.fixture.frame(id)?);
     }
     context.select(&ids)?;
-    context.press(&context.navigation_key(FocusShortcut::ClearSelection)?)?;
+    context.press(&context.navigation_key(NavigationShortcut::ClearSelection)?)?;
     context.wait_outlines(false)?;
     let elapsed = context.elapsed_ms();
     for (id, before) in ids.iter().zip(frames) {

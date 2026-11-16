@@ -13,17 +13,42 @@ use crate::ops::Shared;
 use crate::selection;
 
 use super::CoreIo;
-use super::events::discover_focused_into;
+use super::containment;
+use super::events::{Discovery, discover_focused_into};
 use super::members::{enroll, sync_all_tabs, sync_tabs};
 use super::recovery::save_membership;
 use super::refresh_members;
 
-/// Switch to `target`. `focus_settings` gives focus to the settings window afterwards
-/// instead of the workspace's own last window.
+/// What gets focus once a switch is done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SwitchFocus {
+    /// The window taken along or used last on the workspace, or Snappy when there is none.
+    Workspace,
+    /// The settings window, which the switch was made to reveal.
+    Settings,
+}
+
+/// A switch asked for while displays were changing, to run once they settle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeferredSwitch {
+    pub target: String,
+    pub focus: SwitchFocus,
+}
+
+/// What happens once windows are sent to another workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AfterSend {
+    /// Stay, focusing the window used most recently among those left.
+    Stay,
+    /// Switch there too.
+    Follow,
+}
+
+/// Switch to `target`, then focus what `focus` says.
 pub(crate) fn request_switch<P: Platform + 'static>(
     shared: &Rc<Shared<P>>,
     target: &str,
-    focus_settings: bool,
+    focus: SwitchFocus,
 ) {
     {
         let mut core = shared.core.borrow_mut();
@@ -37,7 +62,10 @@ pub(crate) fn request_switch<P: Platform + 'static>(
         } else if core.workspaces.paused {
             Some("paused on another desktop")
         } else if core.workspaces.display_update_pending {
-            core.workspaces.deferred_switch = Some((target.to_owned(), focus_settings));
+            core.workspaces.deferred_switch = Some(DeferredSwitch {
+                target: target.to_owned(),
+                focus,
+            });
             Some("waiting for displays to settle")
         } else if core.settings.workspaces.item(target).is_none() {
             Some("no such workspace")
@@ -53,18 +81,19 @@ pub(crate) fn request_switch<P: Platform + 'static>(
             );
             return;
         }
-        core.workspaces.requested = Some(target.to_owned());
     }
-    let target = target.to_owned();
     let requested_at = shared.core.borrow().platform.now();
+    let switch_target = target.to_owned();
     shared.submit(move |shared, _cancel| async move {
         let mut core = shared.core.borrow_mut();
-        switch_now(&mut core, &target, focus_settings, requested_at);
+        switch_now(&mut core, &switch_target, focus, requested_at);
         core.workspaces.requested = None;
     });
+    // After submitting, which cancels whatever was in flight and with it any earlier request.
+    shared.core.borrow_mut().workspaces.requested = Some(target.to_owned());
 }
 
-fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: bool, requested_at: f64) {
+fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus: SwitchFocus, requested_at: f64) {
     let Some(mut session) = core.workspaces.session.take() else {
         return;
     };
@@ -74,7 +103,7 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
         ..SwitchTiming::default()
     };
     core.workspaces.focus.begin_change();
-    discover_focused_into(core, &mut session, false, false);
+    discover_focused_into(core, &mut session, Discovery::Switch);
     refresh_members(core, &mut session);
     timing.discovery_ms = clock.lap(core.platform.now());
 
@@ -83,7 +112,8 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
     let along = core.selection.windows.clone();
     let result = {
         let mut io = CoreIo::new(&mut *core);
-        session.switch_taking_along(target, &along, &displays, !focus_settings, &mut io)
+        let focus_incoming = focus == SwitchFocus::Workspace;
+        session.switch_taking_along(target, &along, &displays, focus_incoming, &mut io)
     };
     let arrived: Vec<WindowId> = along
         .iter()
@@ -100,15 +130,15 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
 
     match result {
         Ok(focused_any) => {
-            if focus_settings {
+            if focus == SwitchFocus::Settings {
                 core.outbox.push(ToSettings::Focus);
             } else if !focused_any {
                 core.platform.activate_self();
             }
-            save_membership(core, &session);
-            timing.membership_ms = clock.lap(core.platform.now());
             if commit_active(core, target) {
                 timing.settings_ms = clock.lap(core.platform.now());
+                save_membership(core, &session);
+                timing.membership_ms = clock.lap(core.platform.now());
                 core.configure_hotkeys();
                 core.prepare_overlays();
                 timing.refresh_ms = clock.lap(core.platform.now());
@@ -124,6 +154,8 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
             } else {
                 let mut io = CoreIo::new(&mut *core);
                 let _ = session.switch_taking_along(&previous, &arrived, &displays, true, &mut io);
+                // Windows taken along went back, and the switch never happened.
+                save_membership(core, &session);
             }
         }
         Err(error) => {
@@ -144,6 +176,7 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus_settings: boo
     );
     core.diagnostics.record_switch(timing);
     core.workspaces.session = Some(session);
+    containment::review(core);
     let now = core.platform.now();
     core.workspaces.focus.end_change(now);
     core.update_tray();
@@ -174,7 +207,7 @@ fn commit_active<P: Platform>(core: &mut Core<P>, target: &str) -> bool {
             true
         }
         Err(error) => {
-            core.announce_error(&format!("Could not save the workspace selection: {error}"));
+            core.announce_error(&format!("Couldn't save the workspace selection: {error}"));
             false
         }
     }
@@ -183,7 +216,7 @@ fn commit_active<P: Platform>(core: &mut Core<P>, target: &str) -> bool {
 /// Previous or next workspace in saved order.
 pub(crate) fn cycle<P: Platform + 'static>(shared: &Rc<Shared<P>>, step: isize) {
     if let Some(target) = adjacent(shared, step) {
-        request_switch(shared, &target, false);
+        request_switch(shared, &target, SwitchFocus::Workspace);
     }
 }
 
@@ -191,7 +224,7 @@ pub(crate) fn cycle<P: Platform + 'static>(shared: &Rc<Shared<P>>, step: isize) 
 /// `cycle`, and stay.
 pub(crate) fn send_and_stay<P: Platform + 'static>(shared: &Rc<Shared<P>>, step: isize) {
     if let Some(target) = adjacent(shared, step) {
-        send_focused(shared, &target, false);
+        send_focused(shared, &target, AfterSend::Stay);
     }
 }
 
@@ -209,10 +242,10 @@ fn adjacent<P: Platform>(shared: &Shared<P>, step: isize) -> Option<String> {
         .map(|item| item.id.clone())
 }
 
-/// Send the focused window to `target`, then switch there when `follow`. Without `follow`,
-/// a selection is sent instead of the focused window, and focus moves to the window used
-/// most recently among those left, so pressing again sends that one.
-pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target: &str, follow: bool) {
+/// Send the focused window to `target`, then do what `then` says. To stay, a selection is
+/// sent instead of the focused window, and focus moves to the window used most recently
+/// among those left, so pressing again sends that one.
+pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target: &str, then: AfterSend) {
     if !shared.core.borrow().workspaces.is_running() {
         return;
     }
@@ -220,8 +253,8 @@ pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target
     shared.submit(move |shared, _cancel| async move {
         let sent = {
             let mut core = shared.core.borrow_mut();
-            if follow || !selection::has_windows(&mut core) {
-                send_now(&mut core, &target, !follow).into_iter().collect()
+            if then == AfterSend::Follow || !selection::has_windows(&mut core) {
+                send_now(&mut core, &target, then).into_iter().collect()
             } else {
                 send_selection_now(&mut core, &target)
             }
@@ -231,15 +264,15 @@ pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target
                 history.forget(*window);
             }
         }
-        if follow && !sent.is_empty() {
+        if then == AfterSend::Follow && !sent.is_empty() {
             let mut core = shared.core.borrow_mut();
             let now = core.platform.now();
-            switch_now(&mut core, &target, false, now);
+            switch_now(&mut core, &target, SwitchFocus::Workspace, now);
         }
     });
 }
 
-fn send_now<P: Platform>(core: &mut Core<P>, target: &str, stay: bool) -> Option<WindowId> {
+fn send_now<P: Platform>(core: &mut Core<P>, target: &str, then: AfterSend) -> Option<WindowId> {
     let focused = match core.platform.focused_window() {
         Ok(info) => info,
         Err(_) => {
@@ -259,7 +292,7 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str, stay: bool) -> Option
         return None;
     }
 
-    let outcome = send_windows(core, &mut session, &[focused.id], target, stay);
+    let outcome = send_windows(core, &mut session, &[focused.id], target, then);
     let sent = match outcome.failure {
         None => {
             let tabs = tabs_along(&session, &[focused.id]);
@@ -268,7 +301,7 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str, stay: bool) -> Option
                     "window": focused.id.0,
                     "app": focused.app,
                     "to": target,
-                    "stay": stay,
+                    "stay": then == AfterSend::Stay,
                     "focused": outcome.focused.map(|window| window.0),
                     "tabs": tabs,
                 })
@@ -310,7 +343,7 @@ fn send_selection_now<P: Platform>(core: &mut Core<P>, target: &str) -> Vec<Wind
         })
         .collect();
 
-    let outcome = send_windows(core, &mut session, &selected, target, true);
+    let outcome = send_windows(core, &mut session, &selected, target, AfterSend::Stay);
     if !outcome.sent.is_empty() {
         let windows: Vec<u64> = outcome.sent.iter().map(|window| window.0).collect();
         let tabs = tabs_along(&session, &outcome.sent);
@@ -343,13 +376,13 @@ struct Sent {
 }
 
 /// Send `windows` of the active workspace to `target`, saving membership when any went.
-/// With `stay`, focus moves to the window used most recently among those left.
+/// To stay, focus moves to the window used most recently among those left.
 fn send_windows<P: Platform>(
     core: &mut Core<P>,
     session: &mut Session,
     windows: &[WindowId],
     target: &str,
-    stay: bool,
+    then: AfterSend,
 ) -> Sent {
     core.workspaces.focus.begin_change();
     let displays = core.display_frames();
@@ -365,7 +398,7 @@ fn send_windows<P: Platform>(
             Err(error) => failure = failure.or(Some(error)),
         }
     }
-    let focused = if stay && !sent.is_empty() {
+    let focused = if then == AfterSend::Stay && !sent.is_empty() {
         session.focus_recent(&mut CoreIo::new(&mut *core))
     } else {
         None
@@ -416,6 +449,7 @@ pub(crate) fn remove_workspace<P: Platform>(
         save_membership(core, &session);
     }
     core.workspaces.session = Some(session);
+    containment::review(core);
     let now = core.platform.now();
     core.workspaces.focus.end_change(now);
     result

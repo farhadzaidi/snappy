@@ -136,6 +136,18 @@ impl Rect {
     pub fn with_origin(self, origin: Point) -> Rect {
         Rect::new(origin.x, origin.y, self.width, self.height)
     }
+
+    /// Signed distance from `point` to the edge of this rectangle with its corners rounded
+    /// by `radius`; negative inside. Rasterizers turn it into antialiased coverage.
+    pub fn rounded_distance(self, point: Point, radius: f64) -> f64 {
+        let half_w = self.width / 2.0;
+        let half_h = self.height / 2.0;
+        let radius = radius.min(half_w).min(half_h).max(0.0);
+        let dx = (point.x - self.mid_x()).abs() - (half_w - radius);
+        let dy = (point.y - self.mid_y()).abs() - (half_h - radius);
+        let outside = dx.max(0.0).hypot(dy.max(0.0));
+        outside + dx.max(dy).min(0.0) - radius
+    }
 }
 
 /// Index of the area with the largest overlap with `rect`. The first entry wins ties.
@@ -162,6 +174,15 @@ pub fn distance(dx: f64, dy: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rounded_distance_is_negative_inside_and_measured_from_the_corner_arc() {
+        let rect = Rect::new(0.0, 0.0, 10.0, 10.0);
+        assert_eq!(rect.rounded_distance(Point::new(5.0, 2.0), 2.0), -2.0);
+        assert_eq!(rect.rounded_distance(Point::new(5.0, 13.0), 2.0), 3.0);
+        let past_corner = rect.rounded_distance(Point::new(-1.0, -1.0), 2.0);
+        assert!((past_corner - (18f64.sqrt() - 2.0)).abs() < 1e-9);
+    }
 
     #[test]
     fn containment_is_half_open() {

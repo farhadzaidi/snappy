@@ -1,7 +1,7 @@
 import { useObservable } from "../state/observable";
 import { PAGES } from "../state/session";
 import { useNavigation, useServices, useSession } from "../state/services";
-import { LogoIcon } from "../ui/icons";
+import { AppIcon } from "../ui/icons";
 import { HelpButton } from "./HelpPopover";
 import { SnappingButton } from "./SnappingButton";
 
@@ -16,7 +16,7 @@ export function Header() {
     <header className="header">
       <div className="brand">
         <span className="brand-logo">
-          <LogoIcon />
+          <AppIcon />
         </span>
         <span className="brand-name">Snappy</span>
       </div>

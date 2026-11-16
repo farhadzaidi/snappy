@@ -22,12 +22,27 @@ export function IconButton({ label, className = "", ...props }: ButtonProps & { 
   );
 }
 
-/** A toolbar button: an icon followed by a short label saying what it does. */
-export function ToolButton({ icon, className = "", children, ...props }: ButtonProps & { icon: ReactNode }) {
+/**
+ * A toolbar button: an icon followed by a short label saying what it does. A compact one
+ * shows only the icon, and the label names it for assistive technology and the tooltip.
+ */
+export function ToolButton({
+  icon,
+  label,
+  compact = false,
+  className = "",
+  ...props
+}: ButtonProps & { icon: ReactNode; label: string; compact?: boolean }) {
   return (
-    <button type="button" className={`tool-button ${className}`} {...props}>
+    <button
+      type="button"
+      className={`tool-button ${compact ? "tool-button-compact" : ""} ${className}`}
+      aria-label={compact ? label : undefined}
+      title={compact ? label : undefined}
+      {...props}
+    >
       {icon}
-      <span>{children}</span>
+      {!compact && <span>{label}</span>}
     </button>
   );
 }

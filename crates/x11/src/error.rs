@@ -5,7 +5,7 @@ use thiserror::Error;
 pub enum X11Error {
     #[error("{}", crate::messages::WAYLAND)]
     WaylandWithoutX,
-    #[error("Snappy could not connect to the X server: {0}")]
+    #[error("Snappy couldn't connect to the X server: {0}")]
     Connect(#[from] x11rb::errors::ConnectError),
     #[error("The connection to the X server failed: {0}")]
     Connection(#[from] x11rb::errors::ConnectionError),
@@ -15,6 +15,6 @@ pub enum X11Error {
     ReplyOrId(#[from] x11rb::errors::ReplyOrIdError),
     #[error("The X server has no screen for this display.")]
     NoScreen,
-    #[error("Snappy could not start a thread: {0}")]
+    #[error("Snappy couldn't start a thread: {0}")]
     Thread(#[from] std::io::Error),
 }

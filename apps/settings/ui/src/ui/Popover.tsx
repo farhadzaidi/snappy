@@ -1,19 +1,21 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 
 interface PopoverProps {
+  id?: string;
   label: string;
   onClose: () => void;
   /** The element the popover belongs to; presses inside it don't close the popover. */
   anchor: RefObject<HTMLElement | null>;
   align?: "start" | "end";
   placement?: "below" | "above";
-  role?: "dialog" | "listbox" | "menu";
+  role?: "dialog" | "listbox" | "menu" | "note";
   className?: string;
   children: ReactNode;
 }
 
 /** A panel under its anchor that closes on Escape and on presses elsewhere. */
 export function Popover({
+  id,
   label,
   onClose,
   anchor,
@@ -48,6 +50,7 @@ export function Popover({
   return (
     <div
       ref={panel}
+      id={id}
       role={role}
       aria-label={label}
       className={`popover popover-${align} popover-${placement} ${className}`}

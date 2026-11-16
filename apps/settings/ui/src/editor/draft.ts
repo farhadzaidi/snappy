@@ -1,8 +1,8 @@
 // The editor's draft: what is being edited, what was last saved, and the undo history.
 // Every function returns a new state.
 
-import type { KeyChord, Layout, LayoutOptions } from "../core/model";
-import { MAX_ZONES } from "../core/model";
+import type { KeyChord, Layout, LayoutOptions, Zone } from "../core/model";
+import { coreLimits } from "../core/limits";
 
 /** Undo keeps this many steps. */
 export const HISTORY_LIMIT = 60;
@@ -25,7 +25,8 @@ export interface Draft {
   future: Snapshot[];
   /** Where an open undo step began: a canvas gesture or a name-editing session. */
   stepStart: Snapshot | null;
-  selectedZoneId: string | null;
+  /** The selected zones' IDs; Shift-click selects more than one. */
+  selection: string[];
   tool: Tool;
   tab: SidebarTab;
 }
@@ -45,7 +46,7 @@ function fresh(current: Snapshot, saved: Snapshot | null): Draft {
     past: [],
     future: [],
     stepStart: null,
-    selectedZoneId: current.layout.zones[0]?.id ?? null,
+    selection: firstZone(current),
     tool: "select",
     tab: "zone",
   };
@@ -150,13 +151,36 @@ export function redo(draft: Draft): Draft {
   });
 }
 
-/** Keep the selection on a zone that still exists, or move it to the first zone. */
+/** Keep the selected zones that still exist, or select the first zone when none do. */
 export function keepSelection(draft: Draft): Draft {
-  const zones = draft.current.layout.zones;
-  if (zones.some((zone) => zone.id === draft.selectedZoneId)) {
+  const ids = new Set(draft.current.layout.zones.map((zone) => zone.id));
+  const kept = draft.selection.filter((id) => ids.has(id));
+  if (kept.length === draft.selection.length && kept.length > 0) {
     return draft;
   }
-  return { ...draft, selectedZoneId: zones[0]?.id ?? null };
+  return { ...draft, selection: kept.length > 0 ? kept : firstZone(draft.current) };
+}
+
+/** A selection of the snapshot's first zone, or of nothing on an empty canvas. */
+export function firstZone(snapshot: Snapshot): string[] {
+  const first = snapshot.layout.zones[0];
+  return first ? [first.id] : [];
+}
+
+/** The selected zones, in zone order. */
+export function selectedZones(draft: Draft): Zone[] {
+  return draft.current.layout.zones.filter((zone) => draft.selection.includes(zone.id));
+}
+
+/** The selected zone when exactly one is selected. */
+export function soleSelection(draft: Draft): Zone | null {
+  const selected = selectedZones(draft);
+  return selected.length === 1 ? (selected[0] ?? null) : null;
+}
+
+/** The selection with `zoneId` added, or taken out when it was in it. */
+export function toggled(selection: string[], zoneId: string): string[] {
+  return selection.includes(zoneId) ? selection.filter((id) => id !== zoneId) : [...selection, zoneId];
 }
 
 /**
@@ -197,7 +221,7 @@ export function followStored(draft: Draft, stored: Snapshot | null): Draft {
 }
 
 export function canAddZone(draft: Draft): boolean {
-  return draft.current.layout.zones.length < MAX_ZONES;
+  return draft.current.layout.zones.length < coreLimits().zones;
 }
 
 export function sameSnapshot(a: Snapshot, b: Snapshot): boolean {

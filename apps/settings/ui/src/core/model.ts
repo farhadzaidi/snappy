@@ -163,10 +163,19 @@ export interface AppState {
   capsLockProblem: string | null;
 }
 
+/**
+ * Why a change was refused: the message, and the title of the setting it names, when it names
+ * one, which the app points to.
+ */
+export interface Refusal {
+  message: string;
+  setting: string | null;
+}
+
 export type ToSettings =
   | { type: "hello"; protocolVersion: number }
   | ({ type: "state" } & AppState)
-  | { type: "reply"; id: number; error: string | null }
+  | { type: "reply"; id: number; error: Refusal | null }
   | { type: "probeResult"; available: boolean }
   | { type: "previewHidden" }
   | { type: "focus" };
@@ -200,20 +209,38 @@ export type Command =
   | { kind: "setDebugLog"; enabled: boolean }
   | { kind: "openPermissionSettings" }
   | { kind: "applyRemedy"; remedy: Remedy }
+  | { kind: "reset"; reset: Reset }
   | { kind: "importSettings"; path: string }
   | { kind: "exportSettings"; path: string }
   | { kind: "dismissStatus" };
 
 export type WorkspaceStep = "previous" | "next" | "sendPrevious" | "sendNext";
 
+/** The Settings page's sections of global shortcuts, each reset on its own. */
+export type ShortcutSection = "moveBetweenZones" | "focusAndSelection" | "workspaceSteps" | "windowHistory";
+
+/** What to put back to its defaults: see `Reset` in `crates/core/src/reset.rs`. */
+export type Reset =
+  | { scope: "shortcuts"; section: ShortcutSection }
+  | { scope: "workspaceShortcuts"; workspace: string }
+  | { scope: "settings" }
+  | { scope: "everything" };
+
 /** A workspace's own shortcut, named by the field that holds it. */
 export type WorkspaceShortcut = "switchShortcut" | "sendShortcut" | "sendAndSwitchShortcut";
 
 export type HistoryStep = "undo" | "redo";
 
-export const DIRECTIONS: readonly Direction[] = ["left", "right", "up", "down"];
+/**
+ * One shortcut by what it is, never by its title, which two workspaces or layouts may share:
+ * see `ShortcutId` in `crates/core/src/shortcuts.rs`.
+ */
+export type ShortcutId =
+  | { kind: "navigation"; shortcut: NavigationShortcut }
+  | { kind: "history"; step: HistoryStep }
+  | { kind: "workspaceStep"; step: WorkspaceStep }
+  | { kind: "workspace"; workspace: string; shortcut: WorkspaceShortcut }
+  | { kind: "layoutSelect"; layout: string }
+  | { kind: "zone"; layout: string; zone: string };
 
-/** Zones per layout, at most. */
-export const MAX_ZONES = 32;
-/** Workspaces, at most. */
-export const MAX_WORKSPACES = 32;
+export const DIRECTIONS: readonly Direction[] = ["left", "right", "up", "down"];

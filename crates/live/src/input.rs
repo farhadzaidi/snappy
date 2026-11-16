@@ -100,7 +100,7 @@ mod mac {
     }
 
     fn post(event: Option<objc2_core_foundation::CFRetained<CGEvent>>, mods: Mods) -> Result<(), String> {
-        let event = event.ok_or("could not create an input event")?;
+        let event = event.ok_or("couldn't create an input event")?;
         CGEvent::set_flags(Some(&event), flags(mods));
         CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
         Ok(())
@@ -162,7 +162,7 @@ mod mac {
             };
             for down in [true, false] {
                 let event =
-                    CGEvent::new_keyboard_event(None, key, down).ok_or("could not create a key event")?;
+                    CGEvent::new_keyboard_event(None, key, down).ok_or("couldn't create a key event")?;
                 CGEvent::set_flags(Some(&event), flags(mods) | extra);
                 CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
                 super::pause(20);
@@ -174,7 +174,7 @@ mod mac {
         /// on it.
         fn caps_lock(&mut self, down: bool) -> Result<(), String> {
             let event = CGEvent::new_keyboard_event(None, CAPS_LOCK_AS_SNAPPY_KEY, down)
-                .ok_or("could not create a key event")?;
+                .ok_or("couldn't create a key event")?;
             CGEvent::set_flags(Some(&event), CGEventFlags::MaskSecondaryFn);
             CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
             Ok(())

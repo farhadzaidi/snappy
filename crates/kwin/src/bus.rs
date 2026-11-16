@@ -14,6 +14,7 @@ use zbus::{MatchRule, Message};
 
 use crate::error::KWinError;
 use crate::protocol::{Answer, BUS_NAME, DOORBELL, Event, INTERFACE, Numbered, OBJECT_PATH, Request};
+use snappy_linux::journal;
 
 /// How long a request may take before the engine gives up on it. KWin answers from its main
 /// loop, normally within a frame.
@@ -53,7 +54,7 @@ impl CallError {
     /// Logs what went wrong for the daemon's output, once, where it happened.
     fn logged(self) -> CallError {
         if let CallError::Malformed(detail) = &self {
-            eprintln!("snappy: unexpected reply from KWin: {detail}");
+            journal::warn(format_args!("unexpected reply from KWin: {detail}"));
         }
         self
     }
@@ -261,7 +262,7 @@ impl Bus {
                 &(DOORBELL,),
             );
             if let Err(error) = rung {
-                eprintln!("snappy: couldn't reach KWin's script: {error}");
+                journal::warn(format_args!("couldn't reach KWin's script: {error}"));
             }
         });
         let _ = self.jobs.send(job);
@@ -366,7 +367,7 @@ impl Bus {
                     .and_then(|json| serde_json::from_str::<Vec<Answer>>(&json).ok())
                 {
                     Some(answers) => self.exchange.answer(answers),
-                    None => eprintln!("snappy: KWin's script sent answers Snappy can't read"),
+                    None => journal::warn("KWin's script sent answers Snappy can't read"),
                 }
                 let _ = self.conn.reply(&header, &(self.exchange.take(),));
                 None

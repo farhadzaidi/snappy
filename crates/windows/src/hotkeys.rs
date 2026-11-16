@@ -195,8 +195,8 @@ mod tests {
 
     #[test]
     fn modifiers_map_to_hotkey_flags() {
-        let hyper = Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
-        assert_eq!(modifier_flags(hyper), MOD_CONTROL.0 | MOD_ALT.0 | MOD_WIN.0);
+        let snappy_key = Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
+        assert_eq!(modifier_flags(snappy_key), MOD_CONTROL.0 | MOD_ALT.0 | MOD_WIN.0);
         assert_eq!(modifier_flags(Mods::NONE), 0);
         assert_eq!(modifier_flags(Mods::from_iter([Modifier::Shift])), MOD_SHIFT.0);
     }

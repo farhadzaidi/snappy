@@ -6,6 +6,7 @@ import { tauriBridge } from "./bridge/tauriBridge";
 import type { PlatformName } from "./core/model";
 import { loadCore } from "./core/snappyCore";
 import { EditorStore } from "./editor/editorStore";
+import { Recording } from "./recorder/recording";
 import { App } from "./shell/App";
 import { DaemonClient } from "./state/daemonClient";
 import { ServicesProvider } from "./state/services";
@@ -33,6 +34,7 @@ async function start(): Promise<void> {
   const client = new DaemonClient(bridge.transport);
   const session = createSession();
   const editor = new EditorStore(client, session);
+  const recording = new Recording(client);
   client.connect();
 
   const root = document.getElementById("root");
@@ -41,7 +43,7 @@ async function start(): Promise<void> {
   }
   createRoot(root).render(
     <StrictMode>
-      <ServicesProvider services={{ client, session, editor, bridge }}>
+      <ServicesProvider services={{ client, session, editor, recording, bridge }}>
         <App />
       </ServicesProvider>
     </StrictMode>,

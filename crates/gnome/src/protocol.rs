@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use snappy_core::geometry::Rect;
 pub use snappy_linux::scene::{Frame, OverlayMarks, OverlayOutline, OverlayScene, OverlayText, OverlayZone};
+use snappy_platform::CapsLockInput;
 
 /// Matches `PROTOCOL_VERSION` in the extension's `service.js`.
 pub const PROTOCOL_VERSION: u32 = 5;
@@ -234,19 +235,16 @@ pub enum Event {
     /// Caps Lock, while it is the Snappy key, went down or up alone, or something else was
     /// used meanwhile.
     CapsLock {
-        phase: CapsLockPhase,
+        phase: CapsLockInput,
+    },
+    /// The XKB options GNOME builds from the user's settings changed while Snappy's option
+    /// is in the keymap; these are the new ones, without Snappy's.
+    KeyboardOptions {
+        options: String,
     },
     /// Anything a newer extension reports that this version doesn't know.
     #[serde(other)]
     Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum CapsLockPhase {
-    Pressed,
-    OtherInput,
-    Released,
 }
 
 #[cfg(test)]
@@ -302,7 +300,7 @@ mod tests {
         assert_eq!(
             event,
             Event::CapsLock {
-                phase: CapsLockPhase::OtherInput
+                phase: CapsLockInput::OtherInput
             }
         );
         let event: Event = serde_json::from_str(r#"{"type":"somethingNew","detail":1}"#).unwrap();

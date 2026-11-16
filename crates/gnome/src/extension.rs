@@ -16,6 +16,7 @@ use crate::messages::{
     EXTENSIONS_OFF, SHELL_UNREACHABLE, TILING_ASSISTANT, extension_error, needs_login, other_version,
 };
 use crate::protocol::{EXTENSION_UUID, PROTOCOL_VERSION};
+use snappy_linux::journal;
 
 /// The extension's files, relative to its folder. `metadata.json` comes last: whether an
 /// install is fresh is told by it, so an install cut short is finished, and turned on, next
@@ -253,7 +254,7 @@ fn unavailable(
         // Running but not answering in this version: an older or newer copy is loaded.
         Some(state::ACTIVE) => return log_out(other_version(desktop)),
         Some(state::ERROR) => {
-            eprintln!("snappy: GNOME Shell couldn't start the extension: {error}");
+            journal::warn(format_args!("GNOME Shell couldn't start the extension: {error}"));
             return log_out(extension_error(desktop));
         }
         Some(state::OUT_OF_DATE) => EXTENSION_UNSUPPORTED,

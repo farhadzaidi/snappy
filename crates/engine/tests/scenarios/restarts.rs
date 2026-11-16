@@ -9,9 +9,10 @@ use snappy_platform::{PlatformEvent, WindowId};
 
 use crate::support::{
     FLOATING, LEFT_ZONE, RIGHT_ZONE, TABBED, active, all_writes, app_state, command, default_workspaces,
-    enable_workspaces, event, frame_of, hotkey_id, is_parked, live_engine, logged, marks, paths, paths_kept,
-    pick_tab, press_default, relaunched, remembered_workspaces, scenario, send_to, settle,
-    stopped_for_restart, switch_to, two_zoned_windows, visited_tabs, window_counts, with_window, writes_to,
+    enable_workspaces, event, frame_of, frozen, hotkey_id, is_parked, live_engine, logged, marks, paths,
+    paths_kept, pick_tab, press_default, relaunched, remembered_workspaces, saved_windows, scenario, send_to,
+    settle, stopped_for_restart, switch_to, two_zoned_windows, visited_tabs, window_counts, with_window,
+    writes_to,
 };
 
 #[test]
@@ -281,6 +282,33 @@ fn a_window_parked_for_the_workspace_showing_at_launch_comes_back() {
 }
 
 #[test]
+fn a_start_time_read_back_a_little_off_is_still_the_same_window() {
+    scenario(|| async {
+        let name = "restart-rounded-start";
+        let engine = live_engine(name, two_zoned_windows());
+        enable_workspaces(&engine);
+        let mut platform = stopped_for_restart(&engine);
+        for window in platform.windows.values_mut() {
+            window.launch_time += 0.0004;
+        }
+
+        let engine = relaunched(name, platform);
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 2)));
+        settle(&engine).await;
+        let saved = saved_windows(&paths_kept(name).membership());
+        assert_eq!(saved.len(), 2, "each window is saved once");
+
+        event(&engine, PlatformEvent::WindowDestroyed(WindowId(1)));
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 1)));
+        settle(&engine).await;
+        assert_eq!(
+            remembered_workspaces(name).keys().copied().collect::<Vec<_>>(),
+            [2]
+        );
+    });
+}
+
+#[test]
 fn a_process_id_reused_by_another_launch_never_takes_over_a_parked_window() {
     scenario(|| async {
         let name = "recovery-reused-pid";
@@ -354,13 +382,58 @@ fn the_selection_is_not_kept_across_a_restart() {
 }
 
 #[test]
-fn unrecovered_windows_keep_workspaces_off_and_their_entries() {
+fn an_unreadable_journal_is_set_aside_and_workspaces_start_from_membership() {
     scenario(|| async {
-        let name = "recovery-pending";
+        let name = "recovery-unreadable";
+        let platform = crashed_with_window_one_parked(name).await;
+        let journal = paths_kept(name).journal();
+        std::fs::write(&journal, b"{ broken").unwrap();
+
+        let engine = relaunched_logging(name, platform);
+        assert!(app_state(&engine).workspaces.running);
+        assert!(
+            journal
+                .with_file_name("workspace-journal.unreadable.json")
+                .exists()
+        );
+        let unreadable = logged(name, "stateFileUnreadable");
+        assert_eq!(unreadable.last().unwrap()["file"], "workspace-journal.json");
+        assert!(is_parked(&engine, 1), "membership still knows its workspace");
+        assert_eq!(window_counts(&engine)["workspace-2"], 1);
+        assert_eq!(saved_windows(&journal).len(), 1, "journaled again");
+    });
+}
+
+#[test]
+fn a_parked_window_that_closed_while_its_app_ran_on_is_forgotten_at_launch() {
+    scenario(|| async {
+        let name = "recovery-closed";
         let mut platform = crashed_with_window_one_parked(name).await;
         platform.windows.remove(&WindowId(1));
         platform.stacking.retain(|id| *id != WindowId(1));
         platform.open(9, FakeWindow::new("com.example.editor", 100, FLOATING));
+
+        let engine = relaunched_logging(name, platform);
+        assert!(app_state(&engine).workspaces.running);
+        assert!(!engine.status().is_some_and(|status| status.is_error));
+        assert!(!paths_kept(name).journal().exists());
+        assert_eq!(writes_to(&engine, 9), 0);
+        assert_eq!(window_counts(&engine)["workspace-1"], 2);
+        let started = logged(name, "workspacesStarted");
+        assert_eq!(started.last().unwrap()["closed"], 1);
+    });
+}
+
+#[test]
+fn a_window_that_cant_come_back_keeps_workspaces_off_and_its_entry_until_it_can() {
+    scenario(|| async {
+        let name = "recovery-pending";
+        let mut platform = crashed_with_window_one_parked(name).await;
+        platform.windows.get_mut(&WindowId(1)).unwrap().frozen = true;
+        let file = paths_kept(name).settings;
+        let mut settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        settings["workspaces"]["activeId"] = "workspace-2".into();
+        std::fs::write(&file, settings.to_string()).unwrap();
 
         let engine = relaunched(name, platform);
         assert!(!app_state(&engine).workspaces.running);
@@ -368,11 +441,27 @@ fn unrecovered_windows_keep_workspaces_off_and_their_entries() {
         assert_eq!(
             (status.message.as_str(), status.is_error),
             (
-                "Some hidden windows could not be restored. Check Accessibility, then quit and reopen Snappy to retry.",
+                "Some hidden windows couldn't be brought back. Check Accessibility, then quit and reopen Snappy to retry.",
                 true
             )
         );
         assert!(paths_kept(name).journal().exists(), "kept for the next attempt");
-        assert_eq!(writes_to(&engine, 9), 0);
+
+        command(&engine, Command::SetWorkspacesEnabled { enabled: false });
+        let status = engine.status().unwrap();
+        assert_eq!(
+            (status.message.as_str(), status.is_error),
+            (
+                "A hidden window couldn't be brought back yet. Turn workspaces off again to retry.",
+                true
+            )
+        );
+        assert!(engine.settings().workspaces.enabled);
+
+        frozen(&engine, 1, false);
+        command(&engine, Command::SetWorkspacesEnabled { enabled: false });
+        assert_eq!(frame_of(&engine, 1), LEFT_ZONE);
+        assert!(!engine.settings().workspaces.enabled);
+        assert!(!paths_kept(name).journal().exists());
     });
 }

@@ -19,11 +19,11 @@ pub const CAPS_LOCK_UNWATCHED: &str =
     "Snappy couldn't watch Caps Lock. Check that Accessibility is on for Snappy in System Settings.";
 
 pub const SWAP_NEEDS_PERMISSION: &str = "Accessibility access is required to swap windows.";
-pub const SWAP_LIST_UNREADABLE: &str = "Could not check which window occupies the zone.";
+pub const SWAP_LIST_UNREADABLE: &str = "Couldn't check which window occupies the zone.";
 pub const SWAP_UNSUPPORTED_OCCUPANT: &str = "An unsupported app occupies that zone. The swap was cancelled.";
 pub const SWAP_NOT_RESPONDING: &str = "An app in that zone is not responding. The swap was cancelled.";
 pub const SWAP_NOT_SWAPPABLE: &str = "A window in that zone does not allow swapping. The drag was cancelled.";
-pub const SWAP_UNIDENTIFIED: &str = "The window in that zone could not be identified safely. Try again.";
+pub const SWAP_UNIDENTIFIED: &str = "The window in that zone couldn't be identified safely. Try again.";
 
 /// An app rejected a position or size write.
 pub fn declined(code: i32) -> WindowError {
@@ -57,7 +57,7 @@ mod tests {
         );
         assert_eq!(
             unavailable(SWAP_UNIDENTIFIED).to_string(),
-            "The window in that zone could not be identified safely. Try again."
+            "The window in that zone couldn't be identified safely. Try again."
         );
     }
 }

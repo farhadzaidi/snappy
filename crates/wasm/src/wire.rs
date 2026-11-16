@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 use snappy_core::editor::{self, ResizeHandle};
 use snappy_core::geometry::Point;
-use snappy_core::keys;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -26,6 +25,24 @@ impl From<editor::Axis> for Axis {
         match axis {
             editor::Axis::X => Axis::X,
             editor::Axis::Y => Axis::Y,
+        }
+    }
+}
+
+/// What a cut goes through: `{ "zone": id }` for one zone, or `"through"` for every zone the
+/// line crosses.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CutScope {
+    Zone(String),
+    Through,
+}
+
+impl CutScope {
+    pub fn to_core(&self) -> editor::CutScope<'_> {
+        match self {
+            CutScope::Zone(id) => editor::CutScope::Zone(id),
+            CutScope::Through => editor::CutScope::Through,
         }
     }
 }
@@ -102,25 +119,6 @@ impl From<editor::Divider> for Divider {
             line: divider.line,
             start: divider.span.0,
             end: divider.span.1,
-        }
-    }
-}
-
-/// The platform names `AppState.platform` uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Platform {
-    Macos,
-    Windows,
-    Linux,
-}
-
-impl From<Platform> for keys::Platform {
-    fn from(platform: Platform) -> Self {
-        match platform {
-            Platform::Macos => keys::Platform::MacOs,
-            Platform::Windows => keys::Platform::Windows,
-            Platform::Linux => keys::Platform::Linux,
         }
     }
 }

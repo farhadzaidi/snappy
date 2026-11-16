@@ -1,38 +1,20 @@
 //! Caps Lock as the Snappy key.
 
-use snappy_core::keys::{Modifier, Mods, SnappyKey};
+use snappy_core::keys::{Mods, SnappyKey};
 use snappy_engine::Engine;
 use snappy_fake::FakePlatform;
-use snappy_ipc::{Command, ToSettings};
+use snappy_ipc::Command;
 use snappy_platform::{CapsLockInput, CapsLockUndo, PlatformEvent};
 
 use crate::support::{
-    FLOATING, app_state, command, event, hotkey_id, live_engine, logged, paths_kept, relaunched, scenario,
-    snappy, with_window,
+    FLOATING, app_state, command, control_option, event, hotkey_id, live_engine, logged, paths_kept,
+    relaunched, reply_to, scenario, snappy, status_text, with_window,
 };
 
 const REMAPPED: &str = "Caps Lock is already remapped.";
 
-fn control_option() -> Mods {
-    Mods::from_iter([Modifier::Ctrl, Modifier::Alt])
-}
-
-/// Send a command and return the daemon's reply to it.
-fn reply_to(engine: &Engine<FakePlatform>, sent: Command) -> Option<String> {
-    engine.take_outbox();
-    command(engine, sent);
-    engine
-        .take_outbox()
-        .into_iter()
-        .find_map(|message| match message {
-            ToSettings::Reply { error, .. } => Some(error),
-            _ => None,
-        })
-        .unwrap()
-}
-
 fn turn_on(engine: &Engine<FakePlatform>) -> Option<String> {
-    reply_to(engine, Command::SetCapsLockAsSnappyKey { enabled: true })
+    reply_to(engine, Command::SetCapsLockAsSnappyKey { enabled: true }).map(|refusal| refusal.message)
 }
 
 fn held_as(engine: &Engine<FakePlatform>) -> Option<Mods> {
@@ -133,6 +115,23 @@ fn a_quick_tap_alone_toggles_caps_lock_and_a_hold_never_does() {
 }
 
 #[test]
+fn a_tap_the_system_doesnt_take_is_logged_as_failed_not_as_a_tap() {
+    scenario(|| async {
+        let name = "caps-lock-tap-failed";
+        let engine = live_engine(name, with_window(FLOATING));
+        engine.force_debug_log();
+        turn_on(&engine);
+        engine.with_platform(|p| p.caps_lock_toggle_failure = Some("no keyboard".to_owned()));
+        press_for(&engine, 0.1);
+
+        assert!(logged(name, "capsLockTapped").is_empty());
+        let failed = logged(name, "capsLockTapFailed");
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0]["reason"], "no keyboard");
+    });
+}
+
+#[test]
 fn presses_while_it_is_off_do_nothing() {
     scenario(|| async {
         let engine = live_engine("caps-lock-off-presses", with_window(FLOATING));
@@ -201,17 +200,35 @@ fn what_a_crashed_run_left_is_undone_at_the_next_start_before_holding_again() {
         let mut system = engine.with_platform(|p| p.clone());
         drop(engine);
         assert!(undo_kept(name));
-        system.caps_lock_undo = CapsLockUndo("second run".to_owned());
+        system.caps_lock_undo = CapsLockUndo("second run".into());
 
         let engine = relaunched(name, system);
         assert_eq!(
             engine.with_platform(|p| p.caps_lock_undone.clone()),
-            [CapsLockUndo("fake".to_owned())]
+            [CapsLockUndo("fake".into())]
         );
         assert_eq!(held_as(&engine), Some(SnappyKey::DEFAULT.modifiers()));
         let kept: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(paths_kept(name).caps_lock()).unwrap()).unwrap();
         assert_eq!(kept["undo"], "second run");
+    });
+}
+
+#[test]
+fn a_record_an_earlier_build_kept_as_text_is_undone_as_the_value_it_holds() {
+    scenario(|| async {
+        let name = "caps-lock-text-record";
+        let engine = live_engine(name, with_window(FLOATING));
+        turn_on(&engine);
+        let system = engine.with_platform(|p| p.clone());
+        drop(engine);
+        std::fs::write(paths_kept(name).caps_lock(), r#"{"undo":"{\"keycode\":66}"}"#).unwrap();
+
+        let engine = relaunched(name, system);
+        assert_eq!(
+            engine.with_platform(|p| p.caps_lock_undone.clone()),
+            [CapsLockUndo(serde_json::json!({ "keycode": 66 }))]
+        );
     });
 }
 
@@ -275,5 +292,93 @@ fn a_refusal_at_start_is_shown_with_the_setting_and_tried_again_when_the_key_cha
         );
         assert_eq!(held_as(&engine), Some(control_option()));
         assert_eq!(app_state(&engine).caps_lock_problem, None);
+    });
+}
+
+/// The engine keeps the hold while recording on every platform. Where Caps Lock holds the
+/// modifiers themselves, macOS and Linux, Caps Lock + J then reaches the recorder as the
+/// Snappy key + J; Windows' hook runs Snappy's shortcuts itself and gives other apps,
+/// the recorder included, nothing, as platforms.md says.
+#[test]
+fn recording_a_shortcut_keeps_caps_lock_as_the_snappy_key() {
+    scenario(|| async {
+        let engine = live_engine("caps-lock-recording", FakePlatform::default());
+        assert_eq!(turn_on(&engine), None);
+        command(&engine, Command::BeginRecording);
+        assert_eq!(
+            held_as(&engine),
+            Some(SnappyKey::DEFAULT.modifiers()),
+            "still held while recording"
+        );
+        assert!(engine.with_platform(|p| p.registered.is_empty()));
+        command(&engine, Command::EndRecording);
+        assert_eq!(held_as(&engine), Some(SnappyKey::DEFAULT.modifiers()));
+    });
+}
+
+/// Something else changes the keyboard settings under Snappy, and the platform lets go of
+/// Caps Lock; on the next hold it answers with `refusal`, if any.
+fn lose_caps_lock(engine: &Engine<FakePlatform>, refusal: Option<&str>) {
+    engine.with_platform(|p| {
+        p.caps_lock_held_as = None;
+        p.caps_lock_refusal = refusal.map(str::to_owned);
+        p.caps_lock_undo = CapsLockUndo("after the loss".into());
+    });
+    event(engine, PlatformEvent::CapsLockLost);
+}
+
+#[test]
+fn caps_lock_lost_to_a_reloaded_keymap_is_held_again_with_a_fresh_undo_record() {
+    scenario(|| async {
+        let name = "caps-lock-lost";
+        let engine = live_engine(name, with_window(FLOATING));
+        engine.force_debug_log();
+        turn_on(&engine);
+        lose_caps_lock(&engine, None);
+
+        assert_eq!(held_as(&engine), Some(SnappyKey::DEFAULT.modifiers()));
+        let kept: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(paths_kept(name).caps_lock()).unwrap()).unwrap();
+        assert_eq!(
+            kept["undo"], "after the loss",
+            "a crash from here undoes the new hold"
+        );
+        assert_eq!(logged(name, "capsLockLost").len(), 1);
+        assert_eq!(app_state(&engine).caps_lock_problem, None);
+        press_for(&engine, 0.1);
+        assert_eq!(toggles(&engine), 1, "taps work as before");
+    });
+}
+
+#[test]
+fn caps_lock_lost_to_settings_that_remap_it_stays_off_and_says_why() {
+    scenario(|| async {
+        let name = "caps-lock-lost-remapped";
+        let engine = live_engine(name, with_window(FLOATING));
+        turn_on(&engine);
+        lose_caps_lock(&engine, Some(REMAPPED));
+
+        assert_eq!(held_as(&engine), None);
+        assert!(!undo_kept(name), "nothing of Snappy's is left to undo");
+        assert!(engine.settings().caps_lock_as_snappy_key, "the setting is kept");
+        assert_eq!(app_state(&engine).caps_lock_problem.as_deref(), Some(REMAPPED));
+        assert_eq!(status_text(&engine), REMAPPED);
+        press_for(&engine, 0.1);
+        assert_eq!(toggles(&engine), 0);
+
+        engine.with_platform(|p| p.caps_lock_refusal = None);
+        event(&engine, PlatformEvent::CapsLockLost);
+        assert_eq!(held_as(&engine), None, "only a hold in place can be lost");
+        reply_to(
+            &engine,
+            Command::SetSnappyKey {
+                modifiers: control_option(),
+            },
+        );
+        assert_eq!(
+            held_as(&engine),
+            Some(control_option()),
+            "tried again once something changes"
+        );
     });
 }

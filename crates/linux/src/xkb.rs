@@ -10,13 +10,17 @@
 //! works as before. GNOME Shell and KWin each add the option to the keymap themselves.
 //!
 //! Every adapter, X11's included, refuses when the user's own options already remap Caps
-//! Lock (`caps_lock_options`).
+//! Lock, in the words of `options_refusal`. On Wayland the keymap the compositor built is
+//! read too (`layout_refusal`), so a layout that makes Caps Lock another key is refused as
+//! well; X11 reads the key's definition from the server itself.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use snappy_core::keys::{Modifier, Mods};
+
+use crate::{journal, wayland};
 
 /// Snappy's option, as desktops list XKB options.
 pub const OPTION: &str = "snappy:caps";
@@ -41,12 +45,189 @@ pub enum CapsLockSymbol {
     OneOfTheModifiers,
 }
 
+/// Why Caps Lock can't be the Snappy key when `options`, a comma-separated list as XKB
+/// writes it, already remap it: a sentence for the user naming each option that does.
+/// `None` when none does.
+pub fn options_refusal(options: &str) -> Option<String> {
+    let named = match caps_lock_options(options).as_slice() {
+        [] => return None,
+        [only] => format!("the keyboard option {only}. Remove it"),
+        [first @ .., last] => format!(
+            "the keyboard options {} and {last}. Remove them",
+            first.join(", ")
+        ),
+    };
+    Some(format!(
+        "Caps Lock is already remapped by {named} to use Caps Lock as the Snappy key."
+    ))
+}
+
+/// The refusal when the keyboard layout itself makes Caps Lock another key.
+pub const LAYOUT_REMAPS_CAPS_LOCK: &str = "Caps Lock is already remapped by the keyboard layout. Choose a layout that \
+     keeps Caps Lock to use Caps Lock as the Snappy key.";
+
+/// Caps Lock's evdev keycode, as XKB numbers keys: the kernel's 58 plus 8.
+const CAPS_LOCK_KEYCODE: u32 = 66;
+/// What the first level of Snappy's own definition of Caps Lock can report, whichever
+/// `CapsLockSymbol` an adapter chose.
+const SNAPPYS_FIRST_LEVEL: [&str; 5] = ["VoidSymbol", "Super_R", "Control_R", "Alt_R", "Shift_R"];
+
+/// What a keymap makes of the Caps Lock key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapsLockKey {
+    /// Caps Lock, in every layout.
+    Plain,
+    /// Snappy's own option is in the keymap, and every other layout keeps Caps Lock.
+    Snappys,
+    /// At least one layout makes it another key.
+    Remapped,
+}
+
+/// Why Caps Lock can't be the Snappy key in this Wayland session: the keymap its compositor
+/// built makes Caps Lock another key, as some layouts do, such as Colemak. A keymap that
+/// can't be read is taken as no reason, with a warning.
+pub fn layout_refusal() -> Option<&'static str> {
+    match wayland::keymap() {
+        Ok(keymap) => {
+            (caps_lock_key(&keymap) == Some(CapsLockKey::Remapped)).then_some(LAYOUT_REMAPS_CAPS_LOCK)
+        }
+        Err(error) => {
+            journal::warn(format_args!(
+                "can't read the keymap to check the keyboard layout keeps Caps Lock: {error}"
+            ));
+            None
+        }
+    }
+}
+
+/// What `keymap`, XKB keymap text as compositors hand it to clients, makes of the Caps
+/// Lock key; `None` when it doesn't define the key.
+pub fn caps_lock_key(keymap: &str) -> Option<CapsLockKey> {
+    let names = key_names(keymap, CAPS_LOCK_KEYCODE);
+    let symbols = &keymap[keymap.find("xkb_symbols")?..];
+    let body = names.iter().find_map(|name| key_body(symbols, name))?;
+    let groups = symbol_lists(body);
+    let Some((first, rest)) = groups.split_first() else {
+        return Some(CapsLockKey::Remapped);
+    };
+    let others_plain = rest.iter().all(|group| is_plain(group));
+    Some(if is_plain(first) && others_plain {
+        CapsLockKey::Plain
+    } else if is_snappys(first) && others_plain {
+        CapsLockKey::Snappys
+    } else {
+        CapsLockKey::Remapped
+    })
+}
+
+/// Whether a group's symbols start with a Caps Lock.
+fn is_plain(group: &[&str]) -> bool {
+    group.first() == Some(&"Caps_Lock")
+}
+
+/// Whether a group's symbols are those of Snappy's option: one of the symbols it may report,
+/// then a real Caps Lock with Shift.
+fn is_snappys(group: &[&str]) -> bool {
+    matches!(group, [first, "Caps_Lock"] if SNAPPYS_FIRST_LEVEL.contains(first))
+}
+
+/// The names the keymap's `xkb_keycodes` section gives `keycode`, aliases included, such as
+/// `CAPS`.
+fn key_names(keymap: &str, keycode: u32) -> Vec<&str> {
+    let section = keymap
+        .find("xkb_keycodes")
+        .map_or("", |start| &keymap[start..])
+        .split("xkb_types")
+        .next()
+        .unwrap_or_default();
+    let statements = || section.split(';').map(str::trim);
+    let mut names: Vec<&str> = statements()
+        .filter_map(|statement| {
+            let (name, value) = statement.split_once('=')?;
+            let name = name.trim().strip_prefix('<')?.strip_suffix('>')?;
+            (value.trim().parse::<u32>().ok()? == keycode).then_some(name)
+        })
+        .collect();
+    let aliases: Vec<&str> = statements()
+        .filter_map(|statement| {
+            let (alias, real) = statement.strip_prefix("alias")?.split_once('=')?;
+            let real = real.trim().strip_prefix('<')?.strip_suffix('>')?;
+            names
+                .contains(&real)
+                .then(|| alias.trim().strip_prefix('<')?.strip_suffix('>'))
+                .flatten()
+        })
+        .collect();
+    names.extend(aliases);
+    names
+}
+
+/// The text between the braces of `key <name> { ... }` in a symbols section.
+fn key_body<'a>(symbols: &'a str, name: &str) -> Option<&'a str> {
+    let declaration = format!("<{name}>");
+    let mut rest = symbols;
+    loop {
+        let at = rest.find("key")?;
+        let after = rest[at + 3..].trim_start();
+        let is_word = rest[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !before.is_alphanumeric() && before != '_');
+        if is_word && let Some(definition) = after.strip_prefix(&declaration) {
+            let open = definition.find('{')?;
+            let close = definition[open..].find('}')? + open;
+            return Some(&definition[open + 1..close]);
+        }
+        rest = &rest[at + 3..];
+    }
+}
+
+/// The symbol lists of a key's body, one per group: `symbols[Group1]= [ ... ]` entries, or
+/// lists written bare, as `{ [ Caps_Lock ] }`. Lists of actions and the like are left out.
+fn symbol_lists(body: &str) -> Vec<Vec<&str>> {
+    let mut lists = Vec::new();
+    let mut at = 0;
+    while let Some(open) = body[at..].find('[').map(|offset| at + offset) {
+        let Some(close) = body[open..].find(']').map(|offset| open + offset) else {
+            break;
+        };
+        let before = body[..open].trim_end();
+        let is_symbols = match before.chars().next_back() {
+            Some('{' | ',') | None => true,
+            Some('=') => {
+                let field = before[..before.len() - 1].trim_end();
+                let field = match field.strip_suffix(']') {
+                    Some(indexed) => indexed.rsplit_once('[').map_or(indexed, |(name, _)| name),
+                    None => field,
+                };
+                field
+                    .rsplit(|character: char| !character.is_alphanumeric() && character != '_')
+                    .next()
+                    == Some("symbols")
+            }
+            _ => false,
+        };
+        if is_symbols {
+            lists.push(
+                body[open + 1..close]
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|symbol| !symbol.is_empty())
+                    .collect(),
+            );
+        }
+        at = close + 1;
+    }
+    lists
+}
+
 /// The options among `options`, a comma-separated list as XKB writes it, that change what
 /// the Caps Lock key does: the `caps` group, such as `caps:escape`, and the others that
 /// name Caps Lock as the key they change, such as `ctrl:nocaps`, `ctrl:swapcaps`, and
 /// `grp:caps_toggle`. Options that only make other keys toggle Caps Lock, such as
-/// `shift:both_capslock`, leave the key alone. Snappy's own option isn't counted.
-pub fn caps_lock_options(options: &str) -> Vec<&str> {
+/// `shift:both_capslock`, or only light Caps Lock's light, such as `grp_led:caps`, leave the
+/// key alone. Snappy's own option isn't counted.
+fn caps_lock_options(options: &str) -> Vec<&str> {
     options
         .split(',')
         .map(str::trim)
@@ -58,7 +239,7 @@ fn changes_the_caps_lock_key(option: &str) -> bool {
     let Some((group, name)) = option.split_once(':') else {
         return false;
     };
-    group == "caps" || (group != "shift" && name.contains("caps"))
+    group == "caps" || (!matches!(group, "shift" | "grp_led") && name.contains("caps"))
 }
 
 /// The XKB real modifiers for `modifiers`: Super is Mod4 and Alt Mod1 in every keymap
@@ -174,7 +355,9 @@ pub fn install(folder: &Path, modifiers: Mods, symbol: CapsLockSymbol) -> io::Re
     write(&rules, &rules_with_option(existing.as_deref()))
 }
 
-/// Take Snappy's option out of the XKB folder `folder`, keeping the user's own rules.
+/// Take Snappy's option out of the XKB folder `folder`, keeping the user's own rules. The
+/// folders that hold nothing more afterwards go too, `folder` included, as `install` may
+/// have made them.
 pub fn uninstall(folder: &Path) -> io::Result<()> {
     let rules = folder.join("rules").join("evdev");
     if let Some(existing) = read_if_present(&rules)? {
@@ -184,7 +367,11 @@ pub fn uninstall(folder: &Path) -> io::Result<()> {
             None => remove_if_present(&rules)?,
         }
     }
-    remove_if_present(&folder.join("symbols").join(SYMBOLS_FILE))
+    remove_if_present(&folder.join("symbols").join(SYMBOLS_FILE))?;
+    for empty in [folder.join("rules"), folder.join("symbols"), folder.to_owned()] {
+        remove_if_empty(&empty)?;
+    }
+    Ok(())
 }
 
 fn read_if_present(path: &Path) -> io::Result<Option<String>> {
@@ -192,6 +379,22 @@ fn read_if_present(path: &Path) -> io::Result<Option<String>> {
         Ok(contents) => Ok(Some(contents)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
+    }
+}
+
+/// Removes the folder at `path` when it holds nothing; one that holds something, or none at
+/// all, stays as it is.
+fn remove_if_empty(path: &Path) -> io::Result<()> {
+    match fs::remove_dir(path) {
+        Err(error)
+            if !matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Err(error)
+        }
+        _ => Ok(()),
     }
 }
 
@@ -231,7 +434,8 @@ mod tests {
     #[test]
     fn options_that_change_the_caps_lock_key_are_found_and_others_are_not() {
         let options = "grp:alt_shift_toggle,caps:escape, ctrl:nocaps,shift:both_capslock,ctrl:swapcaps,\
-                       compose:caps,lv3:ralt_switch,snappy:caps,grp:caps_toggle,shift:breaks_caps";
+                       compose:caps,lv3:ralt_switch,snappy:caps,grp:caps_toggle,shift:breaks_caps,\
+                       grp_led:caps";
         assert_eq!(
             caps_lock_options(options),
             [
@@ -244,6 +448,112 @@ mod tests {
         );
         assert!(caps_lock_options("").is_empty());
         assert!(caps_lock_options("terminate:ctrl_alt_bksp").is_empty());
+    }
+
+    #[test]
+    fn a_refusal_names_each_option_that_remaps_caps_lock() {
+        assert_eq!(options_refusal("grp:alt_shift_toggle,snappy:caps"), None);
+        assert_eq!(
+            options_refusal("caps:escape").as_deref(),
+            Some(
+                "Caps Lock is already remapped by the keyboard option caps:escape. Remove it to use Caps Lock as the Snappy key."
+            )
+        );
+        assert_eq!(
+            options_refusal("ctrl:nocaps,lv3:ralt_switch,caps:escape").as_deref(),
+            Some(
+                "Caps Lock is already remapped by the keyboard options ctrl:nocaps and caps:escape. Remove them to use Caps Lock as the Snappy key."
+            )
+        );
+        assert!(
+            options_refusal("ctrl:nocaps,caps:escape,grp:caps_toggle")
+                .unwrap()
+                .contains("the keyboard options ctrl:nocaps, caps:escape and grp:caps_toggle. Remove them")
+        );
+    }
+
+    /// A keymap as libxkbcommon writes one for clients, with `caps` as Caps Lock's body.
+    fn keymap(caps: &str) -> String {
+        format!(
+            "xkb_keymap {{\n\
+             xkb_keycodes \"evdev+aliases(qwerty)\" {{\n\
+             \tminimum = 8;\n\tmaximum = 255;\n\t<ESC> = 9;\n\t<CAPS> = 66;\n\t<AC01> = 38;\n\
+             \talias <AB00> = <TLDE>;\n\tindicator 1 = \"Caps Lock\";\n}};\n\n\
+             xkb_types \"complete\" {{\n\ttype \"TWO_LEVEL\" {{\n\t\tmodifiers= Shift;\n\
+             \t\tmap[Shift]= Level2;\n\t\tlevel_name[Level1]= \"Base\";\n\t}};\n}};\n\n\
+             xkb_compatibility \"complete\" {{\n\tinterpret Caps_Lock {{\n\
+             \t\taction= LockMods(modifiers=Lock);\n\t}};\n}};\n\n\
+             xkb_symbols \"pc+us+inet(evdev)\" {{\n\tname[Group1]=\"English (US)\";\n\
+             \tkey <ESC>                {{\t[          Escape ] }};\n\
+             \tkey <CAPS>               {{{caps}}};\n\
+             \tkey <AC01>               {{\t[               a,               A ] }};\n\
+             \tmodifier_map Lock {{ <CAPS> }};\n}};\n\n}};\n"
+        )
+    }
+
+    #[test]
+    fn a_plain_caps_lock_in_every_layout_is_plain() {
+        assert_eq!(
+            caps_lock_key(&keymap("\t[       Caps_Lock ] ")),
+            Some(CapsLockKey::Plain)
+        );
+        assert_eq!(
+            caps_lock_key(&keymap(
+                "\n\t\tsymbols[1]= [ Caps_Lock ],\n\t\tsymbols[2]= [ Caps_Lock, Caps_Lock ]\n\t"
+            )),
+            Some(CapsLockKey::Plain)
+        );
+    }
+
+    #[test]
+    fn a_layout_that_makes_caps_lock_another_key_remaps_it_in_any_group() {
+        let colemak = "\t[       BackSpace,       BackSpace,       BackSpace,       BackSpace ] ";
+        assert_eq!(caps_lock_key(&keymap(colemak)), Some(CapsLockKey::Remapped));
+        assert_eq!(
+            caps_lock_key(&keymap(
+                "\n\t\tsymbols[Group1]= [ Caps_Lock ],\n\t\tsymbols[Group2]= [ Control_L ]\n\t"
+            )),
+            Some(CapsLockKey::Remapped)
+        );
+        assert_eq!(
+            caps_lock_key(&keymap("\n\t\tactions[1]= [ SetMods(modifiers=Control) ]\n\t")),
+            Some(CapsLockKey::Remapped),
+            "no symbol at all"
+        );
+    }
+
+    #[test]
+    fn snappys_own_option_in_the_keymap_is_told_apart_from_a_remapping() {
+        for first in ["VoidSymbol", "Super_R"] {
+            let caps = format!(
+                "\n\t\ttype= \"TWO_LEVEL\",\n\t\trepeat= No,\n\
+                 \t\tsymbols[Group1]= [ {first}, Caps_Lock ],\n\
+                 \t\tactions[Group1]= [ SetMods(modifiers=Control+Mod1+Mod4), LockMods(modifiers=Lock) ]\n\t"
+            );
+            assert_eq!(
+                caps_lock_key(&keymap(&caps)),
+                Some(CapsLockKey::Snappys),
+                "{first}"
+            );
+        }
+        assert_eq!(
+            caps_lock_key(&keymap(
+                "\n\t\tsymbols[1]= [ VoidSymbol, Caps_Lock ],\n\t\tsymbols[2]= [ BackSpace ]\n\t"
+            )),
+            Some(CapsLockKey::Remapped),
+            "another layout still remaps it"
+        );
+    }
+
+    #[test]
+    fn caps_lock_is_found_by_its_keycode_or_an_alias_of_it() {
+        let renamed = keymap("\t[ Caps_Lock ] ")
+            .replace("<CAPS> = 66;", "<CAPS> = 66;\n\talias <LOCK> = <CAPS>;")
+            .replace("key <CAPS>", "key <LOCK>");
+        assert_eq!(caps_lock_key(&renamed), Some(CapsLockKey::Plain));
+        let elsewhere = keymap("\t[ Escape ] ").replace("<CAPS> = 66;", "<CAPS> = 67;");
+        assert_eq!(caps_lock_key(&elsewhere), None, "keycode 66 has no key");
+        assert_eq!(caps_lock_key(""), None);
     }
 
     #[test]
@@ -303,8 +613,7 @@ mod tests {
                 .contains(OPTION)
         );
         uninstall(&folder).unwrap();
-        assert!(!folder.join("symbols/snappy").exists());
-        assert!(!folder.join("rules/evdev").exists());
+        assert!(!folder.exists(), "the folders install made go with the files");
 
         let folder = scratch("own-rules");
         let own = "! include %S/evdev\n// mine\n";
@@ -313,7 +622,17 @@ mod tests {
         install(&folder, SnappyKey::DEFAULT.modifiers(), CapsLockSymbol::Nothing).unwrap();
         uninstall(&folder).unwrap();
         assert_eq!(fs::read_to_string(folder.join("rules/evdev")).unwrap(), own);
+        assert!(!folder.join("symbols").exists());
         uninstall(&folder).unwrap();
+        let _ = fs::remove_dir_all(&folder);
+
+        let folder = scratch("own-symbols");
+        fs::create_dir_all(folder.join("symbols")).unwrap();
+        fs::write(folder.join("symbols/mine"), "").unwrap();
+        install(&folder, SnappyKey::DEFAULT.modifiers(), CapsLockSymbol::Nothing).unwrap();
+        uninstall(&folder).unwrap();
+        assert!(folder.join("symbols/mine").exists());
+        assert!(!folder.join("rules").exists());
         let _ = fs::remove_dir_all(&folder);
     }
 }

@@ -118,7 +118,7 @@ fn the_nearest_empty_zone_shortcut_can_be_changed_or_cleared() {
         command(
             &engine,
             Command::SetNavigationShortcut {
-                shortcut: NavigationShortcut::NearestEmpty,
+                shortcut: NavigationShortcut::NearestEmptyZone,
                 chord: Some(snappy("KeyE")),
             },
         );
@@ -134,7 +134,7 @@ fn the_nearest_empty_zone_shortcut_can_be_changed_or_cleared() {
         command(
             &engine,
             Command::SetNavigationShortcut {
-                shortcut: NavigationShortcut::NearestEmpty,
+                shortcut: NavigationShortcut::NearestEmptyZone,
                 chord: None,
             },
         );

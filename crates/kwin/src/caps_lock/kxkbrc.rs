@@ -2,8 +2,9 @@
 //! keymap with: the `Options` entry of the `[Layout]` group, and only while
 //! `ResetOldOptions` is true; otherwise KWin takes the session's `XKB_DEFAULT_OPTIONS`.
 //!
-//! Snappy changes only those two entries and keeps every other line as written. The file
-//! is KConfig's format: `[Group]` headers and `Key=Value` lines.
+//! Snappy changes only those two entries, in place, and keeps every other line as written,
+//! so writing back the entries it read gives back the file it read. The file is KConfig's
+//! format: `[Group]` headers and `Key=Value` lines.
 
 use std::fs;
 use std::io;
@@ -116,42 +117,61 @@ pub fn read(text: &str) -> OptionEntries {
     entries
 }
 
-/// `text` with the two entries set as `entries` says, every other line kept. They go at the
-/// top of the first `[Layout]` group, which is added at the end when there is none, and a
-/// group left with nothing in it goes.
+/// `text` with the two entries set as `entries` says, every other line kept. An entry already
+/// there keeps its line, its key as written, flags such as `[$i]` included, and the spaces
+/// around its value; one that is `None` loses its line. A new one goes at the top of the first
+/// `[Layout]` group, which is added at the end when there is none, and a group left with
+/// nothing in it goes.
 pub fn write(text: &str, entries: &OptionEntries) -> String {
-    let ours: Vec<String> = [
-        (RESET_OLD_OPTIONS, &entries.reset_old_options),
-        (OPTIONS, &entries.options),
-    ]
-    .into_iter()
-    .filter_map(|(key, value)| value.as_ref().map(|value| format!("{key}={value}")))
-    .collect();
-
+    let wanted = [
+        (RESET_OLD_OPTIONS, entries.reset_old_options.as_deref()),
+        (OPTIONS, entries.options.as_deref()),
+    ];
+    let mut present = [false; 2];
     let mut lines: Vec<String> = Vec::new();
     let mut inside = false;
-    let mut placed = false;
+    let mut group_header = None;
     for line in text.lines() {
         if is_header(line) {
             inside = line.trim() == GROUP;
-            lines.push(line.to_owned());
-            if inside && !placed {
-                lines.extend(ours.iter().cloned());
-                placed = true;
+            if inside && group_header.is_none() {
+                group_header = Some(lines.len());
             }
+            lines.push(line.to_owned());
             continue;
         }
-        let ours_already = inside && matches!(entry(line), Some((RESET_OLD_OPTIONS | OPTIONS, _)));
-        if !ours_already {
-            lines.push(line.to_owned());
+        let ours = inside
+            .then(|| entry(line))
+            .flatten()
+            .and_then(|(key, _)| wanted.iter().position(|(name, _)| *name == key));
+        match ours {
+            Some(index) => {
+                present[index] = true;
+                if let Some(value) = wanted[index].1 {
+                    lines.push(with_value(line, value));
+                }
+            }
+            None => lines.push(line.to_owned()),
         }
     }
-    if !placed && !ours.is_empty() {
-        if lines.last().is_some_and(|line| !line.trim().is_empty()) {
-            lines.push(String::new());
+    let missing: Vec<String> = wanted
+        .iter()
+        .zip(present)
+        .filter(|(_, present)| !present)
+        .filter_map(|((key, value), _)| value.map(|value| format!("{key}={value}")))
+        .collect();
+    match group_header {
+        Some(header) => {
+            lines.splice(header + 1..header + 1, missing);
         }
-        lines.push(GROUP.to_owned());
-        lines.extend(ours);
+        None if !missing.is_empty() => {
+            if lines.last().is_some_and(|line| !line.trim().is_empty()) {
+                lines.push(String::new());
+            }
+            lines.push(GROUP.to_owned());
+            lines.extend(missing);
+        }
+        None => {}
     }
     drop_empty_group(&mut lines);
     if lines.is_empty() {
@@ -159,6 +179,18 @@ pub fn write(text: &str, entries: &OptionEntries) -> String {
     } else {
         format!("{}\n", lines.join("\n"))
     }
+}
+
+/// An entry's `line` with `value` in place of its own, keeping the key as written and the
+/// spaces around the value.
+fn with_value(line: &str, value: &str) -> String {
+    let Some((key, old)) = line.split_once('=') else {
+        return line.to_owned();
+    };
+    let before = &old[..old.len() - old.trim_start().len()];
+    let rest = &old[before.len()..];
+    let after = &rest[rest.trim_end().len()..];
+    format!("{key}={before}{value}{after}")
 }
 
 /// Removes a `[Layout]` header with no entries before the next group.
@@ -244,15 +276,35 @@ mod tests {
     }
 
     #[test]
-    fn writing_changes_only_the_two_entries_and_keeps_every_other_line() {
+    fn writing_changes_only_the_two_entries_in_place_and_writing_back_gives_the_file_back() {
         let written = write(PLASMA, &OptionEntries::using("grp:alt_shift_toggle,snappy:caps"));
         assert_eq!(
             written,
-            "[$Version]\nupdate_info=kxkb.upd:remove-empty-lists\n\n[Layout]\nResetOldOptions=true\nOptions=grp:alt_shift_toggle,snappy:caps\nDisplayNames=,\nLayoutList=us,de\nUse=true\nVariantList=,\n"
+            PLASMA.replace(
+                "Options=grp:alt_shift_toggle\n",
+                "Options=grp:alt_shift_toggle,snappy:caps\n"
+            )
         );
-        let back = write(&written, &read(PLASMA));
-        assert_eq!(read(&back), read(PLASMA));
-        assert_eq!(back.lines().count(), PLASMA.lines().count());
+        assert_eq!(write(&written, &read(PLASMA)), PLASMA);
+    }
+
+    #[test]
+    fn flags_spacing_and_missing_entries_come_back_exactly() {
+        let own = "[Layout]\nLayoutList=us\nOptions[$i] = caps:none \nUse=true\n";
+        let written = write(own, &OptionEntries::using("snappy:caps"));
+        assert_eq!(
+            written,
+            "[Layout]\nResetOldOptions=true\nLayoutList=us\nOptions[$i] = snappy:caps \nUse=true\n"
+        );
+        assert_eq!(write(&written, &read(own)), own);
+
+        let without = "[Layout]\nLayoutList=us\n";
+        let written = write(without, &OptionEntries::using("snappy:caps"));
+        assert_eq!(
+            written,
+            "[Layout]\nResetOldOptions=true\nOptions=snappy:caps\nLayoutList=us\n"
+        );
+        assert_eq!(write(&written, &read(without)), without);
     }
 
     #[test]

@@ -6,8 +6,8 @@ export type Collection = "presets" | "custom";
 
 export const PAGES: readonly { page: Page; title: string }[] = [
   { page: "layouts", title: "Layouts" },
-  { page: "workspaces", title: "Workspaces" },
   { page: "editor", title: "Editor" },
+  { page: "workspaces", title: "Workspaces" },
   { page: "settings", title: "Settings" },
 ];
 
@@ -17,7 +17,10 @@ export interface Session {
   /** The display chosen on the Layouts page and in the editor; they share it. */
   displayId: string | null;
   collection: Collection;
-  /** The layout previewed on the Layouts page. Null browses the display's current one. */
+  /**
+   * The layout previewed on the Layouts page, kept until the user picks another, changes the
+   * collection or the display, or it is deleted. Null browses the display's current one.
+   */
   browsedLayoutId: string | null;
 }
 

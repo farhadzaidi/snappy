@@ -23,7 +23,7 @@ use moves::{
 use selection::{
     place_selection, select_along_by_number, select_two_along_by_step, select_without_workspaces, unselect,
 };
-use shell::{menu_bar_item, overlay_floats};
+use shell::{menu_bar_item, menu_bar_menu_opens, overlay_floats};
 use snappy_key::chosen_snappy_key;
 pub use snappy_key::{free_snappy_key, with_free_snappy_key};
 pub use support::{Context, TITLE_BAR_GRIP};
@@ -32,8 +32,8 @@ use swaps::{
 };
 use tabs::tabs_along;
 use workspaces::{
-    quit_returns_windows, restart_keeps_workspaces, send_and_stay_batch, send_and_switch, send_to_workspace,
-    step_workspaces, workspace_switch,
+    display_change_keeps_windows_parked, quit_returns_windows, restart_keeps_workspaces, send_and_stay_batch,
+    send_and_switch, send_to_workspace, step_workspaces, workspace_switch,
 };
 
 /// The platform the scenarios run on, for names and the chords it keeps.
@@ -95,6 +95,7 @@ pub const ALL: &[(&str, Scenario)] = &[
         overlay_floats,
     ),
     ("the_menu_bar_item_is_shown", menu_bar_item),
+    ("the_menu_bar_item_opens_its_menu_every_time", menu_bar_menu_opens),
     (
         "switching_workspaces_by_number_parks_and_returns_windows",
         workspace_switch,
@@ -143,6 +144,10 @@ pub const ALL: &[(&str, Scenario)] = &[
     (
         "restarting_keeps_every_window_in_its_workspace_and_quitting_still_returns_them",
         restart_keeps_workspaces,
+    ),
+    (
+        "a_window_parked_while_the_display_changes_size_stays_parked_without_a_warning",
+        display_change_keeps_windows_parked,
     ),
     ("quitting_returns_parked_windows", quit_returns_windows),
     ("full_screen_windows_are_never_moved", full_screen_refused),

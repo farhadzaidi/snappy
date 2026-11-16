@@ -73,7 +73,7 @@ pub fn set_enabled(executable: &Path, on: bool) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "Snappy could not change its startup setting (error {}).",
+            "Snappy couldn't change its startup setting (error {}).",
             result.0
         ))
     }

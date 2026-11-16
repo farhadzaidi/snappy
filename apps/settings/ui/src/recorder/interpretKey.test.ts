@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { Modifier } from "../core/model";
-import { interpretKey, type KeyPress } from "./interpretKey";
+import type { KeyPress } from "../ui/keyPress";
+import { interpretKey } from "./interpretKey";
 
 const DEFAULT_KEY: Modifier[] = ["ctrl", "alt", "meta"];
 
@@ -27,9 +28,11 @@ describe("shortcut recorder keys", () => {
     });
   });
 
-  it("a combination without control, option, or command needs one", () => {
-    expect(interpret(press("KeyA", "a"))).toEqual({ kind: "needsCommandModifier" });
-    expect(interpret(press("KeyA", "A", { shiftKey: true }))).toEqual({ kind: "needsCommandModifier" });
+  it("a combination without control, option, or command is still a candidate, for core to refuse", () => {
+    expect(interpret(press("KeyA", "A", { shiftKey: true }))).toEqual({
+      kind: "candidate",
+      chord: { code: "KeyA", mods: ["shift"] },
+    });
   });
 
   it("modifier keys alone are ignored", () => {

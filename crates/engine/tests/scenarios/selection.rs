@@ -2,7 +2,7 @@
 
 use snappy_core::geometry::Rect;
 use snappy_core::keys::SnappyKey;
-use snappy_core::settings::{FocusShortcut, Settings};
+use snappy_core::settings::{NavigationShortcut, Settings};
 use snappy_engine::Engine;
 use snappy_fake::{FakePlatform, FakeWindow};
 use snappy_ipc::Command;
@@ -202,16 +202,16 @@ fn a_macos_file_clearing_with_delete_loads_clearing_with_backslash_and_delete_is
         command(
             &engine,
             Command::SetNavigationShortcut {
-                shortcut: FocusShortcut::ClearSelection.into(),
+                shortcut: NavigationShortcut::ClearSelection,
                 chord: Some(snappy("Backspace")),
             },
         );
         let status = engine.status().unwrap();
         assert!(status.is_error);
         assert!(
-            status
-                .message
-                .ends_with("macOS reserves Control + Option + Command + Delete; it never reaches apps."),
+            status.message.ends_with(
+                "macOS reserves Control ⌃ + Option ⌥ + Command ⌘ + Delete; it never reaches apps."
+            ),
             "{}",
             status.message
         );

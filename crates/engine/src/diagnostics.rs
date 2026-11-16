@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use snappy_core::bounds::BoundsStep;
 use snappy_core::geometry::{Point, Rect};
 
-use crate::store::{append_log, write_state};
+use crate::store::{append_log, write_log};
 
 const DROPS_KEPT: usize = 20;
 const LIFECYCLE_KEPT: usize = 30;
@@ -159,7 +159,7 @@ impl Diagnostics {
     /// Write switch timings at quit; nothing when there are none.
     pub fn export_timings(&self) {
         if !self.timings.is_empty() {
-            let _ = write_state(&self.folder.join("workspace-performance.json"), &self.timings);
+            let _ = write_log(&self.folder.join("workspace-performance.json"), &self.timings);
         }
     }
 }

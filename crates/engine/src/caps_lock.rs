@@ -8,7 +8,7 @@ use snappy_core::keys::Mods;
 use snappy_platform::{CapsLockInput, CapsLockUndo, Platform};
 
 use crate::core::Core;
-use crate::store::{read_state, remove_state, write_state};
+use crate::store::{StateFile, remove_state, write_state};
 
 /// What the engine knows about Caps Lock.
 #[derive(Debug)]
@@ -50,10 +50,27 @@ struct Saved {
     undo: CapsLockUndo,
 }
 
+impl StateFile for Saved {
+    const VERSION: u32 = 1;
+
+    /// Before state files had a version, an adapter's record was kept as JSON text; it is
+    /// read as the value it holds.
+    fn unversioned(value: serde_json::Value) -> Option<Self> {
+        let mut saved: Saved = serde_json::from_value(value).ok()?;
+        if let serde_json::Value::String(text) = &saved.undo.0
+            && let Ok(record) = serde_json::from_str(text)
+        {
+            saved.undo.0 = record;
+        }
+        Some(saved)
+    }
+}
+
 /// Note a change an earlier run left in place, from its state file, so that the first
 /// `configure` undoes it.
 pub(crate) fn start<P: Platform>(core: &mut Core<P>) {
-    if let Some(saved) = read_state::<Saved>(&core.paths.caps_lock()) {
+    let path = core.paths.caps_lock();
+    if let Some(saved) = core.read_state::<Saved>(&path).read() {
         core.caps_lock.state = CapsLockState::LeftOver;
         core.caps_lock.left_over = Some(saved.undo);
     }
@@ -176,10 +193,13 @@ pub(crate) fn input<P: Platform>(core: &mut Core<P>, input: CapsLockInput) {
             let held_ms = (press.held_for(now) * 1000.0).round();
             let other_input = press.other_input();
             match press.release(now) {
-                CapsLockRelease::Tap => {
-                    core.platform.toggle_caps_lock();
-                    core.trace("capsLockTapped", || serde_json::json!({ "heldMs": held_ms }));
-                }
+                CapsLockRelease::Tap => match core.platform.toggle_caps_lock() {
+                    Ok(()) => core.trace("capsLockTapped", || serde_json::json!({ "heldMs": held_ms })),
+                    Err(reason) => core.flag(
+                        "capsLockTapFailed",
+                        || serde_json::json!({ "heldMs": held_ms, "reason": reason }),
+                    ),
+                },
                 CapsLockRelease::Hold => core.trace(
                     "capsLockReleased",
                     || serde_json::json!({ "heldMs": held_ms, "otherInput": other_input }),
@@ -187,6 +207,21 @@ pub(crate) fn input<P: Platform>(core: &mut Core<P>, input: CapsLockInput) {
             }
         }
     }
+}
+
+/// The platform let go of Caps Lock because something else changed the keyboard settings.
+/// Nothing of Snappy's is left to undo. The settings still ask for it, so Caps Lock is held
+/// again, quietly, as each layout switch that reloads the keymap needs; when the new
+/// keyboard settings remap Caps Lock themselves, theirs win, and the refusal is announced
+/// and shown with the setting as any refusal is.
+pub(crate) fn lost<P: Platform>(core: &mut Core<P>) {
+    if !matches!(core.caps_lock.state, CapsLockState::Held(_)) {
+        return;
+    }
+    core.flag("capsLockLost", || serde_json::json!({}));
+    forget(core);
+    configure(core);
+    core.publish_state();
 }
 
 /// A Snappy shortcut fired, so a press of Caps Lock in progress isn't a tap.

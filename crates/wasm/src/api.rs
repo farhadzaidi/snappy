@@ -3,19 +3,23 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use snappy_core::bindings::{availability_probes, conflict_with_layout, first_conflict};
+use snappy_core::bindings::{
+    Refusal, availability_probes, conflict_with_layout, recording_conflict, unavailable_refusal,
+};
 use snappy_core::editor::{self, ALIGN_TOLERANCE, ResizeHandle};
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::guide::{self, GuideEntry};
-use snappy_core::keys::{KeyChord, Modifier, Mods, SnappyKey};
-use snappy_core::layout::{self, Layout, Spacing, UnitRect, Zone, zone_frame};
+use snappy_core::keys::{KeyChord, LabelParts, Modifier, Mods, Platform, SnappyKey};
+use snappy_core::layout::{self, Layout, MAX_ZONES, Spacing, UnitRect, Zone, zone_frame};
+use snappy_core::operations::UNDO_LIMIT;
+use snappy_core::reset::{Reset, ShortcutSection};
 use snappy_core::settings::{
-    HistoryStep, LayoutOptions, LayoutShortcut, NavigationShortcut, Settings, Workspace, WorkspaceShortcut,
-    WorkspaceStep,
+    LayoutOptions, LayoutShortcut, MAX_WORKSPACES, Settings, Workspace, WorkspaceShortcut,
 };
+use snappy_core::shortcuts::ShortcutId;
 
-use crate::gestures::{self, Drawn, Edit};
-use crate::wire::{Axis, Divider, Field, Handle, HandlePosition, Platform};
+use crate::gestures::{self, CutPreview, Drawn, Edit};
+use crate::wire::{Axis, CutScope, Divider, Field, Handle, HandlePosition};
 
 #[derive(Deserialize)]
 pub struct Empty {}
@@ -31,12 +35,6 @@ pub struct ZoneFramesRequest {
 #[derive(Deserialize)]
 pub struct ZonesRequest {
     zones: Vec<Zone>,
-}
-
-#[derive(Deserialize)]
-pub struct ZoneRequest {
-    zones: Vec<Zone>,
-    id: String,
 }
 
 #[derive(Deserialize)]
@@ -87,15 +85,38 @@ pub struct DrawRequest {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CutRequest {
+pub struct CopiesRequest {
     zones: Vec<Zone>,
-    id: String,
+    copied: Vec<UnitRect>,
+}
+
+#[derive(Deserialize)]
+pub struct CutPreviewRequest {
+    zones: Vec<Zone>,
+    scope: CutScope,
     axis: Axis,
     at: f64,
     tolerance: f64,
-    #[serde(default)]
-    new_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CutRequest {
+    zones: Vec<Zone>,
+    scope: CutScope,
+    axis: Axis,
+    /// The line itself, already snapped by the preview.
+    at: f64,
+    /// At least one per zone the cut may split.
+    new_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeRequest {
+    zones: Vec<Zone>,
+    ids: Vec<String>,
+    zone_shortcuts: BTreeMap<String, KeyChord>,
 }
 
 #[derive(Deserialize)]
@@ -109,6 +130,14 @@ pub struct FieldRequest {
 #[derive(Deserialize)]
 pub struct ChordRequest {
     chord: KeyChord,
+    platform: Platform,
+}
+
+#[derive(Deserialize)]
+pub struct UnavailableRequest {
+    chord: KeyChord,
+    /// The title of the shortcut being recorded.
+    title: String,
     platform: Platform,
 }
 
@@ -151,6 +180,30 @@ pub struct SettingsRequest {
 }
 
 #[derive(Deserialize)]
+pub struct RecordingRequest {
+    settings: Settings,
+    /// The shortcut being recorded, which the message names from its side.
+    shortcut: ShortcutId,
+    chord: KeyChord,
+    platform: Platform,
+}
+
+#[derive(Deserialize)]
+pub struct ResetRequest {
+    settings: Settings,
+    reset: Reset,
+    platform: Platform,
+}
+
+/// Settings put back to their defaults, whether that changes anything, and what to say.
+#[derive(Serialize)]
+pub struct ResetOutcome {
+    settings: Settings,
+    changed: bool,
+    message: String,
+}
+
+#[derive(Deserialize)]
 pub struct LayoutConflictRequest {
     settings: Settings,
     layout: Layout,
@@ -173,6 +226,11 @@ pub struct DisplayLayoutRequest {
 pub struct LayoutOptionsRequest {
     settings: Settings,
     layout: Layout,
+}
+
+#[derive(Deserialize)]
+pub struct SectionsRequest {
+    settings: Settings,
 }
 
 #[derive(Deserialize)]
@@ -204,19 +262,28 @@ pub struct LayoutShortcutTitles {
     zones: Vec<String>,
 }
 
-/// Every shortcut's title, by section, as the settings app shows them.
+/// One section of global shortcuts, as the Settings page shows it.
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShortcutTitles {
-    navigation: Titles,
-    workspace_steps: Titles,
-    history: Titles,
+pub struct SectionOfShortcuts {
+    section: ShortcutSection,
+    title: &'static str,
+    shortcuts: Vec<ListedShortcut>,
 }
 
+/// A shortcut as a section lists it: what it is, its title, and its chord.
+#[derive(Serialize)]
+pub struct ListedShortcut {
+    id: ShortcutId,
+    title: String,
+    chord: Option<KeyChord>,
+}
+
+/// A chord's label as messages and assistive technology say it, and in two parts for
+/// recorders, cards, and references, which draw the Snappy key their own way.
 #[derive(Serialize)]
 pub struct ChordLabels {
-    compact: String,
     long: String,
+    parts: LabelParts,
 }
 
 /// A chord to ask the OS about before the Snappy key changes: its concrete modifiers, and
@@ -224,15 +291,60 @@ pub struct ChordLabels {
 #[derive(Serialize)]
 pub struct AvailabilityProbe {
     chord: KeyChord,
-    refusal: String,
+    refusal: Refusal,
 }
 
 #[derive(Serialize)]
 pub struct ModifierNames {
     name: &'static str,
-    short: &'static str,
     /// The name with its symbol, as messages show it: "Shift ⇧".
     label: String,
+}
+
+/// The most of each thing the settings app counts that core allows.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Limits {
+    zones: usize,
+    workspaces: usize,
+    /// Window moves that undo remembers.
+    undo_steps: usize,
+}
+
+/// A layout's zones and zone shortcuts after a merge.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergedLayout {
+    zones: Vec<Zone>,
+    zone_shortcuts: BTreeMap<String, KeyChord>,
+    /// The merged zone's ID.
+    kept: String,
+}
+
+/// The outcome of merging zones: the merged layout, or why the zones can't be merged.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MergeOutcome {
+    Merged(MergedLayout),
+    Refused(String),
+}
+
+/// Where copies go, or why they can't be placed.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlaceOutcome {
+    Placed(Vec<UnitRect>),
+    Refused(String),
+}
+
+/// The outcome of changing the Snappy key: nothing to change, the settings with the new key,
+/// or why it is refused.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SnappyKeyChange {
+    Unchanged,
+    Changed(Box<Settings>),
+    Refused(String),
 }
 
 /// The outcome of validating settings: the normalized settings, or the first problem.
@@ -267,9 +379,22 @@ pub fn align_edges(request: ZonesRequest) -> Option<Vec<Zone>> {
     editor::align_edges(&request.zones, ALIGN_TOLERANCE)
 }
 
-pub fn duplicate_rect(request: ZoneRequest) -> Option<UnitRect> {
-    let source = request.zones.iter().find(|zone| zone.id == request.id)?;
-    editor::duplicate_rect(source.rect, &request.zones)
+pub fn place_copies(request: CopiesRequest) -> PlaceOutcome {
+    match editor::place_copies(&request.copied, &request.zones) {
+        Ok(placed) => PlaceOutcome::Placed(placed),
+        Err(refusal) => PlaceOutcome::Refused(refusal.to_string()),
+    }
+}
+
+pub fn merge_zones(request: MergeRequest) -> MergeOutcome {
+    match editor::merge(&request.zones, &request.ids) {
+        Ok(merged) => MergeOutcome::Merged(MergedLayout {
+            zone_shortcuts: merged.shortcuts(&request.zone_shortcuts),
+            zones: merged.zones,
+            kept: merged.kept,
+        }),
+        Err(refusal) => MergeOutcome::Refused(refusal.to_string()),
+    }
 }
 
 pub fn handle_at(request: HandleAtRequest) -> Option<Handle> {
@@ -315,24 +440,23 @@ pub fn draw_zone(request: DrawRequest) -> Drawn {
     gestures::draw_zone(&request.zones, request.from, request.to, request.tolerance)
 }
 
-pub fn cut_line(request: CutRequest) -> f64 {
-    gestures::cut_line(
+pub fn cut_preview(request: CutPreviewRequest) -> CutPreview {
+    gestures::cut_preview(
         &request.zones,
-        &request.id,
+        request.scope.to_core(),
         request.axis.into(),
         request.at,
         request.tolerance,
     )
 }
 
-pub fn cut_zone(request: CutRequest) -> Option<Vec<Zone>> {
-    gestures::cut(
+pub fn cut_zones(request: CutRequest) -> Option<Vec<Zone>> {
+    editor::cut(
         &request.zones,
-        &request.id,
+        request.scope.to_core(),
         request.axis.into(),
         request.at,
-        request.tolerance,
-        &request.new_id,
+        &request.new_ids,
     )
 }
 
@@ -341,15 +465,20 @@ pub fn set_field(request: FieldRequest) -> Vec<Zone> {
 }
 
 pub fn chord_labels(request: ChordRequest) -> ChordLabels {
-    let platform = request.platform.into();
+    let platform = request.platform;
     ChordLabels {
-        compact: request.chord.compact_label(platform),
         long: request.chord.long_label(platform),
+        parts: request.chord.label_parts(platform),
     }
 }
 
-pub fn is_valid_chord(request: ChordRequest) -> bool {
-    request.chord.is_valid()
+/// Why the chord can't be a shortcut, as a recorder says it, or nothing when it can.
+pub fn chord_problem(request: ChordRequest) -> Option<String> {
+    request
+        .chord
+        .check()
+        .err()
+        .map(|problem| problem.hint(request.platform))
 }
 
 /// A chord pressed with its modifiers held, as recording stores it: holding every modifier
@@ -366,23 +495,33 @@ pub fn expand_chord(request: KeyedChordRequest) -> KeyChord {
 
 /// What the Snappy key is on the platform, for example "Control + Option + Command".
 pub fn snappy_key_label(request: SnappyKeyRequest) -> String {
-    request.snappy_key.label(request.platform.into())
+    request.snappy_key.label(request.platform)
 }
 
-/// The settings with the Snappy key changed, or why the change is refused.
-pub fn change_snappy_key(request: SnappyKeyChangeRequest) -> Validation {
+/// The settings with the Snappy key changed, or why the change is refused. A key the
+/// settings already have changes nothing, as the daemon takes it.
+pub fn change_snappy_key(request: SnappyKeyChangeRequest) -> SnappyKeyChange {
+    if request.modifiers == request.settings.snappy_key.modifiers() {
+        return SnappyKeyChange::Unchanged;
+    }
     match request
         .settings
-        .with_snappy_key(request.modifiers, request.platform.into())
+        .with_snappy_key(request.modifiers, request.platform)
     {
-        Ok(settings) => Validation::Valid(Box::new(settings)),
-        Err(error) => Validation::Invalid(error.to_string()),
+        Ok(settings) => SnappyKeyChange::Changed(Box::new(settings)),
+        Err(error) => SnappyKeyChange::Refused(error.to_string()),
     }
+}
+
+/// A recorder's refusal of a chord the OS or another app already holds, as the Snappy key's
+/// probes say it.
+pub fn unavailable_shortcut(request: UnavailableRequest) -> Refusal {
+    unavailable_refusal(&request.chord, &request.title, request.platform)
 }
 
 /// The chords to ask the OS about for settings whose Snappy key just changed.
 pub fn snappy_key_probes(request: SettingsRequest) -> Vec<AvailabilityProbe> {
-    availability_probes(&request.settings, request.platform.into())
+    availability_probes(&request.settings, request.platform)
         .into_iter()
         .map(|probe| AvailabilityProbe {
             chord: probe.combo.into(),
@@ -402,12 +541,26 @@ fn titles<T: Serialize>(shortcuts: impl IntoIterator<Item = (T, String)>) -> Tit
         .collect()
 }
 
-pub fn shortcut_titles(_: Empty) -> ShortcutTitles {
-    ShortcutTitles {
-        navigation: titles(NavigationShortcut::ALL.map(|shortcut| (shortcut, shortcut.title()))),
-        workspace_steps: titles(WorkspaceStep::ALL.map(|step| (step, step.title().to_owned()))),
-        history: titles(HistoryStep::ALL.map(|step| (step, step.title().to_owned()))),
-    }
+/// The Settings page's sections of global shortcuts, each with its shortcuts as `settings`
+/// have them.
+pub fn shortcut_sections(request: SectionsRequest) -> Vec<SectionOfShortcuts> {
+    let settings = &request.settings;
+    ShortcutSection::ALL
+        .into_iter()
+        .map(|section| SectionOfShortcuts {
+            section,
+            title: section.title(),
+            shortcuts: section
+                .shortcuts()
+                .into_iter()
+                .filter_map(|id| {
+                    let title = id.title(settings)?;
+                    let chord = id.get(settings).cloned();
+                    Some(ListedShortcut { id, title, chord })
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// The titles of a workspace's own shortcuts, for the workspace named `workspace`.
@@ -427,15 +580,22 @@ pub fn layout_shortcut_titles(request: LayoutTitlesRequest) -> LayoutShortcutTit
 
 /// What each family of default shortcuts does, as help lists them.
 pub fn default_shortcuts(request: PlatformRequest) -> Vec<GuideEntry> {
-    guide::default_shortcuts(request.platform.into())
+    guide::default_shortcuts(request.platform)
 }
 
 pub fn modifier_names(request: ModifierRequest) -> ModifierNames {
-    let platform = request.platform.into();
+    let platform = request.platform;
     ModifierNames {
         name: request.modifier.name(platform),
-        short: request.modifier.short_name(platform),
         label: request.modifier.label(platform),
+    }
+}
+
+pub fn limits(_: Empty) -> Limits {
+    Limits {
+        zones: MAX_ZONES,
+        workspaces: MAX_WORKSPACES,
+        undo_steps: UNDO_LIMIT,
     }
 }
 
@@ -448,18 +608,24 @@ pub fn is_valid_layout(request: LayoutRequest) -> bool {
 }
 
 pub fn default_settings(request: PlatformRequest) -> Settings {
-    Settings::defaults(request.platform.into())
+    Settings::defaults(request.platform)
 }
 
 pub fn validate_settings(request: SettingsRequest) -> Validation {
-    match request.settings.validate(request.platform.into()) {
+    match request.settings.validate(request.platform) {
         Ok(settings) => Validation::Valid(Box::new(settings)),
         Err(error) => Validation::Invalid(error.to_string()),
     }
 }
 
-pub fn settings_conflict(request: SettingsRequest) -> Option<String> {
-    first_conflict(&request.settings, request.platform.into())
+/// A recorder's conflict, naming the shortcut holding the chord when it is Snappy's.
+pub fn recording_conflict_of(request: RecordingRequest) -> Option<Refusal> {
+    recording_conflict(
+        &request.settings,
+        &request.shortcut,
+        request.chord,
+        request.platform,
+    )
 }
 
 pub fn layout_conflict(request: LayoutConflictRequest) -> Option<String> {
@@ -467,7 +633,7 @@ pub fn layout_conflict(request: LayoutConflictRequest) -> Option<String> {
         &request.settings,
         &request.layout,
         &request.options,
-        request.platform.into(),
+        request.platform,
     )
 }
 
@@ -477,6 +643,19 @@ pub fn layout_for_display(request: DisplayLayoutRequest) -> Layout {
 
 pub fn layout_options(request: LayoutOptionsRequest) -> LayoutOptions {
     request.settings.options(&request.layout)
+}
+
+/// The settings with `reset` applied. They are compared once both are normalized, so a reset
+/// to what the settings already are counts as no change.
+pub fn reset_settings(request: ResetRequest) -> ResetOutcome {
+    let platform = request.platform;
+    let normalized = |settings: Settings| settings.clone().validate(platform).unwrap_or(settings);
+    let settings = normalized(request.settings.reset(&request.reset, platform));
+    ResetOutcome {
+        changed: settings != normalized(request.settings.clone()),
+        message: request.reset.message(&request.settings),
+        settings,
+    }
 }
 
 pub fn new_workspace(request: NewWorkspaceRequest) -> Workspace {

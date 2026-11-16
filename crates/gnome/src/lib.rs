@@ -11,6 +11,7 @@
 
 mod app;
 mod bus;
+mod caps_lock;
 mod displays;
 mod error;
 pub mod extension;

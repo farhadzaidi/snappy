@@ -103,7 +103,8 @@ impl AxElement {
         Some(pid)
     }
 
-    /// The element at a top-left global point, on the system-wide element.
+    /// The element at a top-left global point: in any app's window for the system-wide
+    /// element, else in this app's.
     pub fn element_at(&self, point: Point) -> Result<AxElement, AxError> {
         let mut hit: AXUIElementRef = ptr::null();
         // SAFETY: valid element and out-pointer; the result is +1.

@@ -2,20 +2,24 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import {
   canvas,
+  chordIn,
   clickCanvas,
   dragOnCanvas,
+  edgesOf,
+  editorTool,
+  expectRecordersLinedUp,
   lastCommandOf,
   openApp,
   saveCustomCopy,
   showPage,
+  spokenText,
   toast,
   zone,
   layoutAction,
+  widthsOf,
 } from "./support";
 
 const save = (page: Page) => page.getByRole("button", { name: "Save", exact: true });
-const tool = (page: Page, name: string) =>
-  page.getByRole("toolbar", { name: "Editing tools" }).getByRole("button", { name });
 
 test.beforeEach(async ({ page }) => {
   await openApp(page);
@@ -52,7 +56,7 @@ test("undoing back to the saved content disables save", async ({ page }) => {
   await showPage(page, "Layouts");
   await layoutAction(page, "Shortcuts");
   await expect(save(page)).toBeDisabled();
-  await page.getByRole("switch", { name: "Layout active" }).click();
+  await page.getByRole("switch", { name: "Layout enabled" }).click();
   await expect(save(page)).toBeEnabled();
   await page.keyboard.press("Meta+KeyZ");
   await expect(save(page)).toBeDisabled();
@@ -60,7 +64,7 @@ test("undoing back to the saved content disables save", async ({ page }) => {
 
 test("a vertical cut splits the zone and selects the second part", async ({ page }) => {
   await drawLeftHalf(page);
-  await tool(page, "Vertical cut").click();
+  await editorTool(page, "Vertical cut").click();
   await clickCanvas(page, { x: 0.25, y: 0.5 });
   await expect(zone(page, 2)).toBeVisible();
   await expect(zone(page, 2)).toHaveAttribute("data-selected", "true");
@@ -70,14 +74,14 @@ test("a vertical cut splits the zone and selects the second part", async ({ page
 
 test("a horizontal cut splits across", async ({ page }) => {
   await drawLeftHalf(page);
-  await tool(page, "Horizontal cut").click();
+  await editorTool(page, "Horizontal cut").click();
   await clickCanvas(page, { x: 0.25, y: 0.5 });
   await expect(zone(page, 2).locator(".zone-size")).toHaveText("1512 × 949");
 });
 
 test("undo and redo work on whole edits from the toolbar and keyboard", async ({ page }) => {
   await drawLeftHalf(page);
-  await tool(page, "Vertical cut").click();
+  await editorTool(page, "Vertical cut").click();
   await clickCanvas(page, { x: 0.25, y: 0.5 });
   await expect(zone(page, 2)).toBeVisible();
 
@@ -101,9 +105,9 @@ test("dragging a zone's body moves it and stops at the canvas edge", async ({ pa
 
 test("dragging a divider moves the seam between zones", async ({ page }) => {
   await dragOnCanvas(page, { x: 0.008, y: 0.012 }, { x: 0.998, y: 0.998 });
-  await tool(page, "Vertical cut").click();
+  await editorTool(page, "Vertical cut").click();
   await clickCanvas(page, { x: 0.5, y: 0.5 });
-  await tool(page, "Select").click();
+  await editorTool(page, "Select").click();
   const divider = canvas(page).getByLabel("Vertical divider");
   const box = await divider.boundingBox();
   const area = await canvas(page).boundingBox();
@@ -204,13 +208,13 @@ test("new without changes starts over at once", async ({ page }) => {
 test("the editor shares the display choice and changing it is not an edit", async ({ page }) => {
   await drawLeftHalf(page);
   await save(page).click();
-  await page.locator(".editor-sidebar").getByRole("button", { name: "Display" }).click();
+  await page.locator(".editor-sidebar").getByRole("button", { name: "Display", exact: true }).click();
   await page.getByRole("option", { name: "Studio Display" }).click();
   await expect(zone(page, 1).locator(".zone-size")).toHaveText("2560 × 2830");
   await expect(page.locator(".editor-sidebar .display-size")).toHaveText("5120 × 2830 px");
   await expect(save(page)).toBeDisabled();
   await showPage(page, "Layouts");
-  await expect(page.getByRole("button", { name: "Display" })).toHaveText("Studio Display");
+  await expect(page.getByRole("button", { name: "Display", exact: true })).toHaveText("Studio Display");
 });
 
 test("the shortcuts tab records zone shortcuts and selects zones", async ({ page }) => {
@@ -220,9 +224,34 @@ test("the shortcuts tab records zone shortcuts and selects zones", async ({ page
   await expect(recorder).toHaveText("Record shortcut");
   await recorder.click();
   await page.keyboard.press("Control+Alt+Meta+KeyM");
-  await expect(recorder).toHaveText("Snappy + M");
+  await expect(chordIn(recorder)).toHaveAttribute("aria-label", "Snappy + M");
   await page.getByRole("button", { name: "Clear all" }).click();
   await expect(recorder).toHaveText("Record shortcut");
+});
+
+test("the layout's recorders are one width, and a shortcut too long for the sidebar is cut short", async ({
+  page,
+}) => {
+  await drawLeftHalf(page);
+  await dragOnCanvas(page, { x: 0.501, y: 0.012 }, { x: 0.992, y: 0.998 });
+  await expect(zone(page, 2)).toBeVisible();
+  await page.getByRole("tab", { name: "Shortcuts" }).click();
+  const panel = page.locator(".shortcuts-panel");
+  const usual = await expectRecordersLinedUp(panel, 3);
+
+  const first = page.getByRole("button", { name: "Zone 1 of this layout", exact: true });
+  await first.click();
+  await page.keyboard.press("Control+Alt+KeyF");
+  await expect(chordIn(first)).toHaveAttribute("aria-label", "Control ⌃ + Option ⌥ + F");
+  expect(await expectRecordersLinedUp(panel, 3)).toBeGreaterThan(usual);
+
+  const second = page.getByRole("button", { name: "Zone 2 of this layout", exact: true });
+  await second.click();
+  await page.keyboard.press("Control+Alt+Shift+PageDown");
+  await expect(chordIn(second)).toHaveAttribute("aria-label", /PageDown$/);
+  await expectRecordersLinedUp(panel, 3, { cutShort: true });
+  const clear = page.getByRole("button", { name: "Clear Zone 2 of this layout", exact: true });
+  expect((await edgesOf(clear)).right).toBeLessThanOrEqual((await edgesOf(panel)).right);
 });
 
 test("a conflict shows in the sidebar and blocks saving", async ({ page }) => {
@@ -251,10 +280,10 @@ test("a conflict shows in the sidebar and blocks saving", async ({ page }) => {
   await showPage(page, "Layouts");
   await page.getByRole("tab", { name: "My layouts" }).click();
   await layoutAction(page, "Edit");
-  await page.getByRole("switch", { name: "Layout active" }).click();
-  await expect(page.locator(".editor-sidebar").getByRole("alert")).toContainText(
-    "Snappy + ← is already assigned to Move window left.",
-  );
+  await page.getByRole("switch", { name: "Layout enabled" }).click();
+  await expect
+    .poll(() => spokenText(page.locator(".editor-sidebar").getByRole("alert")))
+    .toContain("Snappy + ← is already assigned to Move window left.");
   await expect(save(page)).toBeDisabled();
 });
 
@@ -264,22 +293,22 @@ test("the toolbar offers three tools and history, and opening a layout resets th
   const tools = page.getByRole("toolbar", { name: "Editing tools" });
   await expect(tools.getByRole("button")).toHaveCount(5);
   for (const name of ["Select", "Vertical cut", "Horizontal cut"]) {
-    await expect(tool(page, name)).toBeVisible();
+    await expect(editorTool(page, name)).toBeVisible();
   }
   await expect(tools.getByRole("button", { name: "Undo edit" })).toBeVisible();
   await expect(tools.getByRole("button", { name: "Redo edit" })).toBeVisible();
-  await expect(tool(page, "Select")).toHaveAttribute("aria-pressed", "true");
+  await expect(editorTool(page, "Select")).toHaveAttribute("aria-pressed", "true");
 
   await showPage(page, "Layouts");
   await saveCustomCopy(page, "Halves");
   await clickCanvas(page, { x: 0.75, y: 0.5 });
   await expect(zone(page, 2)).toHaveAttribute("data-selected", "true");
-  await tool(page, "Horizontal cut").click();
-  await expect(tool(page, "Horizontal cut")).toHaveAttribute("aria-pressed", "true");
+  await editorTool(page, "Horizontal cut").click();
+  await expect(editorTool(page, "Horizontal cut")).toHaveAttribute("aria-pressed", "true");
 
   await showPage(page, "Layouts");
   await layoutAction(page, "Edit");
-  await expect(tool(page, "Select")).toHaveAttribute("aria-pressed", "true");
+  await expect(editorTool(page, "Select")).toHaveAttribute("aria-pressed", "true");
   await expect(zone(page, 1)).toHaveAttribute("data-selected", "true");
   await expect(zone(page, 2)).toHaveAttribute("data-selected", "false");
 });
@@ -288,12 +317,12 @@ const cursorOf = (locator: Locator) => locator.evaluate((element) => getComputed
 
 test("cursors show resizing, grabbing, and cutting", async ({ page }) => {
   await dragOnCanvas(page, { x: 0.008, y: 0.012 }, { x: 0.998, y: 0.998 });
-  await tool(page, "Vertical cut").click();
+  await editorTool(page, "Vertical cut").click();
   await clickCanvas(page, { x: 0.5, y: 0.5 });
   await expect(cursorOf(canvas(page))).resolves.toBe("crosshair");
   await expect(cursorOf(zone(page, 1))).resolves.toBe("crosshair");
 
-  await tool(page, "Select").click();
+  await editorTool(page, "Select").click();
   await expect(cursorOf(canvas(page).getByLabel("Vertical divider"))).resolves.toBe("col-resize");
 
   const box = await zone(page, 2).boundingBox();
@@ -312,4 +341,11 @@ test("cursors show resizing, grabbing, and cutting", async ({ page }) => {
   await page.mouse.move(box.x + box.width / 2 - 40, box.y + box.height / 2, { steps: 4 });
   await expect.poll(() => cursorOf(zone(page, 2))).toBe("grabbing");
   await page.mouse.up();
+});
+
+test("the editing tools are all one width", async ({ page }) => {
+  const tools = page.getByRole("toolbar", { name: "Editing tools" }).locator(".tool");
+  const widths = await widthsOf(tools);
+  expect(widths).toHaveLength(3);
+  expect(new Set(widths).size).toBe(1);
 });

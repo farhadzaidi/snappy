@@ -21,11 +21,40 @@ function Icon({ size = 16, children }: { size?: number; children: ReactNode }) {
   );
 }
 
-export const LogoIcon = () => (
-  <svg width={22} height={22} viewBox="0 0 22 22" aria-hidden="true" focusable="false">
-    <rect x="1" y="3" width="6" height="16" rx="1.6" fill="currentColor" />
-    <rect x="8" y="3" width="6" height="16" rx="1.6" fill="currentColor" />
-    <rect x="15" y="3" width="6" height="16" rx="1.6" fill="currentColor" />
+/**
+ * The app icon, `assets/icon/snappy.svg` cropped to its tile and without the blurs, which
+ * don't show at this size: the lit half zone beside two empty quarter zones.
+ */
+export const AppIcon = ({ size = 26 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="100 100 824 824" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="app-icon-body" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stopColor="#1B2026" />
+        <stop offset="1" stopColor="#0F1216" />
+      </linearGradient>
+      <linearGradient id="app-icon-rim" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.22" />
+        <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.06" />
+      </linearGradient>
+      <linearGradient id="app-icon-mint" x1="0" y1="0" x2="0.35" y2="1">
+        <stop offset="0" stopColor="#A8F6DC" />
+        <stop offset="1" stopColor="#5FD6AF" />
+      </linearGradient>
+    </defs>
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#app-icon-body)" />
+    <rect
+      x="106"
+      y="106"
+      width="812"
+      height="812"
+      rx="179"
+      fill="none"
+      stroke="url(#app-icon-rim)"
+      strokeWidth="12"
+    />
+    <rect x="540" y="232" width="284" height="254" rx="44" fill="#7DE8C5" fillOpacity="0.26" />
+    <rect x="540" y="538" width="284" height="254" rx="44" fill="#7DE8C5" fillOpacity="0.26" />
+    <rect x="200" y="232" width="288" height="560" rx="44" fill="url(#app-icon-mint)" />
   </svg>
 );
 
@@ -80,8 +109,8 @@ export const PauseIcon = () => (
   </svg>
 );
 
-export const RefreshIcon = () => (
-  <Icon size={10}>
+export const RefreshIcon = ({ size = 10 }: { size?: number }) => (
+  <Icon size={size}>
     <path d="M13 8a5 5 0 11-1.5-3.6M13 2.5v3h-3" />
   </Icon>
 );
@@ -120,15 +149,17 @@ export const DuplicateIcon = () => (
   </Icon>
 );
 
-export const PowerIcon = () => (
+/** Two zones becoming one: a zone whose dividing line fades to a dash. */
+export const MergeIcon = () => (
   <Icon>
-    <path d="M8 1.8v5.7M4.5 3.9a5.5 5.5 0 107 0" />
+    <rect x="1.5" y="3" width="13" height="10" rx="1.5" />
+    <path d="M8 3v10" strokeDasharray="1.6 1.9" />
   </Icon>
 );
 
-export const MoreIcon = () => (
+export const PowerIcon = () => (
   <Icon>
-    <path d="M3.5 8h.01M8 8h.01M12.5 8h.01" strokeWidth={2.4} />
+    <path d="M8 1.8v5.7M4.5 3.9a5.5 5.5 0 107 0" />
   </Icon>
 );
 
@@ -177,8 +208,8 @@ export const RedoIcon = () => (
   </Icon>
 );
 
-export const AlertIcon = () => (
-  <Icon>
+export const AlertIcon = ({ size }: { size?: number }) => (
+  <Icon {...(size === undefined ? {} : { size })}>
     <circle cx="8" cy="8" r="6.5" />
     <path d="M8 4.8v3.8M8 11.1v.1" />
   </Icon>

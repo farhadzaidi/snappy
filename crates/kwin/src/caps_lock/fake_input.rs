@@ -12,6 +12,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use snappy_linux::app_icon;
 use snappy_linux::wayland::{Arg, Connection};
 
 const INTERFACE: &str = "org_kde_kwin_fake_input";
@@ -84,19 +85,22 @@ pub fn entry_path() -> Option<PathBuf> {
 /// KConfig reads a doubled backslash as one.
 pub fn entry(executable: &Path) -> String {
     let path = executable.to_string_lossy().replace('\\', "\\\\");
+    let icon = app_icon::NAME;
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
          Name=Snappy\n\
          Comment=Lets Snappy turn Caps Lock on and off while Caps Lock is the Snappy key\n\
          Exec=\"{path}\"\n\
+         Icon={icon}\n\
          NoDisplay=true\n\
          X-KDE-Wayland-Interfaces={INTERFACE}\n"
     )
 }
 
-/// Writes the entry for this program.
+/// Writes the entry for this program, with the icon it names.
 pub fn write_entry() -> io::Result<()> {
+    app_icon::install();
     let path = entry_path().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no data folder"))?;
     let executable = std::env::current_exe()?.canonicalize()?;
     if let Some(folder) = path.parent() {
@@ -125,6 +129,7 @@ mod tests {
         assert!(entry.starts_with("[Desktop Entry]\nType=Application\n"));
         assert!(entry.contains("\nExec=\"/home/me/.local/bin/snappy\"\n"));
         assert!(entry.contains("\nNoDisplay=true\n"));
+        assert!(entry.contains("\nIcon=io.github.farhadzaidi.Snappy\n"));
         assert!(entry.contains("\nX-KDE-Wayland-Interfaces=org_kde_kwin_fake_input\n"));
     }
 

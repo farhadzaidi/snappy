@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::time::Duration;
 
+use snappy_core::bindings::Refusal;
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::{KeyChord, Modifier, Mods};
 use snappy_core::settings::{HistoryStep, LayoutOptions, Settings};
@@ -79,6 +80,25 @@ pub fn live_engine(name: &str, fake: FakePlatform) -> Engine<FakePlatform> {
 
 pub fn command(engine: &Engine<FakePlatform>, command: Command) {
     engine.handle(Input::Command { id: 1, command });
+}
+
+/// Send a command and return the daemon's reply to it.
+pub fn reply_to(engine: &Engine<FakePlatform>, sent: Command) -> Option<Refusal> {
+    engine.take_outbox();
+    command(engine, sent);
+    engine
+        .take_outbox()
+        .into_iter()
+        .find_map(|message| match message {
+            ToSettings::Reply { error, .. } => Some(error),
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// A Snappy key of Control and Option, in place of the default.
+pub fn control_option() -> Mods {
+    Mods::from_iter([Modifier::Ctrl, Modifier::Alt])
 }
 
 pub fn event(engine: &Engine<FakePlatform>, event: PlatformEvent) {
@@ -519,11 +539,16 @@ pub fn visited_tabs(name: &str, frame: Rect) -> Engine<FakePlatform> {
     engine
 }
 
+/// The windows a journal or membership file lists, checking it says its version.
+pub fn saved_windows(path: &std::path::Path) -> Vec<serde_json::Value> {
+    let file: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(file["version"], 1);
+    file["windows"].as_array().unwrap().clone()
+}
+
 /// The workspace the membership file gives each window.
 pub fn remembered_workspaces(name: &str) -> BTreeMap<u64, String> {
-    let file = std::fs::read(paths_kept(name).membership()).unwrap();
-    serde_json::from_slice::<Vec<serde_json::Value>>(&file)
-        .unwrap()
+    saved_windows(&paths_kept(name).membership())
         .iter()
         .map(|entry| {
             let window = entry["key"]["window"].as_str().unwrap().parse().unwrap();

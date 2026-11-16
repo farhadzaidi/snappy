@@ -7,6 +7,10 @@
 //! own Carbon shortcuts and drag monitors included, then sees exactly what holding the
 //! modifiers gives, and there is only one way a shortcut fires. The tap reports that
 //! something else was used, never what.
+//!
+//! The tap also sees F18 itself come up, before the hotkey does, and takes that as the
+//! release, so a hotkey release that never arrives can't leave the tap adding the Snappy
+//! key's flags to every key and click.
 
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -94,7 +98,8 @@ pub fn stop() {
     }
 }
 
-/// Caps Lock went down or up, as its hotkey reports. Repeats while down are ignored.
+/// Caps Lock went down or up, as its hotkey or the tap reports, whichever comes first.
+/// Repeats while down, and the second report of a release, are ignored.
 pub fn key_changed(down: bool) {
     let changed = HELD.with(|held| {
         let mut held = held.borrow_mut();
@@ -156,6 +161,15 @@ fn announce_real_modifiers() {
     CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
 }
 
+/// What one event the tap saw means for the press.
+enum Seen {
+    Nothing,
+    /// Another key or a button was used, the first time this press.
+    OtherInput,
+    /// Caps Lock itself came up.
+    Released,
+}
+
 unsafe extern "C-unwind" fn on_event(
     _proxy: CGEventTapProxy,
     kind: CGEventType,
@@ -164,18 +178,18 @@ unsafe extern "C-unwind" fn on_event(
 ) -> *mut CGEvent {
     // SAFETY: the tap passes a valid event for the duration of the call.
     let event_ref = unsafe { event.as_ref() };
-    let other_input = HELD.with(|held| {
+    let seen = HELD.with(|held| {
         let Ok(mut held) = held.try_borrow_mut() else {
-            return false;
+            return Seen::Nothing;
         };
         if kind == CGEventType::TapDisabledByTimeout || kind == CGEventType::TapDisabledByUserInput {
             if let (true, Some(tap)) = (held.down, &held.tap) {
                 CGEvent::tap_enable(&tap.port, true);
             }
-            return false;
+            return Seen::Nothing;
         }
         if !held.down {
-            return false;
+            return Seen::Nothing;
         }
         let is_key = matches!(
             kind,
@@ -187,7 +201,11 @@ unsafe extern "C-unwind" fn on_event(
                 CGEventField::KeyboardEventKeycode,
             )) == held.key
         {
-            return false;
+            return if kind == CGEventType::KeyUp {
+                Seen::Released
+            } else {
+                Seen::Nothing
+            };
         }
         let flags = CGEvent::flags(Some(event_ref));
         CGEvent::set_flags(
@@ -206,10 +224,13 @@ unsafe extern "C-unwind" fn on_event(
         };
         let first = used && !held.reported_other_input;
         held.reported_other_input |= used;
-        first
+        if first { Seen::OtherInput } else { Seen::Nothing }
     });
-    if other_input {
-        emit(PlatformEvent::CapsLock(CapsLockInput::OtherInput));
+    match seen {
+        Seen::Nothing => {}
+        Seen::OtherInput => emit(PlatformEvent::CapsLock(CapsLockInput::OtherInput)),
+        // Ends the press and disables the tap; the hotkey's own release then changes nothing.
+        Seen::Released => key_changed(false),
     }
     event.as_ptr()
 }

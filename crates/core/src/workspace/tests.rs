@@ -131,12 +131,16 @@ fn switching_parks_and_restores_exact_frames() {
     session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
     assert!(io.origin(2).x > 1400.0, "sent window is parked");
 
-    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(io.origin(2), Point::new(200.0, 150.0));
     assert!(io.origin(1).x > 1400.0);
     assert_eq!(io.focused, Some(WindowId(2)));
 
-    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("one", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(io.origin(1), Point::new(100.0, 100.0));
 }
 
@@ -146,7 +150,9 @@ fn incoming_windows_move_before_outgoing() {
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
     session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
     io.moves.clear();
-    session.switch_to("two", &[DISPLAY], false, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], false, &mut io)
+        .unwrap();
     assert_eq!(io.moves, [WindowId(2), WindowId(1)]);
 }
 
@@ -158,10 +164,12 @@ fn a_refused_move_reverses_the_switch() {
     let parked = io.origin(2);
     io.refusing.insert(WindowId(1));
 
-    let error = session.switch_to("two", &[DISPLAY], true, &mut io).unwrap_err();
+    let error = session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "An app refused the workspace move. Your previous workspace has been restored."
+        "An app kept its window from moving, so nothing changed."
     );
     assert_eq!(session.active(), "one");
     assert_eq!(io.origin(2), parked);
@@ -173,7 +181,7 @@ fn busy_windows_block_a_switch() {
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
     io.busy.insert(WindowId(1));
     assert!(matches!(
-        session.switch_to("two", &[DISPLAY], true, &mut io),
+        session.switch_taking_along("two", &[], &[DISPLAY], true, &mut io),
         Err(WindowError::Unavailable(_))
     ));
 }
@@ -183,7 +191,11 @@ fn no_journal_means_no_moves() {
     let mut io = two_windows();
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
     io.journal_fails = true;
-    assert!(session.switch_to("two", &[DISPLAY], true, &mut io).is_err());
+    assert!(
+        session
+            .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+            .is_err()
+    );
     assert!(io.moves.is_empty());
 }
 
@@ -193,7 +205,9 @@ fn the_journal_keeps_restoring_windows_until_they_land() {
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
     session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
     io.journals.clear();
-    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
 
     let first = &io.journals[0];
     assert!(
@@ -208,7 +222,10 @@ fn the_journal_keeps_restoring_windows_until_they_land() {
 fn an_empty_workspace_reports_nothing_focused() {
     let mut io = two_windows();
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
-    assert_eq!(session.switch_to("two", &[DISPLAY], true, &mut io), Ok(false));
+    assert_eq!(
+        session.switch_taking_along("two", &[], &[DISPLAY], true, &mut io),
+        Ok(false)
+    );
 }
 
 #[test]
@@ -226,6 +243,52 @@ fn containment_reparks_revealed_windows() {
         Point::new(200.0, 150.0)
     );
     assert_eq!(session.contain(WindowId(2), &[DISPLAY], &mut io), Ok(false));
+}
+
+#[test]
+fn containment_reports_a_window_its_app_keeps_on_screen() {
+    let mut io = two_windows();
+    let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
+    session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
+    let parked = session.member(WindowId(2)).unwrap().parked;
+    let revealed = Rect::new(300.0, 300.0, 500.0, 300.0);
+    io.frames.insert(WindowId(2), revealed);
+    io.refusing.insert(WindowId(2));
+
+    assert!(matches!(
+        session.contain(WindowId(2), &[DISPLAY], &mut io),
+        Err(WindowError::Refused(_))
+    ));
+    assert_eq!(io.frames[&WindowId(2)], revealed);
+    assert_eq!(
+        session.member(WindowId(2)).unwrap().parked,
+        parked,
+        "the session is unchanged"
+    );
+}
+
+#[test]
+fn a_display_change_moves_every_window_that_can_move_and_leaves_the_rest() {
+    let mut io = three_windows();
+    let mut session = session_with(&mut io, &[(1, "one"), (2, "one"), (3, "one")]);
+    session.send(WindowId(3), "two", &[DISPLAY], &mut io).unwrap();
+    let small = Rect::new(0.0, 0.0, 1000.0, 700.0);
+    let small_area = Rect::new(0.0, 25.0, 1000.0, 675.0);
+    let full_screen = Rect::new(900.0, 500.0, 600.0, 400.0);
+    io.frames.insert(WindowId(1), full_screen);
+    io.busy.insert(WindowId(1));
+    io.frames
+        .insert(WindowId(2), Rect::new(900.0, 500.0, 500.0, 300.0));
+    io.moves.clear();
+
+    assert_eq!(session.update_displays(&[small], &[small_area], &mut io), Ok(2));
+    assert_eq!(io.frames[&WindowId(1)], full_screen, "a busy window stays put");
+    assert!(small_area.contains_rect(io.frames[&WindowId(2)]));
+    assert!(
+        io.origin(3).x >= 999.0,
+        "the parked window moves to the new corner"
+    );
+    assert_eq!(io.moves, [WindowId(2), WindowId(3)]);
 }
 
 #[test]
@@ -260,8 +323,12 @@ fn repeated_switches_do_not_drift() {
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
     session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
     for _ in 0..1000 {
-        session.switch_to("two", &[DISPLAY], false, &mut io).unwrap();
-        session.switch_to("one", &[DISPLAY], false, &mut io).unwrap();
+        session
+            .switch_taking_along("two", &[], &[DISPLAY], false, &mut io)
+            .unwrap();
+        session
+            .switch_taking_along("one", &[], &[DISPLAY], false, &mut io)
+            .unwrap();
     }
     assert_eq!(io.frames[&WindowId(1)], Rect::new(100.0, 100.0, 600.0, 400.0));
     assert_eq!(session.members().len(), 2);
@@ -272,7 +339,9 @@ fn minimized_windows_never_move() {
     let mut io = two_windows();
     let mut session = session_with(&mut io, &[(1, "one"), (2, "one")]);
     io.minimized.insert(WindowId(2));
-    session.switch_to("two", &[DISPLAY], false, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], false, &mut io)
+        .unwrap();
     assert!(!io.moves.contains(&WindowId(2)));
 }
 
@@ -283,7 +352,9 @@ fn a_window_closing_during_a_switch_leaves_the_session_and_the_switch_goes_on() 
     session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
     io.closing_when_moved.insert(WindowId(2));
 
-    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
 
     assert_eq!(session.active(), "two");
     assert!(session.member(WindowId(2)).is_none());
@@ -321,8 +392,12 @@ fn sending_parks_without_switching_and_sending_back_unparks() {
         "sending to the active workspace un-parks"
     );
 
-    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
-    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
+    session
+        .switch_taking_along("one", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(
         io.focused,
         Some(WindowId(1)),
@@ -343,12 +418,16 @@ fn desktop_parking_hides_windows_without_moving_them() {
     assert!(io.on_parking_desktop.contains(&WindowId(2)));
     assert_eq!(session.journal()[0].parked, Point::new(200.0, 150.0));
 
-    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(io.on_parking_desktop, BTreeSet::from([WindowId(1)]));
     assert_eq!(io.origin(1), Point::new(100.0, 100.0));
     assert_eq!(io.focused, Some(WindowId(2)));
 
-    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("one", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(io.on_parking_desktop, BTreeSet::from([WindowId(2)]));
 }
 
@@ -359,7 +438,9 @@ fn desktop_parking_shows_windows_at_their_saved_frames() {
     session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
     io.frames.insert(WindowId(2), Rect::new(10.0, 40.0, 500.0, 300.0));
 
-    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(io.origin(2), Point::new(200.0, 150.0));
     assert!(!io.on_parking_desktop.contains(&WindowId(2)));
 }
@@ -371,10 +452,12 @@ fn desktop_parking_refused_by_the_window_manager_reverses_the_switch() {
     session.send(WindowId(2), "two", &[DISPLAY], &mut io).unwrap();
     io.refusing.insert(WindowId(1));
 
-    let error = session.switch_to("two", &[DISPLAY], true, &mut io).unwrap_err();
+    let error = session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "An app refused the workspace move. Your previous workspace has been restored."
+        "An app kept its window from moving, so nothing changed."
     );
     assert_eq!(session.active(), "one");
     assert_eq!(io.on_parking_desktop, BTreeSet::from([WindowId(2)]));
@@ -456,7 +539,9 @@ fn windows_taken_along_join_the_target_where_they_are_and_the_last_one_gets_focu
     assert_eq!(io.focused, Some(WindowId(2)), "the last one picked up");
     assert!(session.journal().iter().all(|entry| entry.window == WindowId(1)));
 
-    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("one", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert!(io.origin(2).x > 1400.0 && io.origin(3).x > 1400.0);
     assert_eq!(io.origin(1), Point::new(100.0, 100.0));
 }
@@ -558,7 +643,9 @@ fn switching_away_parks_only_the_shown_tab_and_journals_only_it() {
     io.moves.clear();
     io.journals.clear();
 
-    session.switch_to("two", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("two", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(io.moves, [WindowId(4), WindowId(1)]);
     assert!(io.origin(1).x > 1400.0);
     assert_eq!(
@@ -580,7 +667,9 @@ fn switching_away_parks_only_the_shown_tab_and_journals_only_it() {
         "hidden tabs follow their shown tab"
     );
 
-    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("one", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(io.origin(1), TABBED.origin());
     let journaled: Vec<WindowId> = session.journal().iter().map(|entry| entry.window).collect();
     assert_eq!(journaled, [WindowId(4)]);
@@ -633,7 +722,9 @@ fn a_torn_out_tab_keeps_its_groups_workspace_and_moves_on_its_own() {
     assert_eq!(workspace_of(&session, 3), "two");
 
     io.moves.clear();
-    session.switch_to("one", &[DISPLAY], true, &mut io).unwrap();
+    session
+        .switch_taking_along("one", &[], &[DISPLAY], true, &mut io)
+        .unwrap();
     assert_eq!(io.moves, [WindowId(4), WindowId(1), WindowId(3)]);
     assert!(
         io.origin(3).x > 1400.0,

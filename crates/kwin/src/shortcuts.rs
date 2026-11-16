@@ -55,7 +55,7 @@ pub fn register(bus: &Bus, previous: &[Grab], wanted: &[(u32, i32)]) -> (Vec<Gra
             Ok(Some(grab)) => held.push(grab),
             Ok(None) => refused.push(key),
             Err(error) => {
-                eprintln!("snappy: KDE's shortcut service didn't answer: {error:?}");
+                journal::warn(format_args!("KDE's shortcut service didn't answer: {error:?}"));
                 refused.push(key);
             }
         }

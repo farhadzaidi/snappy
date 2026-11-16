@@ -1,8 +1,9 @@
-import type { LayoutOptions } from "../../core/model";
+import type { LayoutOptions, Refusal } from "../../core/model";
 import { core } from "../../core/snappyCore";
 import { ShortcutRecorder } from "../../recorder/ShortcutRecorder";
 import { useObservable } from "../../state/observable";
 import { useAppState, useServices } from "../../state/services";
+import { Button } from "../../ui/Button";
 import { draftConflict } from "../saving";
 
 /** How the shortcuts' titles name the layout they belong to, which the editor shows. */
@@ -16,26 +17,28 @@ export function ShortcutsPanel() {
   const { layout, options } = draft.current;
   const titles = core.layoutShortcutTitles(THIS_LAYOUT, layout.zones.length);
 
-  /** The conflict the draft would have with `change` applied. */
-  const conflictWith = (change: Partial<LayoutOptions>) =>
-    draftConflict({ layout, options: { ...options, ...change } }, app.settings, app.platform);
+  /**
+   * The conflict the draft would have with `change` applied. It names no setting to point at,
+   * since the editor shows no other shortcuts.
+   */
+  const conflictWith = (change: Partial<LayoutOptions>): Refusal | null => {
+    const message = draftConflict({ layout, options: { ...options, ...change } }, app.settings, app.platform);
+    return message === null ? null : { message, setting: null };
+  };
 
   return (
     <div className="shortcuts-panel">
       <h2 className="panel-title">{titles.select}</h2>
-      <ShortcutRecorder
-        title={titles.select}
-        chord={options.selectShortcut}
-        conflictOf={(chord) => conflictWith({ selectShortcut: chord })}
-        onChange={(chord) => editor.setSelectShortcut(chord)}
-      />
-      <hr className="sidebar-divider" />
-      <div className="panel-heading">
-        <h2 className="panel-title">Zone shortcuts</h2>
-        <button type="button" className="text-button" onClick={() => editor.clearZoneShortcuts()}>
-          Clear all
-        </button>
+      <div className="layout-shortcut">
+        <ShortcutRecorder
+          title={titles.select}
+          chord={options.selectShortcut}
+          conflictOf={(chord) => conflictWith({ selectShortcut: chord })}
+          onChange={(chord) => editor.setSelectShortcut(chord)}
+        />
       </div>
+      <hr className="sidebar-divider" />
+      <h2 className="panel-title">Zone shortcuts</h2>
       <ul className="zone-shortcuts">
         {layout.zones.map((zone, index) => (
           <li key={zone.id} className="zone-shortcut">
@@ -43,7 +46,7 @@ export function ShortcutsPanel() {
               type="button"
               className="zone-shortcut-number"
               aria-label={`Select zone ${index + 1}`}
-              data-selected={zone.id === draft.selectedZoneId}
+              data-selected={draft.selection.includes(zone.id)}
               onClick={() => editor.select(zone.id)}
             >
               {index + 1}
@@ -59,6 +62,14 @@ export function ShortcutsPanel() {
           </li>
         ))}
       </ul>
+      <Button
+        className="clear-shortcuts"
+        title="A layout's shortcuts start empty. Save to keep the change."
+        disabled={options.selectShortcut === null && Object.keys(options.zoneShortcuts).length === 0}
+        onClick={() => editor.clearShortcuts()}
+      >
+        Clear all
+      </Button>
     </div>
   );
 }

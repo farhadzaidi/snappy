@@ -246,17 +246,17 @@ mod tests {
 
     #[test]
     fn modifiers_map_to_carbon_masks() {
-        let hyper = Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
-        assert_eq!(carbon_modifiers(hyper), CONTROL_KEY | OPTION_KEY | CMD_KEY);
+        let snappy_key = Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
+        assert_eq!(carbon_modifiers(snappy_key), CONTROL_KEY | OPTION_KEY | CMD_KEY);
         assert_eq!(carbon_modifiers(Mods::from_iter([Modifier::Shift])), SHIFT_KEY);
         assert_eq!(carbon_modifiers(Mods::NONE), 0);
     }
 
     #[test]
     fn hotkey_ids_are_derived_from_the_chord() {
-        let hyper = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta];
-        let one = CarbonChord::from_combo(&Combo::new("Digit1", hyper));
-        let two = CarbonChord::from_combo(&Combo::new("Digit2", hyper));
+        let snappy_key = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta];
+        let one = CarbonChord::from_combo(&Combo::new("Digit1", snappy_key));
+        let two = CarbonChord::from_combo(&Combo::new("Digit2", snappy_key));
         assert_ne!(one.map(|c| c.id), two.map(|c| c.id));
         assert_eq!(
             one,
@@ -278,10 +278,10 @@ mod tests {
 
     #[test]
     fn mods_become_event_flags_and_back() {
-        let hyper = Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
-        let flags = event_flags(hyper);
+        let snappy_key = Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
+        let flags = event_flags(snappy_key);
         assert_eq!(flags, (EVENT_CONTROL | EVENT_OPTION | EVENT_COMMAND) as u64);
-        assert_eq!(mods_from_event_flags(flags as usize), hyper);
+        assert_eq!(mods_from_event_flags(flags as usize), snappy_key);
         assert_eq!(event_flags(Mods::NONE), 0);
     }
 

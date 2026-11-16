@@ -10,6 +10,8 @@ export interface Choice<T extends string> {
 
 interface ChoiceMenuProps<T extends string> {
   label: string;
+  /** The id of what describes the choice, such as a hint under its label. */
+  describedBy?: string;
   value: T;
   choices: readonly Choice<T>[];
   onSelect: (value: T) => void;
@@ -20,6 +22,7 @@ interface ChoiceMenuProps<T extends string> {
 /** A button showing the current choice that opens a list of the others. */
 export function ChoiceMenu<T extends string>({
   label,
+  describedBy,
   value,
   choices,
   onSelect,
@@ -36,6 +39,7 @@ export function ChoiceMenu<T extends string>({
         type="button"
         className="choice-button"
         aria-label={label}
+        aria-describedby={describedBy}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled}

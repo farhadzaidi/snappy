@@ -2,7 +2,7 @@
 //! take. It draws antialiased rounded rectangles and coverage masks, which is all a zone
 //! overlay needs.
 
-use snappy_core::geometry::Rect;
+use snappy_core::geometry::{Point, Rect};
 
 /// A straight-alpha color with components from 0 to 1.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -100,17 +100,6 @@ pub struct Canvas<'a> {
     pixels: &'a mut [u32],
 }
 
-/// Signed distance from `(x, y)` to the edge of a rounded rectangle; negative inside.
-fn rounded_distance(x: f64, y: f64, rect: Rect, radius: f64) -> f64 {
-    let half_w = rect.width / 2.0;
-    let half_h = rect.height / 2.0;
-    let radius = radius.min(half_w).min(half_h).max(0.0);
-    let dx = (x - rect.mid_x()).abs() - (half_w - radius);
-    let dy = (y - rect.mid_y()).abs() - (half_h - radius);
-    let outside = dx.max(0.0).hypot(dy.max(0.0));
-    outside + dx.max(dy).min(0.0) - radius
-}
-
 fn coverage(distance: f64) -> f32 {
     (0.5 - distance).clamp(0.0, 1.0) as f32
 }
@@ -170,15 +159,12 @@ impl<'a> Canvas<'a> {
             let cy = y as f64 + 0.5;
             for x in x0..x1 {
                 let cx = x as f64 + 0.5;
-                let inside = |area: Rect| {
-                    area.width > 0.0
-                        && area.height > 0.0
-                        && area.contains(snappy_core::geometry::Point::new(cx, cy))
-                };
+                let inside =
+                    |area: Rect| area.width > 0.0 && area.height > 0.0 && area.contains(Point::new(cx, cy));
                 let amount = if inside(solid) || inside(solid_tall) {
                     1.0
                 } else {
-                    coverage(rounded_distance(cx, cy, rect, radius))
+                    coverage(rect.rounded_distance(Point::new(cx, cy), radius))
                 };
                 self.blend(x, y, color, amount);
             }
@@ -195,13 +181,13 @@ impl<'a> Canvas<'a> {
             let cy = y as f64 + 0.5;
             for x in x0..x1 {
                 let cx = x as f64 + 0.5;
-                let point = snappy_core::geometry::Point::new(cx, cy);
+                let point = Point::new(cx, cy);
                 if (skip.width > 0.0 && skip.height > 0.0 && skip.contains(point))
                     || (skip_tall.width > 0.0 && skip_tall.height > 0.0 && skip_tall.contains(point))
                 {
                     continue;
                 }
-                let distance = rounded_distance(cx, cy, rect, radius);
+                let distance = rect.rounded_distance(point, radius);
                 let amount = coverage(distance) - coverage(distance + width);
                 self.blend(x, y, color, amount);
             }

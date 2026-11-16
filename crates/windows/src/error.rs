@@ -3,7 +3,7 @@ use thiserror::Error;
 /// Why the adapter couldn't start.
 #[derive(Debug, Error)]
 pub enum WindowsError {
-    #[error("Snappy could not create its {what}: {source}")]
+    #[error("Snappy couldn't create its {what}: {source}")]
     Setup {
         what: &'static str,
         source: windows::core::Error,

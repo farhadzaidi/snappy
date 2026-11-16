@@ -3,8 +3,8 @@ import { DisplayChooser } from "../../shell/DisplayChooser";
 import { useObservable } from "../../state/observable";
 import { useAppState, useServices } from "../../state/services";
 import { Button } from "../../ui/Button";
-import { AlertIcon } from "../../ui/icons";
 import { Toggle } from "../../ui/Toggle";
+import { WarningNotice } from "../../ui/WarningNotice";
 import type { SidebarTab } from "../draft";
 import { draftConflict } from "../saving";
 import { ShortcutsPanel } from "./ShortcutsPanel";
@@ -15,7 +15,7 @@ const TABS: readonly { tab: SidebarTab; title: string }[] = [
   { tab: "shortcuts", title: "Shortcuts" },
 ];
 
-/** The display, "Layout active", and the Zone and Shortcuts tabs. */
+/** The display, "Layout enabled", and the Zone and Shortcuts tabs. */
 export function Sidebar() {
   const { editor } = useServices();
   const draft = useObservable(editor.draft);
@@ -26,14 +26,14 @@ export function Sidebar() {
     <aside className="editor-sidebar" aria-label="Layout settings">
       <DisplayChooser />
       <Toggle
-        label="Layout active"
+        label="Layout enabled"
         checked={draft.current.options.enabled}
-        title="Deactivate to keep this layout and its shortcuts saved without registering them."
+        title="Disable to keep this layout and its shortcuts saved without registering them."
         onChange={(enabled) => editor.setEnabled(enabled)}
       />
       <hr className="sidebar-divider" />
       {!readOnly && (
-        <div className="segmented sidebar-tabs" role="tablist" aria-label="Sidebar">
+        <div className="segmented segmented-even sidebar-tabs" role="tablist" aria-label="Sidebar">
           {TABS.map(({ tab, title }) => (
             <button
               type="button"
@@ -70,10 +70,7 @@ function OverlapNotice() {
     <div className="notice">
       <p className="muted">This draft has overlapping edges.</p>
       {repairable ? (
-        <Button
-          title="Align nearby edges without deleting zones. Undo restores the original draft."
-          onClick={() => editor.alignEdges()}
-        >
+        <Button title="Align nearby edges without deleting zones." onClick={() => editor.alignEdges()}>
           Align edges
         </Button>
       ) : (
@@ -91,10 +88,5 @@ function ConflictNotice() {
   if (conflict === null) {
     return null;
   }
-  return (
-    <p className="notice notice-warning" role="alert">
-      <AlertIcon />
-      {conflict}
-    </p>
-  );
+  return <WarningNotice message={conflict} />;
 }

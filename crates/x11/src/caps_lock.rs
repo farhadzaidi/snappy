@@ -47,11 +47,11 @@ pub struct CapsLockState {
     other_input: bool,
 }
 
-/// Caps Lock held as the Snappy key.
-#[derive(Debug)]
+/// Caps Lock held as the Snappy key: its key and the definition to put back, which is
+/// also what a later run needs to put it back.
+#[derive(Debug, Serialize, Deserialize)]
 struct Held {
     keycode: u8,
-    modifiers: Mods,
     original: KeyDefinition,
 }
 
@@ -107,19 +107,11 @@ impl KeyDefinition {
     }
 }
 
-/// What a later run needs to put Caps Lock back.
-#[derive(Debug, Serialize, Deserialize)]
-struct Undo {
-    keycode: u8,
-    original: KeyDefinition,
-}
-
 /// Why Caps Lock can't be the Snappy key: one of `options` remaps it, or `caps` isn't a
 /// plain Caps Lock, as after `xmodmap`.
 fn refusal(options: &str, caps: Option<&KeyDefinition>) -> Option<String> {
-    let remapping = snappy_linux::xkb::caps_lock_options(options);
-    if !remapping.is_empty() {
-        return Some(messages::caps_lock_options(&remapping));
+    if let Some(reason) = snappy_linux::xkb::options_refusal(options) {
+        return Some(reason);
     }
     (!caps.is_some_and(KeyDefinition::is_plain_caps_lock))
         .then(|| messages::CAPS_LOCK_OTHER_SETTING.to_owned())
@@ -320,25 +312,24 @@ fn real_modifiers(shared: &Shared, modifiers: Mods) -> u16 {
 }
 
 fn undo_record(held: &Held) -> CapsLockUndo {
-    let undo = Undo {
-        keycode: held.keycode,
-        original: held.original.clone(),
-    };
-    CapsLockUndo(serde_json::to_string(&undo).unwrap_or_default())
+    CapsLockUndo::of(held).unwrap_or_default()
 }
 
 /// Hold Caps Lock as `modifiers`: refuse when the session already remaps it, else change
 /// its definition and listen for its presses.
 pub fn hold(shared: &Shared, modifiers: Mods) -> Result<CapsLockUndo, String> {
+    // The keymap may have changed a moment ago, as when a crashed run's change was just
+    // undone or a keymap was just loaded, before the server's notice reached the event
+    // thread, so the keyboard is read afresh rather than taken from the cache.
+    shared.refresh_keyboard();
     let mask = real_modifiers(shared, modifiers);
     let mut state = lock(&shared.caps_lock);
-    if let Some(held) = state.held.as_mut() {
+    if let Some(held) = state.held.as_ref() {
         if let Err(error) = write(shared, held.keycode, &KeyDefinition::held_as(mask)) {
             drop(state);
             restore(shared);
             return Err(error);
         }
-        held.modifiers = modifiers;
         return Ok(undo_record(held));
     }
 
@@ -358,11 +349,7 @@ pub fn hold(shared: &Shared, modifiers: Mods) -> Result<CapsLockUndo, String> {
         let _ = write(shared, keycode, &original);
         return Err(messages::CAPS_LOCK_TAKEN.to_owned());
     }
-    let held = Held {
-        keycode,
-        modifiers,
-        original,
-    };
+    let held = Held { keycode, original };
     let undo = undo_record(&held);
     *state = CapsLockState {
         held: Some(held),
@@ -378,23 +365,26 @@ pub fn restore(shared: &Shared) {
     let Some(held) = held else {
         return;
     };
-    if let Ok(cookie) = shared
-        .conn
-        .ungrab_key(held.keycode, shared.screen.root, ModMask::ANY)
-    {
+    stop_listening(shared, held.keycode);
+    put_back(shared, held.keycode, &held.original);
+}
+
+/// Let go of Caps Lock's grab and stop following its press.
+fn stop_listening(shared: &Shared, keycode: u8) {
+    if let Ok(cookie) = shared.conn.ungrab_key(keycode, shared.screen.root, ModMask::ANY) {
         cookie.ignore_error();
     }
     input::set(shared, |monitoring| monitoring.caps_lock_down = false);
-    put_back(shared, held.keycode, &held.original);
 }
 
 /// Put back what a run that ended without restoring left, from its `hold`'s record.
 pub fn undo(shared: &Shared, undo: &CapsLockUndo) {
-    if let Ok(undo) = serde_json::from_str::<Undo>(&undo.0) {
-        put_back(shared, undo.keycode, &undo.original);
+    if let Ok(left) = undo.read::<Held>() {
+        put_back(shared, left.keycode, &left.original);
     }
 }
 
+/// Gives `keycode` its `original` definition while it still has Snappy's.
 fn put_back(shared: &Shared, keycode: u8, original: &KeyDefinition) {
     if read(shared, keycode).is_some_and(|current| current.is_held()) {
         let _ = write(shared, keycode, original);
@@ -421,27 +411,33 @@ fn grab(shared: &Shared, keycode: u8) -> bool {
 }
 
 /// Turn Caps Lock on or off by flipping XKB's Lock lock, as the key itself does.
-pub fn toggle(shared: &Shared) {
-    let locked = shared
+pub fn toggle(shared: &Shared) -> Result<(), String> {
+    let state = shared
         .conn
         .xkb_get_state(xkb::ID::USE_CORE_KBD.into())
-        .ok()
-        .and_then(|cookie| cookie.reply().ok())
-        .is_some_and(|state| u16::from(state.locked_mods) & LOCK_MASK != 0);
-    let locks = if locked { 0 } else { LOCK_MASK };
-    if let Ok(cookie) = shared.conn.xkb_latch_lock_state(
-        xkb::ID::USE_CORE_KBD.into(),
-        ModMask::LOCK,
-        ModMask::from(locks),
-        false,
-        xkb::Group::M1,
-        ModMask::from(0u16),
-        false,
-        0,
-    ) {
-        cookie.ignore_error();
-    }
-    let _ = shared.conn.flush();
+        .map_err(|error| error.to_string())?
+        .reply()
+        .map_err(|error| error.to_string())?;
+    let locks = if u16::from(state.locked_mods) & LOCK_MASK != 0 {
+        0
+    } else {
+        LOCK_MASK
+    };
+    shared
+        .conn
+        .xkb_latch_lock_state(
+            xkb::ID::USE_CORE_KBD.into(),
+            ModMask::LOCK,
+            ModMask::from(locks),
+            false,
+            xkb::Group::M1,
+            ModMask::from(0u16),
+            false,
+            0,
+        )
+        .map_err(|error| error.to_string())?
+        .check()
+        .map_err(|error| error.to_string())
 }
 
 /// A key press the event thread received. Caps Lock's own, through its grab, starts a
@@ -497,35 +493,21 @@ fn other_input(state: &mut CapsLockState) -> Option<CapsLockInput> {
 }
 
 /// The keyboard mapping changed. A keymap loaded over Snappy's change, as `setxkbmap` or a
-/// layout switch does, gives Caps Lock back its own definition; Caps Lock is held again
-/// unless the new keymap's options remap it, in which case Snappy lets it go and says so.
-pub fn keymap_changed(shared: &Shared) {
+/// layout switch does, gives Caps Lock a definition of its own, which stays: Snappy lets go
+/// of Caps Lock and returns true, for the engine to hear it was lost and decide whether to
+/// hold it again, which reads the new definition as the one to put back.
+pub fn keymap_changed(shared: &Shared) -> bool {
     let mut state = lock(&shared.caps_lock);
-    let Some(held) = state.held.as_mut() else {
-        return;
+    let Some(keycode) = state.held.as_ref().map(|held| held.keycode) else {
+        return false;
     };
-    let Some(current) = read(shared, held.keycode) else {
-        return;
-    };
-    if current.is_held() || !current.is_plain_caps_lock() {
-        return;
+    if read(shared, keycode).is_none_or(|current| current.is_held()) {
+        return false;
     }
-    if let Some(reason) = refusal(&options(shared), Some(&current)) {
-        let keycode = held.keycode;
-        *state = CapsLockState::default();
-        drop(state);
-        if let Ok(cookie) = shared.conn.ungrab_key(keycode, shared.screen.root, ModMask::ANY) {
-            cookie.ignore_error();
-        }
-        input::set(shared, |monitoring| monitoring.caps_lock_down = false);
-        snappy_linux::journal::warn(format!("Caps Lock is no longer the Snappy key. {reason}"));
-        return;
-    }
-    let mask = real_modifiers(shared, held.modifiers);
-    held.original = current;
-    if let Err(error) = write(shared, held.keycode, &KeyDefinition::held_as(mask)) {
-        snappy_linux::journal::warn(error);
-    }
+    *state = CapsLockState::default();
+    drop(state);
+    stop_listening(shared, keycode);
+    true
 }
 
 #[cfg(test)]
@@ -564,16 +546,9 @@ mod tests {
         let caps = plain_caps_lock();
         assert_eq!(refusal("grp:alt_shift_toggle", Some(&caps)), None);
         assert_eq!(
-            refusal("caps:escape", Some(&caps)).as_deref(),
-            Some(
-                "Caps Lock is already remapped by the keyboard option caps:escape. Remove that to use Caps Lock as the Snappy key."
-            )
-        );
-        assert_eq!(
-            refusal("ctrl:nocaps,compose:caps", Some(&caps)).as_deref(),
-            Some(
-                "Caps Lock is already remapped by the keyboard options ctrl:nocaps and compose:caps. Remove them to use Caps Lock as the Snappy key."
-            )
+            refusal("ctrl:nocaps,compose:caps", Some(&caps)),
+            snappy_linux::xkb::options_refusal("ctrl:nocaps,compose:caps"),
+            "the options are named first, even for a key that is still plain"
         );
         let mut xmodmapped = caps.clone();
         xmodmapped.syms = vec![0xffe3];
@@ -591,11 +566,10 @@ mod tests {
     fn the_record_for_a_later_run_reads_back_as_written() {
         let held = Held {
             keycode: 66,
-            modifiers: Mods::NONE,
             original: plain_caps_lock(),
         };
         let record = undo_record(&held);
-        let read: Undo = serde_json::from_str(&record.0).unwrap();
+        let read: Held = record.read().unwrap();
         assert_eq!((read.keycode, read.original), (66, plain_caps_lock()));
     }
 

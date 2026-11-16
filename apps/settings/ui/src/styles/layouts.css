@@ -38,7 +38,7 @@
   max-height: 310px;
   border-radius: var(--radius-panel);
   border: 1px solid var(--line);
-  background: rgb(26 31 37 / 40%);
+  background: rgb(var(--surface-rgb) / 40%);
 }
 
 .preview-zone {
@@ -46,21 +46,44 @@
   display: grid;
   place-items: center;
   border-radius: 9px;
-  border: 1px solid rgb(122 232 194 / 35%);
-  background: rgb(122 232 194 / 10%);
+  border: 1px solid rgb(var(--mint-rgb) / 35%);
+  background: var(--mint-wash);
   color: var(--mint);
   font: 500 20px var(--font-rounded);
 }
 
+/* One panel as wide as the canvas: the heading over the action bar. The heading's padding is
+   the bar's padding and a button's, so the name starts where the first action's icon does
+   and "Use layout" ends where the last action's label does. */
+.preview-details {
+  --bar-inset: 4px;
+  --heading-inset: calc(var(--bar-inset) + var(--tool-button-padding));
+
+  margin-top: 4px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* The name, its shortcut, and its status on one line. */
 .preview-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 6px;
+  gap: 10px;
+  min-height: 32px;
+  padding: 12px var(--heading-inset);
+}
+
+/* As tall as the tool buttons below it, at the line's end. */
+.use-layout {
+  flex: none;
+  margin-left: auto;
+  height: 32px;
+  padding: 0 14px;
 }
 
 .preview-name {
+  min-width: 0;
   overflow: hidden;
   font-size: 21px;
   font-weight: 600;
@@ -70,9 +93,26 @@
 
 .preview-status {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
+}
+
+.preview-status[data-status="inUse"] {
+  padding-left: 6px;
+  color: var(--mint);
+  background: var(--mint-wash);
+}
+
+.preview-status[data-status="disabled"] {
+  color: var(--muted);
+  background: var(--wash);
 }
 
 /* The frame spans the column and measures it; the bar inside keeps to one row. */
@@ -83,82 +123,43 @@
 
 .action-bar-anchor {
   position: relative;
-  width: fit-content;
 }
 
-/* Every way of fitting the bar, laid out unseen to be measured. */
+/* The bar with every label, laid out unseen to be measured. */
 .action-bar-measure {
   position: absolute;
   top: 0;
   left: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  width: max-content;
   visibility: hidden;
   pointer-events: none;
 }
 
+/* The first and last actions sit at the bar's ends and the rest spread evenly between, so
+   the bar has no empty end. */
 .action-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  padding: 4px;
-  border-radius: 11px;
-  border: 1px solid var(--line);
-  background: rgb(26 31 37 / 60%);
+  justify-content: space-between;
+  gap: 3px;
+  padding: var(--bar-inset, 4px);
+  border-top: 1px solid rgb(var(--text-rgb) / 6%);
 }
 
-/* As tall as the tool buttons beside it, so the row shares one centre line. */
-.action-primary {
-  height: 32px;
-  padding: 0 14px;
+.action-separator,
+.action-divider {
+  flex: none;
+  width: 1px;
+  height: 18px;
 }
 
-.action-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.action-menu {
-  min-width: 200px;
-}
-
-.action-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 12px;
-  border-radius: var(--radius-small);
-  color: var(--text);
-  font-weight: 500;
-  text-align: left;
-}
-
-.action-menu-item svg {
-  color: var(--muted);
-}
-
-.action-menu-item:hover:not(:disabled) {
-  background: rgb(255 255 255 / 6%);
-}
-
-.action-menu-item:disabled {
-  opacity: 0.4;
-}
-
-.action-menu-item-destructive,
-.action-menu-item-destructive svg {
-  color: var(--destructive);
+/* Fading out at both ends, a line that separates without boxing each button in. */
+.action-separator {
+  background: linear-gradient(transparent, var(--line) 30%, var(--line) 70%, transparent);
 }
 
 .action-divider {
-  width: 1px;
-  height: 18px;
-  margin: 0 2px;
-  background: var(--line);
+  background: var(--line-strong);
 }
 
 .layout-grid {
@@ -180,36 +181,21 @@
   padding: 13px;
   border-radius: var(--radius-card);
   border: 1px solid var(--line);
-  background: rgb(26 31 37 / 45%);
+  background: rgb(var(--surface-rgb) / 45%);
   text-align: left;
 }
 
 .layout-card:hover {
-  border-color: rgb(255 255 255 / 16%);
+  border-color: rgb(var(--text-rgb) / 16%);
 }
 
 .layout-card[aria-pressed="true"] {
-  border-color: rgb(122 232 194 / 70%);
-  background: rgb(122 232 194 / 7%);
+  border-color: rgb(var(--mint-rgb) / 70%);
+  background: rgb(var(--mint-rgb) / 7%);
 }
 
-.layout-card[data-inactive="true"] {
+.layout-card[data-disabled="true"] {
   opacity: 0.55;
-}
-
-.thumbnail {
-  align-self: center;
-}
-
-.thumbnail rect {
-  fill: rgb(255 255 255 / 8%);
-  stroke: rgb(255 255 255 / 14%);
-  stroke-width: 0.7;
-}
-
-.thumbnail[data-highlighted="true"] rect {
-  fill: rgb(122 232 194 / 25%);
-  stroke: rgb(122 232 194 / 55%);
 }
 
 .layout-card-footer {

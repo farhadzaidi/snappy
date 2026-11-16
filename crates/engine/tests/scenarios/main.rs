@@ -3,6 +3,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod caps_lock;
+mod containment;
 mod desktop_parking;
 mod dragging;
 mod focus;

@@ -1,10 +1,10 @@
 import { useState, type DragEvent, type KeyboardEvent } from "react";
 
-import { compactLabel } from "../core/labels";
+import { longLabel } from "../core/labels";
+import { coreLimits } from "../core/limits";
 import type { Workspace } from "../core/model";
-import { MAX_WORKSPACES } from "../core/model";
 import { useAppState, useSend } from "../state/services";
-import { Button } from "../ui/Button";
+import { ChordLabel } from "../ui/Chord";
 import { PlusIcon } from "../ui/icons";
 
 interface WorkspaceListProps {
@@ -73,14 +73,15 @@ export function WorkspaceList({ selectedId, onSelect }: WorkspaceListProps) {
           </li>
         ))}
       </ul>
-      <Button
+      <button
+        type="button"
         className="new-workspace"
-        disabled={items.length >= MAX_WORKSPACES}
+        disabled={items.length >= coreLimits().workspaces}
         onClick={() => void send({ kind: "addWorkspace" })}
       >
         <PlusIcon />
         New workspace
-      </Button>
+      </button>
     </div>
   );
 }
@@ -98,24 +99,32 @@ function WorkspaceCard({ workspace, selected, onSelect, onKeyDown }: WorkspaceCa
   const active = running && workspace.id === app.settings.workspaces.activeId;
   const windows = app.workspaces.windowCounts[workspace.id] ?? 0;
   const shortcut = workspace.switchShortcut;
+  const windowCount = `${windows} ${windows === 1 ? "window" : "windows"}`;
+  // Everything the card shows, as assistive technology says it.
+  const spoken = [
+    `Configure ${workspace.name}`,
+    ...(active ? ["current workspace"] : []),
+    ...(shortcut ? [longLabel(shortcut, app.platform)] : []),
+    ...(running ? [windowCount] : []),
+  ];
 
   return (
     <button
       type="button"
       className="workspace-card"
-      aria-label={`Configure ${workspace.name}`}
+      aria-label={spoken.join(", ")}
       aria-pressed={selected}
       onClick={onSelect}
       onKeyDown={onKeyDown}
     >
       <span className="workspace-card-top">
-        <span className="workspace-card-name">{workspace.name}</span>
-        {active && <span className="status-dot" title="Current workspace" />}
+        <span className="workspace-card-title">
+          <span className="workspace-card-name">{workspace.name}</span>
+          {active && <span className="status-dot" title="Current workspace" />}
+        </span>
+        {shortcut && <ChordLabel chord={shortcut} platform={app.platform} />}
       </span>
-      <span className="workspace-card-bottom">
-        {running && <span className="muted">{windows} windows</span>}
-        {shortcut && <span className="mint">{compactLabel(shortcut, app.platform)}</span>}
-      </span>
+      {running && <span className="workspace-card-windows muted">{windowCount}</span>}
     </button>
   );
 }

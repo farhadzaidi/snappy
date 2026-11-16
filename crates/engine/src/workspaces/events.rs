@@ -1,5 +1,5 @@
-//! Reacting to what the platform reports: focus changes, windows that move or close, apps
-//! that quit, and desktop and display changes.
+//! Reacting to what the platform reports: focus changes, windows that close, apps that
+//! quit, and desktop and display changes. Windows that move are `containment`'s.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -11,19 +11,31 @@ use snappy_platform::{Platform, WindowId};
 use crate::core::Core;
 use crate::ops::Shared;
 
-use super::CoreIo;
-use super::members::{enroll, sync_all_tabs, sync_tabs};
+use super::containment::{self, contain_all};
+use super::members::{enroll, sync_tabs};
 use super::recovery::save_membership;
-use super::switching::request_switch;
+use super::switching::{SwitchFocus, request_switch};
+use super::{CoreIo, refresh_members};
 
 /// Wait this long for a display change to settle.
 const DISPLAY_SETTLE: Duration = Duration::from_millis(350);
 /// Retry a failed display update once after this long.
 const DISPLAY_RETRY: Duration = Duration::from_millis(750);
-/// Re-park a revealed window at most this often.
-const CONTAINMENT_INTERVAL: f64 = 1.0;
 
 // MARK: Discovery and focus
+
+/// Why the focused window is being looked at, which says what joins and whether its
+/// workspace may be followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Discovery {
+    /// Focus changed, by an app's activation or within the app; only an activation may
+    /// follow a window to its workspace. The app's other visible windows join too.
+    FocusChanged { by_activation: bool },
+    /// Workspaces started: the focused app's visible windows join.
+    Start,
+    /// A switch is about to run: only the focused window joins.
+    Switch,
+}
 
 /// React to the frontmost app or its focused window changing.
 pub(crate) fn focus_changed<P: Platform + 'static>(shared: &Rc<Shared<P>>, by_activation: bool) {
@@ -32,22 +44,18 @@ pub(crate) fn focus_changed<P: Platform + 'static>(shared: &Rc<Shared<P>>, by_ac
         if !core.workspaces.is_running() {
             return;
         }
-        discover_focused(&mut core, by_activation, true)
+        discover_focused(&mut core, Discovery::FocusChanged { by_activation })
     };
     if let Some(target) = follow {
-        request_switch(shared, &target, false);
+        request_switch(shared, &target, SwitchFocus::Workspace);
     }
 }
 
-/// Enroll the focused app's windows. Returns a workspace to switch to when an activation
-/// revealed a window of another workspace.
-pub(super) fn discover_focused<P: Platform>(
-    core: &mut Core<P>,
-    by_activation: bool,
-    siblings: bool,
-) -> Option<String> {
+/// Enroll the focused window, and its app's as `discovery` says. Returns a workspace to
+/// switch to when an activation revealed a window of another workspace.
+pub(super) fn discover_focused<P: Platform>(core: &mut Core<P>, discovery: Discovery) -> Option<String> {
     let mut session = core.workspaces.session.take()?;
-    let follow = discover_focused_into(core, &mut session, by_activation, siblings);
+    let follow = discover_focused_into(core, &mut session, discovery);
     core.workspaces.session = Some(session);
     follow
 }
@@ -55,9 +63,10 @@ pub(super) fn discover_focused<P: Platform>(
 pub(super) fn discover_focused_into<P: Platform>(
     core: &mut Core<P>,
     session: &mut Session,
-    by_activation: bool,
-    siblings: bool,
+    discovery: Discovery,
 ) -> Option<String> {
+    let by_activation = discovery == Discovery::FocusChanged { by_activation: true };
+    let siblings = discovery != Discovery::Switch;
     if core.workspaces.paused {
         return None;
     }
@@ -108,50 +117,16 @@ pub(super) fn discover_focused_into<P: Platform>(
     None
 }
 
-/// Park a parked window again when its app brought it back.
-pub(crate) fn window_moved<P: Platform>(core: &mut Core<P>, window: WindowId) {
-    let now = core.platform.now();
-    let recently = core
-        .workspaces
-        .contained_at
-        .get(&window)
-        .is_some_and(|at| now - at < CONTAINMENT_INTERVAL);
-    if !core.workspaces.is_running() || core.workspaces.focus.is_changing() || recently {
-        return;
-    }
-    if !core.platform.on_managed_desktop() {
-        return;
-    }
-    let Some(mut session) = core.workspaces.session.take() else {
-        return;
-    };
-    let displays = core.display_frames();
-    core.workspaces.contained_at.insert(window, now);
-    let result = {
-        let mut io = CoreIo::new(&mut *core);
-        session.contain(window, &displays, &mut io)
-    };
-    let active = session.active().to_owned();
-    let count = session.members().len();
-    core.workspaces.session = Some(session);
-    match result {
-        Ok(true) => {
-            core.diagnostics
-                .record_lifecycle(now, "containedRevealedWindow", false, Some(active), count)
-        }
-        Ok(false) => {}
-        Err(error) => core.announce_error(&error.to_string()),
-    }
-}
-
 pub(crate) fn window_destroyed<P: Platform>(core: &mut Core<P>, window: WindowId) {
     if let Some(session) = core.workspaces.session.as_mut() {
         session.discard(window);
     }
     if let Some(key) = core.workspaces.keys.remove(&window) {
-        core.workspaces.remembered.retain(|entry| entry.key != key);
+        core.workspaces
+            .remembered
+            .retain(|entry| !entry.key.same_window(&key));
     }
-    core.workspaces.contained_at.remove(&window);
+    containment::forget(core, window);
     core.publish_state();
 }
 
@@ -171,33 +146,40 @@ pub(crate) fn app_terminated<P: Platform>(core: &mut Core<P>, pid: u32) {
 
 // MARK: Desktops and displays
 
-pub(crate) fn native_desktop_changed<P: Platform>(core: &mut Core<P>) {
-    if core.workspaces.session.is_none() {
-        return;
+pub(crate) fn native_desktop_changed<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
+    let failed = {
+        let mut core = shared.core.borrow_mut();
+        if core.workspaces.session.is_none() || core.workspaces.suspended {
+            return;
+        }
+        let was_paused = core.workspaces.paused;
+        core.workspaces.paused = !core.platform.on_managed_desktop();
+        let paused = core.workspaces.paused;
+        core.trace("nativeDesktop", || serde_json::json!({ "paused": paused }));
+        // Back on the managed desktop, windows are placed for the displays as they are now,
+        // unless displays are still settling, whose update does it once they have.
+        let failed = if was_paused && !paused && !core.workspaces.display_update_pending {
+            update_displays(&mut core, 1).err()
+        } else {
+            None
+        };
+        let now = core.platform.now();
+        let active = core.workspaces.session.as_ref().map(|s| s.active().to_owned());
+        let count = core.workspaces.session.as_ref().map_or(0, |s| s.members().len());
+        core.diagnostics
+            .record_lifecycle(now, "nativeDesktopChanged", paused, active, count);
+        core.update_tray();
+        core.publish_state();
+        failed
+    };
+    if let Some(error) = failed {
+        hide_one_by_one(shared, &error);
     }
-    if core.workspaces.suspended {
-        return;
-    }
-    let was_paused = core.workspaces.paused;
-    core.workspaces.paused = !core.platform.on_managed_desktop();
-    let paused = core.workspaces.paused;
-    core.trace("nativeDesktop", || serde_json::json!({ "paused": paused }));
-    if was_paused
-        && !core.workspaces.paused
-        && let Err(error) = update_displays(core)
-    {
-        core.announce_error(&error.to_string());
-    }
-    let now = core.platform.now();
-    let active = core.workspaces.session.as_ref().map(|s| s.active().to_owned());
-    let count = core.workspaces.session.as_ref().map_or(0, |s| s.members().len());
-    core.diagnostics
-        .record_lifecycle(now, "nativeDesktopChanged", core.workspaces.paused, active, count);
-    core.update_tray();
-    core.publish_state();
 }
 
-/// Wait for the display change to settle, then update in place with one retry.
+/// Wait for the display change to settle, then update in place with one retry. Until then
+/// windows the system moves are left alone (`containment`), since the displays Snappy knows
+/// are out of date and the system may still be moving them.
 pub(crate) fn displays_changed<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
     shared.cancel_current();
     let generation = {
@@ -211,9 +193,9 @@ pub(crate) fn displays_changed<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
     let shared = Rc::clone(shared);
     tokio::task::spawn_local(async move {
         tokio::time::sleep(DISPLAY_SETTLE).await;
-        if !apply_display_change(&shared, generation, false) {
+        if !apply_display_change(&shared, generation, 1) {
             tokio::time::sleep(DISPLAY_RETRY).await;
-            apply_display_change(&shared, generation, true);
+            apply_display_change(&shared, generation, 2);
         }
         let deferred = {
             let mut core = shared.core.borrow_mut();
@@ -223,34 +205,44 @@ pub(crate) fn displays_changed<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
                 core.workspaces.deferred_switch.take()
             }
         };
-        if let Some((target, focus_settings)) = deferred {
-            request_switch(&shared, &target, focus_settings);
+        if let Some(deferred) = deferred {
+            request_switch(&shared, &deferred.target, deferred.focus);
         }
     });
 }
 
 /// Returns true when finished, successfully or not.
-fn apply_display_change<P: Platform>(shared: &Shared<P>, generation: u64, last_try: bool) -> bool {
-    let mut core = shared.core.borrow_mut();
-    if core.workspaces.display_generation != generation {
-        return true;
+fn apply_display_change<P: Platform + 'static>(
+    shared: &Rc<Shared<P>>,
+    generation: u64,
+    attempt: u32,
+) -> bool {
+    let failed = {
+        let mut core = shared.core.borrow_mut();
+        if core.workspaces.display_generation != generation {
+            return true;
+        }
+        core.displays = core.platform.displays();
+        let failed = update_displays(&mut core, attempt).err();
+        if failed.is_some() && attempt == 1 {
+            return false;
+        }
+        core.workspaces.display_update_pending = false;
+        core.configure_hotkeys();
+        core.prepare_overlays();
+        core.refresh_marks();
+        core.update_tray();
+        core.publish_state();
+        failed
+    };
+    if let Some(error) = failed {
+        hide_one_by_one(shared, &error);
     }
-    core.displays = core.platform.displays();
-    match update_displays(&mut core) {
-        Ok(()) => {}
-        Err(_) if !last_try => return false,
-        Err(error) => core.announce_error(&format!("Display changed; workspace tracking was kept. {error}")),
-    }
-    core.workspaces.display_update_pending = false;
-    core.configure_hotkeys();
-    core.prepare_overlays();
-    core.refresh_marks();
-    core.update_tray();
-    core.publish_state();
     true
 }
 
-fn update_displays<P: Platform>(core: &mut Core<P>) -> Result<(), WindowError> {
+/// Re-place every window for the displays as they are now, and record how it went.
+fn update_displays<P: Platform>(core: &mut Core<P>, attempt: u32) -> Result<(), WindowError> {
     if core.workspaces.paused {
         return Ok(());
     }
@@ -258,7 +250,7 @@ fn update_displays<P: Platform>(core: &mut Core<P>) -> Result<(), WindowError> {
         return Ok(());
     };
     core.workspaces.focus.begin_change();
-    sync_all_tabs(core, &mut session);
+    refresh_members(core, &mut session);
     let (displays, areas) = (core.display_frames(), core.work_areas());
     let result = {
         let mut io = CoreIo::new(&mut *core);
@@ -272,5 +264,32 @@ fn update_displays<P: Platform>(core: &mut Core<P>) -> Result<(), WindowError> {
     core.workspaces.session = Some(session);
     let now = core.platform.now();
     core.workspaces.focus.end_change(now);
-    result
+
+    let held = core.workspaces.containment.held();
+    let count = displays.len();
+    match result {
+        Ok(moved) => {
+            core.trace(
+                "displaysUpdated",
+                || serde_json::json!({ "attempt": attempt, "displays": count, "moved": moved, "held": held }),
+            );
+            containment::all_hidden(core);
+            Ok(())
+        }
+        Err(error) => {
+            core.flag("displaysUpdated", || {
+                serde_json::json!({ "attempt": attempt, "displays": count, "held": held, "error": error.to_string() })
+            });
+            Err(error)
+        }
+    }
+}
+
+/// Placing windows for the displays is all or nothing, so one app refusing would leave
+/// every window where the system put it. Hide windows of workspaces that aren't showing one
+/// by one instead, unless the displays aren't usable yet, which the next change fixes.
+fn hide_one_by_one<P: Platform + 'static>(shared: &Rc<Shared<P>>, error: &WindowError) {
+    if *error != WindowError::InvalidFrame {
+        contain_all(shared);
+    }
 }

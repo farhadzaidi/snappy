@@ -1,6 +1,8 @@
 //! What a restart keeps: the journal and membership files, picking up the windows a
 //! previous run left parked, and windows rejoining their workspaces.
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 use snappy_core::bounds::fitted_origin;
 use snappy_core::geometry::{Point, Rect};
@@ -10,7 +12,7 @@ use snappy_core::workspace::{
 use snappy_platform::{Platform, RecoveryKey, WindowInfo, WindowState};
 
 use crate::core::Core;
-use crate::store::{read_state, remove_state, write_state};
+use crate::store::{StateFile, remove_state, write_state};
 
 /// One window's saved workspace state on disk, in the journal and membership files.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,6 +24,35 @@ pub(crate) struct SavedWindow {
     pub parked_origin: Option<Point>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prior_parked_origin: Option<Point>,
+}
+
+/// The journal and membership files.
+#[derive(Serialize, Deserialize)]
+struct SavedWindows {
+    windows: Vec<SavedWindow>,
+}
+
+impl StateFile for SavedWindows {
+    const VERSION: u32 = 1;
+
+    /// Before versions, the file was the list itself.
+    fn unversioned(value: serde_json::Value) -> Option<Self> {
+        serde_json::from_value(value).ok().map(|windows| Self { windows })
+    }
+}
+
+/// The journal's or membership's windows; none when the file is missing or was unreadable.
+pub(super) fn read_windows<P: Platform>(core: &mut Core<P>, path: &Path) -> Option<Vec<SavedWindow>> {
+    core.read_state::<SavedWindows>(path)
+        .read()
+        .map(|file| file.windows)
+}
+
+pub(super) fn write_windows(path: &Path, windows: &[SavedWindow]) -> std::io::Result<()> {
+    let file = SavedWindows {
+        windows: windows.to_vec(),
+    };
+    write_state(path, &file)
 }
 
 /// A window a previous run left parked for a workspace that isn't showing joins it again,
@@ -91,23 +122,35 @@ pub(super) struct Recovered {
     pub(super) left_alone: usize,
     /// Their process is gone, or its ID now belongs to a later process.
     pub(super) stale: usize,
+    /// Their process runs, but no window of it is theirs any more.
+    pub(super) closed: usize,
 }
 
-/// Go through the windows a previous run left parked. With `keep`, windows still parked
-/// for a workspace that isn't showing stay parked, journaled, to rejoin it; otherwise every
-/// one comes back.
-pub(super) fn recover<P: Platform>(core: &mut Core<P>, keep: bool) -> Recovered {
+/// What becomes of the windows a previous run left parked for a workspace that isn't
+/// showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LeftParked {
+    /// They stay parked, journaled, to rejoin their workspace, as workspaces start.
+    Keep,
+    /// They come back, as workspaces stop.
+    BringBack,
+}
+
+/// Go through the windows a previous run left parked.
+pub(super) fn recover<P: Platform>(core: &mut Core<P>, left_parked: LeftParked) -> Recovered {
     let path = core.paths.journal();
-    let Some(entries): Option<Vec<SavedWindow>> = read_state(&path) else {
+    // Without a readable journal, windows found parked join as at any start: the workspace
+    // membership remembers, or brought back on screen.
+    let Some(entries) = read_windows(core, &path) else {
         return Recovered {
-            complete: !path.exists(),
+            complete: true,
             ..Recovered::default()
         };
     };
     let windows = core.platform.all_windows();
     let (displays, areas) = (core.display_frames(), core.work_areas());
     let policy = core.capabilities.parking;
-    let active = keep.then(|| core.settings.workspaces.active_id.clone());
+    let active = (left_parked == LeftParked::Keep).then(|| core.settings.workspaces.active_id.clone());
     let mut recovered = Recovered::default();
     let mut remaining = Vec::new();
 
@@ -143,12 +186,9 @@ pub(super) fn recover<P: Platform>(core: &mut Core<P>, keep: bool) -> Recovered 
         });
 
         let Some(window) = found else {
-            let still_running = windows.iter().any(|w| {
-                w.recovery_key
-                    .as_ref()
-                    .is_some_and(|key| key.same_process(&entry.key))
-            });
-            if still_running || !by_position.is_empty() {
+            if by_position.len() > 1 {
+                // Several of its process's windows sit where it was parked; which is which
+                // can't be told, so it waits rather than bringing back the wrong one.
                 let process: Vec<&RecoveryKey> = windows
                     .iter()
                     .filter_map(|w| w.recovery_key.as_ref())
@@ -158,6 +198,13 @@ pub(super) fn recover<P: Platform>(core: &mut Core<P>, keep: bool) -> Recovered 
                     serde_json::json!({ "key": entry.key, "sameProcess": process, "atParkedSpot": by_position.len() })
                 });
                 remaining.push(entry);
+            } else if windows.iter().any(|w| {
+                w.recovery_key
+                    .as_ref()
+                    .is_some_and(|key| key.same_process(&entry.key))
+            }) {
+                // Its app runs on, but nothing is left of the window: it closed.
+                recovered.closed += 1;
             } else {
                 recovered.stale += 1;
             }
@@ -203,12 +250,16 @@ pub(super) fn recover<P: Platform>(core: &mut Core<P>, keep: bool) -> Recovered 
     let saved = if still_parked.is_empty() {
         remove_state(&path)
     } else {
-        write_state(&path, &still_parked)
+        write_windows(&path, &still_parked)
     };
     recovered.complete = saved.is_ok() && remaining.is_empty();
     recovered
 }
 
+/// Save every tracked window's workspace, with the remembered windows not tracked now. A
+/// remembered window is dropped when it closes or its app quits, and an entry whose process
+/// went without saying so is dropped at the next start, which never applies it to another
+/// process, so saving needn't list every window to check.
 pub(super) fn save_membership<P: Platform>(core: &mut Core<P>, session: &Session) {
     let tracked: Vec<SavedWindow> = session
         .members()
@@ -223,21 +274,14 @@ pub(super) fn save_membership<P: Platform>(core: &mut Core<P>, session: &Session
             })
         })
         .collect();
-    let running: Vec<RecoveryKey> = core
-        .platform
-        .all_windows()
-        .into_iter()
-        .filter_map(|info| info.recovery_key)
-        .collect();
     let workspaces = &core.settings.workspaces;
     let kept = core.workspaces.remembered.iter().filter(|entry| {
-        !tracked.iter().any(|t| t.key == entry.key)
+        !tracked.iter().any(|t| t.key.same_window(&entry.key))
             && workspaces.item(&entry.workspace_id).is_some()
-            && running.iter().any(|key| key.same_process(&entry.key))
     });
     let entries: Vec<SavedWindow> = tracked.iter().cloned().chain(kept.cloned()).collect();
-    if let Err(error) = write_state(&core.paths.membership(), &entries) {
-        core.announce_error(&format!("Could not save workspace membership: {error}"));
+    if let Err(error) = write_windows(&core.paths.membership(), &entries) {
+        core.announce_error(&format!("Couldn't save workspace membership: {error}"));
     }
     core.workspaces.remembered = entries;
 }

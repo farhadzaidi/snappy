@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{KeyChord, Mods};
 use snappy_core::layout::{Spacing, preset, zone_frame};
-use snappy_core::settings::{FocusShortcut, NavigationShortcut, Settings, Workspace, WorkspaceStep};
+use snappy_core::settings::{NavigationShortcut, Settings, Workspace, WorkspaceStep};
 use snappy_platform::Display;
 
 use super::Outcome;
@@ -287,13 +287,24 @@ impl<'a> Context<'a> {
         what: &str,
         done: impl Fn(Rect) -> bool,
     ) -> Result<(Rect, f64), String> {
+        self.wait_for_within(id, what, SETTLE_TIMEOUT, done)
+    }
+
+    /// Like `wait_for`, failing after `timeout` instead.
+    pub(super) fn wait_for_within(
+        &mut self,
+        id: &str,
+        what: &str,
+        timeout: Duration,
+        done: impl Fn(Rect) -> bool,
+    ) -> Result<(Rect, f64), String> {
         let started = Instant::now();
         loop {
             let frame = self.fixture.frame(id)?;
             if done(frame) {
                 return Ok((frame, self.elapsed_ms()));
             }
-            if started.elapsed() > SETTLE_TIMEOUT {
+            if started.elapsed() > timeout {
                 return Err(format!("{id} never reached {what}; it is at {}", describe(frame)));
             }
             pause(5);
@@ -409,7 +420,7 @@ impl<'a> Context<'a> {
 
     /// Select the windows `ids`, focusing each in turn, and wait for their outlines.
     pub(super) fn select(&mut self, ids: &[&str]) -> Result<(), String> {
-        let select = self.navigation_key(FocusShortcut::SelectWindow)?;
+        let select = self.navigation_key(NavigationShortcut::SelectWindow)?;
         for id in ids {
             self.focus(id)?;
             self.press(&select)?;

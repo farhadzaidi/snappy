@@ -1,10 +1,11 @@
 //! Zone and arrow shortcuts, and registering shortcuts.
 
 use snappy_core::geometry::Rect;
-use snappy_core::keys::SnappyKey;
+use snappy_core::keys::{KeyChord, SnappyKey};
 use snappy_core::settings::DragModifier;
+use snappy_engine::Engine;
 use snappy_fake::{FakePlatform, FakeWindow};
-use snappy_ipc::Command;
+use snappy_ipc::{Command, ToSettings};
 use snappy_platform::{PlatformEvent, WindowId};
 
 use crate::support::{
@@ -87,6 +88,60 @@ fn recording_unregisters_every_shortcut() {
         assert!(engine.with_platform(|p| p.registered.is_empty()));
         command(&engine, Command::EndRecording);
         assert!(!engine.with_platform(|p| p.registered.is_empty()));
+    });
+}
+
+/// Ask whether `chord` is free, as a recorder does, and return the answer.
+fn probe(engine: &Engine<FakePlatform>, chord: &KeyChord) -> bool {
+    engine.take_outbox();
+    command(engine, Command::ProbeShortcut { chord: chord.clone() });
+    engine
+        .take_outbox()
+        .into_iter()
+        .find_map(|message| match message {
+            ToSettings::ProbeResult { available } => Some(available),
+            _ => None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn while_recording_snappys_own_chords_are_free_to_record_again() {
+    scenario(|| async {
+        let engine = live_engine("recording-own-chord", FakePlatform::default());
+        let left = snappy("ArrowLeft");
+        assert!(
+            !probe(&engine, &left),
+            "the OS reports a registered chord as taken"
+        );
+        command(&engine, Command::BeginRecording);
+        assert!(probe(&engine, &left));
+        command(&engine, Command::EndRecording);
+        assert!(!probe(&engine, &left));
+    });
+}
+
+#[test]
+fn a_shortcut_pressed_while_recording_moves_nothing() {
+    scenario(|| async {
+        let engine = live_engine("recording-press", with_window(LEFT_ZONE));
+        let id = hotkey_id(&engine, &snappy("ArrowRight"));
+        command(&engine, Command::BeginRecording);
+        event(&engine, PlatformEvent::HotKey(id));
+        settle(&engine).await;
+        assert_eq!(frame_of(&engine, 1), LEFT_ZONE);
+    });
+}
+
+#[test]
+fn beginning_twice_and_ending_once_registers_every_shortcut_again() {
+    scenario(|| async {
+        let engine = live_engine("recording-twice", FakePlatform::default());
+        let registered = engine.with_platform(|p| p.registered.len());
+        command(&engine, Command::BeginRecording);
+        command(&engine, Command::BeginRecording);
+        command(&engine, Command::EndRecording);
+        assert_eq!(engine.with_platform(|p| p.registered.len()), registered);
     });
 }
 

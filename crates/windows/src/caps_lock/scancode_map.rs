@@ -2,7 +2,7 @@
 //! `HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layout`, which the keyboard driver
 //! applies before anything else sees a key. Snappy only reads it.
 
-use windows::Win32::Foundation::ERROR_SUCCESS;
+use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
 use windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_BINARY, RegGetValueW};
 use windows::core::w;
 
@@ -10,8 +10,10 @@ use windows::core::w;
 const CAPS_LOCK: u16 = 0x3A;
 /// A version, flags, and the entry count come before the entries.
 const HEADER: usize = 12;
-/// The map is a few entries; a larger value is read only this far.
-const MAX_BYTES: usize = 4096;
+/// Room for a map of a few entries, as most are; a larger one is read at its own size.
+const USUAL_BYTES: usize = 256;
+/// How many times a value that grows between asking its size and reading it is read again.
+const READS: usize = 3;
 
 /// Whether `map`, a `Scancode Map` value, turns the Caps Lock key into another key or none.
 /// Each entry is the new scan code then the original, 16 bits each, little-endian; the
@@ -38,21 +40,37 @@ pub fn remaps_caps_lock(map: &[u8]) -> bool {
 /// Whether the system's `Scancode Map` remaps Caps Lock. Without the value nothing is
 /// remapped.
 pub fn system_remaps_caps_lock() -> bool {
-    let mut buffer = vec![0u8; MAX_BYTES];
-    let mut size = buffer.len() as u32;
-    // SAFETY: the buffer and its byte size match.
-    let read = unsafe {
-        RegGetValueW(
-            HKEY_LOCAL_MACHINE,
-            w!(r"SYSTEM\CurrentControlSet\Control\Keyboard Layout"),
-            w!("Scancode Map"),
-            RRF_RT_REG_BINARY,
-            None,
-            Some(buffer.as_mut_ptr().cast()),
-            Some(&mut size),
-        )
-    };
-    read == ERROR_SUCCESS && remaps_caps_lock(buffer.get(..size as usize).unwrap_or_default())
+    scancode_map().is_some_and(|map| remaps_caps_lock(&map))
+}
+
+/// The `Scancode Map` value, whatever its size; `None` without one.
+fn scancode_map() -> Option<Vec<u8>> {
+    let mut buffer = vec![0u8; USUAL_BYTES];
+    for _ in 0..READS {
+        let mut size = buffer.len() as u32;
+        // SAFETY: the buffer and its byte size match.
+        let read = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                w!(r"SYSTEM\CurrentControlSet\Control\Keyboard Layout"),
+                w!("Scancode Map"),
+                RRF_RT_REG_BINARY,
+                None,
+                Some(buffer.as_mut_ptr().cast()),
+                Some(&mut size),
+            )
+        };
+        match read {
+            ERROR_SUCCESS => {
+                buffer.truncate(size as usize);
+                return Some(buffer);
+            }
+            // Too small: `size` is now the value's size.
+            ERROR_MORE_DATA => buffer.resize(size as usize, 0),
+            _ => return None,
+        }
+    }
+    None
 }
 
 #[cfg(test)]

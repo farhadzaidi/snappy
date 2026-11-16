@@ -1,9 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { lastCommandOf, openApp, showPage } from "./support";
+import {
+  chordIn,
+  edgesOf,
+  expectRecordersLinedUp,
+  lastCommandOf,
+  openApp,
+  showPage,
+  workspaceCard,
+} from "./support";
 
-const card = (page: Page, name: string) =>
-  page.getByRole("button", { name: `Configure ${name}`, exact: true });
 const cardNames = (page: Page) => page.locator(".workspace-card-name").allTextContents();
 const nameField = (page: Page) => page.getByRole("textbox", { name: "Workspace name" });
 
@@ -46,18 +52,35 @@ test("the page explains how to start", async ({ page }) => {
   await expect(page.locator(".workspace-detail-heading")).toContainText("Current");
 });
 
-test("cards show their switch shortcut in saved order", async ({ page }) => {
+test("cards show their switch shortcut, in saved order", async ({ page }) => {
   expect(await cardNames(page)).toEqual(["Workspace 1", "Workspace 2", "Workspace 3"]);
-  await expect(card(page, "Workspace 2")).toContainText("Snappy + 2");
+  const shortcut = chordIn(workspaceCard(page, "Workspace 2"));
+  await expect(shortcut).toHaveAttribute("aria-label", "Snappy + 2");
+  await expect(shortcut).toHaveText("Snappy+2");
+  await expect(shortcut.locator(".snappy-key-glyph")).toBeVisible();
   await assignShortcuts(page);
-  await expect(card(page, "Workspace 2")).toContainText("Ctrl + 2");
+  await expect(shortcut).toHaveAttribute("aria-label", "Control ⌃ + 2");
+  await expect(shortcut.locator(".chord-key")).toHaveText(["Control ⌃", "2"]);
+});
+
+test("cards count windows, and say everything they show to assistive technology", async ({ page }) => {
+  await expect(workspaceCard(page, "Workspace 1")).toHaveAccessibleName("Configure Workspace 1, Snappy + 1");
+  await page.getByRole("switch", { name: "Enable workspaces" }).click();
+  await expect(workspaceCard(page, "Workspace 1")).toContainText("4 windows");
+  await expect(workspaceCard(page, "Workspace 3")).toContainText("0 windows");
+  await expect(workspaceCard(page, "Workspace 1")).toHaveAccessibleName(
+    "Configure Workspace 1, current workspace, Snappy + 1, 4 windows",
+  );
+  await expect(workspaceCard(page, "Workspace 3")).toHaveAccessibleName(
+    "Configure Workspace 3, Snappy + 3, 0 windows",
+  );
 });
 
 test("each workspace switches with the Snappy key and its number by default", async ({ page }) => {
   const switchRecorder = page.getByRole("button", { name: "Switch to this workspace", exact: true });
   for (const number of [1, 2, 3]) {
-    await card(page, `Workspace ${number}`).click();
-    await expect(switchRecorder).toHaveText(`Snappy + ${number}`);
+    await workspaceCard(page, `Workspace ${number}`).click();
+    await expect(chordIn(switchRecorder)).toHaveAttribute("aria-label", `Snappy + ${number}`);
   }
   await expect(page.getByRole("button", { name: "Send window to this workspace", exact: true })).toHaveText(
     "Record shortcut",
@@ -66,11 +89,11 @@ test("each workspace switches with the Snappy key and its number by default", as
 
 test("new workspaces are numbered, switch with their number, and are selected", async ({ page }) => {
   await page.getByRole("button", { name: "New workspace" }).click();
-  await expect(card(page, "Workspace 4")).toHaveAttribute("aria-pressed", "true");
+  await expect(workspaceCard(page, "Workspace 4")).toHaveAttribute("aria-pressed", "true");
   await expect(nameField(page)).toHaveValue("Workspace 4");
-  await expect(page.getByRole("button", { name: "Switch to this workspace", exact: true })).toHaveText(
-    "Snappy + 4",
-  );
+  await expect(
+    chordIn(page.getByRole("button", { name: "Switch to this workspace", exact: true })),
+  ).toHaveAttribute("aria-label", "Snappy + 4");
   await expect(
     page.getByRole("button", { name: "Send window to this workspace and switch", exact: true }),
   ).toHaveText("Record shortcut");
@@ -79,7 +102,7 @@ test("new workspaces are numbered, switch with their number, and are selected", 
 test("renaming commits trimmed on enter and reverts when blank", async ({ page }) => {
   await nameField(page).fill("  Writing  ");
   await nameField(page).press("Enter");
-  await expect(card(page, "Writing")).toBeVisible();
+  await expect(workspaceCard(page, "Writing")).toBeVisible();
   expect((await lastCommandOf(page, "updateWorkspace"))?.workspace.name).toBe("Writing");
 
   await nameField(page).fill("   ");
@@ -89,25 +112,25 @@ test("renaming commits trimmed on enter and reverts when blank", async ({ page }
 
 test("dragging a card reorders the workspaces", async ({ page }) => {
   await assignShortcuts(page);
-  const target = await card(page, "Workspace 3").boundingBox();
+  const target = await workspaceCard(page, "Workspace 3").boundingBox();
   if (!target) {
     throw new Error("card missing");
   }
-  await card(page, "Workspace 1").dragTo(card(page, "Workspace 3"), {
+  await workspaceCard(page, "Workspace 1").dragTo(workspaceCard(page, "Workspace 3"), {
     targetPosition: { x: target.width / 2, y: target.height - 4 },
   });
   await expect.poll(() => cardNames(page)).toEqual(["Workspace 2", "Workspace 3", "Workspace 1"]);
-  await expect(card(page, "Workspace 1")).toContainText("Ctrl + 1");
+  await expect(chordIn(workspaceCard(page, "Workspace 1"))).toHaveAttribute("aria-label", "Control ⌃ + 1");
 });
 
 test("option and arrow keys reorder a focused card", async ({ page }) => {
-  await card(page, "Workspace 3").focus();
+  await workspaceCard(page, "Workspace 3").focus();
   await page.keyboard.press("Alt+ArrowUp");
   await expect.poll(() => cardNames(page)).toEqual(["Workspace 1", "Workspace 3", "Workspace 2"]);
 });
 
 test("deleting asks first and names where the windows go", async ({ page }) => {
-  await card(page, "Workspace 2").click();
+  await workspaceCard(page, "Workspace 2").click();
   await page.getByRole("button", { name: "Delete workspace" }).click();
   const dialog = page.getByRole("alertdialog", { name: "Delete Workspace 2?" });
   await expect(dialog).toContainText(
@@ -137,16 +160,29 @@ test("a workspace's display layout changes only that workspace", async ({ page }
 
 test("the three per-workspace shortcuts are recorders", async ({ page }) => {
   await assignShortcuts(page);
-  await expect(page.getByRole("button", { name: "Switch to this workspace", exact: true })).toHaveText(
-    "Ctrl + 1",
-  );
-  await expect(page.getByRole("button", { name: "Send window to this workspace", exact: true })).toHaveText(
-    "Ctrl + Shift + 1",
-  );
+  await expect(
+    chordIn(page.getByRole("button", { name: "Switch to this workspace", exact: true })),
+  ).toHaveAttribute("aria-label", "Control ⌃ + 1");
+  await expect(
+    chordIn(page.getByRole("button", { name: "Send window to this workspace", exact: true })),
+  ).toHaveAttribute("aria-label", "Control ⌃ + Shift ⇧ + 1");
   await expect(
     page.getByRole("button", { name: "Send window to this workspace and switch", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Switch between workspaces")).toHaveCount(0);
+});
+
+test("the per-workspace recorders are one width, as wide as the longest shortcut needs", async ({ page }) => {
+  const shortcuts = page.getByRole("region", { name: "Shortcuts", exact: true });
+  const usual = await expectRecordersLinedUp(shortcuts, 3);
+  const sendAndSwitch = page.getByRole("button", {
+    name: "Send window to this workspace and switch",
+    exact: true,
+  });
+  await sendAndSwitch.click();
+  await page.keyboard.press("Control+Alt+Shift+KeyS");
+  await expect(chordIn(sendAndSwitch)).toHaveAttribute("aria-label", "Control ⌃ + Option ⌥ + Shift ⇧ + S");
+  expect(await expectRecordersLinedUp(shortcuts, 3)).toBeGreaterThan(usual);
 });
 
 test("when Snappy can't control windows, the page says why instead of asking for access", async ({
@@ -166,4 +202,70 @@ test("when Snappy can't control windows, the page says why instead of asking for
   );
   await expect(page.locator(".workspace-detail").getByText(reason, { exact: true })).toBeVisible();
   await expect(page.getByText("Waiting for Accessibility access.")).toHaveCount(0);
+});
+
+test("each card's shortcut sits at its right edge, apart from its name and windows", async ({ page }) => {
+  await page.getByRole("switch", { name: "Enable workspaces" }).click();
+  await expect(page.locator(".workspace-card-windows")).toHaveCount(3);
+  const cards = await page.locator(".workspace-card").evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const box = (selector: string) => {
+        const part = button.querySelector(selector);
+        if (!part) {
+          throw new Error(`The card has no ${selector}`);
+        }
+        return part.getBoundingClientRect();
+      };
+      const name = button.querySelector(".workspace-card-name");
+      const [title, chord, windows] = [
+        box(".workspace-card-title"),
+        box(".chord"),
+        box(".workspace-card-windows"),
+      ];
+      const content = box(".workspace-card-top");
+      return {
+        nameWhole: name !== null && name.scrollWidth <= name.clientWidth,
+        titleLeft: Math.round(title.left - content.left),
+        chordRight: Math.round(content.right - chord.right),
+        windowsLeft: Math.round(windows.left - content.left),
+        windowsBelow: windows.top >= title.bottom,
+      };
+    }),
+  );
+  for (const each of cards) {
+    expect(each).toEqual({
+      nameWhole: true,
+      titleLeft: 0,
+      chordRight: 0,
+      windowsLeft: 0,
+      windowsBelow: true,
+    });
+  }
+});
+
+test("a long shortcut on a card ends in an ellipsis and leaves the name whole", async ({ page }) => {
+  await page.setViewportSize({ width: 940, height: 760 });
+  await workspaceCard(page, "Workspace 3").click();
+  await page.getByRole("button", { name: "Switch to this workspace", exact: true }).click();
+  await page.keyboard.press("Control+Alt+Shift+PageDown");
+  const shortcut = chordIn(workspaceCard(page, "Workspace 3"));
+  await expect(shortcut).toHaveAttribute("aria-label", "Control ⌃ + Option ⌥ + Shift ⇧ + PageDown");
+  const fit = await workspaceCard(page, "Workspace 3").evaluate((button) => {
+    const fits = (selector: string) => {
+      const part = button.querySelector(selector);
+      return part !== null && part.scrollWidth <= part.clientWidth;
+    };
+    const inside = (selector: string) => {
+      const part = button.querySelector(selector)?.getBoundingClientRect();
+      const edges = button.getBoundingClientRect();
+      return part !== undefined && part.left >= edges.left && part.right <= edges.right;
+    };
+    return { name: fits(".workspace-card-name"), keys: fits(".chord-keys"), inside: inside(".chord") };
+  });
+  expect(fit).toEqual({ name: true, keys: false, inside: true });
+});
+
+test("the new workspace tile lines up with the cards", async ({ page }) => {
+  const tile = page.getByRole("button", { name: "New workspace" });
+  expect(await edgesOf(tile)).toEqual(await edgesOf(page.locator(".workspace-card").first()));
 });

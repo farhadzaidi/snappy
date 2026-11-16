@@ -9,6 +9,8 @@ pub const NORMAL_LAYER: i64 = 0;
 pub const FLOATING_LAYER: i64 = 3;
 /// The menu bar's status items.
 pub const STATUS_BAR_LAYER: i64 = 25;
+/// Open menus.
+pub const POPUP_MENU_LAYER: i64 = 101;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenWindow {

@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::app_icon;
+
 const NO_CONFIG_FOLDER: &str = "Snappy couldn't find your settings folder.";
 const NOT_CHANGED: &str = "Snappy couldn't change Open at login.";
 
@@ -18,6 +20,9 @@ pub fn set_enabled_for_this_program(on: bool) -> Result<(), String> {
         eprintln!("snappy: can't find its own program: {error}");
         NOT_CHANGED.to_owned()
     })?;
+    if on {
+        app_icon::install();
+    }
     set_enabled(&path, &executable, on)
 }
 
@@ -67,10 +72,12 @@ pub fn desktop_entry(executable: &Path) -> String {
          Name=Snappy\n\
          Comment=Arrange windows into zones\n\
          Exec={} --background\n\
+         Icon={}\n\
          Terminal=false\n\
          NoDisplay=true\n\
          X-GNOME-Autostart-enabled=true\n",
-        exec_argument(&executable.to_string_lossy())
+        exec_argument(&executable.to_string_lossy()),
+        app_icon::NAME
     )
 }
 
@@ -104,6 +111,12 @@ mod tests {
         assert!(entry.starts_with("[Desktop Entry]\nType=Application\n"));
         assert!(entry.contains("\nExec=\"/usr/bin/snappy\" --background\n"));
         assert!(!entry.contains("Hidden=true"));
+    }
+
+    #[test]
+    fn entry_shows_snappys_icon() {
+        let entry = desktop_entry(Path::new("/usr/bin/snappy"));
+        assert!(entry.contains("\nIcon=io.github.farhadzaidi.Snappy\n"));
     }
 
     #[test]

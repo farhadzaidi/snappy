@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Layout, Zone } from "../core/model";
-import { MAX_ZONES } from "../core/model";
+import { coreLimits } from "../core/limits";
 import {
   HISTORY_LIMIT,
   UNTITLED,
@@ -13,10 +13,14 @@ import {
   endStep,
   followStored,
   hasChanges,
+  keepSelection,
   markSaved,
   openDraft,
   preview,
   redo,
+  selectedZones,
+  soleSelection,
+  toggled,
   undo,
   type Snapshot,
 } from "./draft";
@@ -122,9 +126,29 @@ describe("editor draft", () => {
     expect(followStored(draft, null).saved).toBeNull();
   });
 
+  it("a selection keeps the zones that are left, and falls back to the first zone", () => {
+    const two = edit(openDraft(stored, emptyOptions()), addZone("b", 0.5));
+    const both = { ...two, selection: ["b", "a"] };
+    expect(keepSelection(both)).toBe(both);
+    expect(selectedZones(both).map((item) => item.id)).toEqual(["a", "b"]);
+    expect(soleSelection(both)).toBeNull();
+
+    const undone = undo(both);
+    expect(undone.selection).toEqual(["a"]);
+    expect(soleSelection(undone)?.id).toBe("a");
+    expect(keepSelection({ ...undone, selection: ["gone"] }).selection).toEqual(["a"]);
+    expect(blankDraft().selection).toEqual([]);
+  });
+
+  it("toggling adds a zone to the selection or takes it out", () => {
+    expect(toggled(["a"], "b")).toEqual(["a", "b"]);
+    expect(toggled(["a", "b"], "a")).toEqual(["b"]);
+    expect(toggled(["a"], "a")).toEqual([]);
+  });
+
   it("a draft holds at most 32 zones, and overlaps can't be saved", () => {
     let draft = blankDraft();
-    for (let i = 0; i < MAX_ZONES; i += 1) {
+    for (let i = 0; i < coreLimits().zones; i += 1) {
       draft = edit(draft, addZone(`z${i}`, (i % 9) * 0.1));
     }
     expect(canAddZone(draft)).toBe(false);

@@ -1,6 +1,9 @@
-//! The interfaces every operating-system adapter implements, and the events adapters
-//! report. The engine calls these from its own thread; calls may block only up to the
-//! platform's messaging timeout.
+//! The interfaces every operating-system adapter implements, the events adapters report,
+//! and the tray glyph the trays that take pixels draw (`glyph`). The engine calls the
+//! interfaces from its own thread; calls may block only up to the platform's messaging
+//! timeout.
+
+pub mod glyph;
 
 use std::time::Duration;
 
@@ -167,17 +170,33 @@ pub trait CapsLock {
     /// Undo the change an earlier run made and left in place, from what its
     /// `hold_caps_lock_as` returned.
     fn undo_caps_lock(&mut self, undo: &CapsLockUndo);
-    /// Turn Caps Lock on or off, its light included, as a tap of the key does.
-    fn toggle_caps_lock(&mut self);
+    /// Turn Caps Lock on or off, its light included, as a tap of the key does. Errs with
+    /// why, for the debug log, when the system didn't take it.
+    fn toggle_caps_lock(&mut self) -> Result<(), String>;
 }
 
-/// What an adapter needs to undo its Caps Lock change in a later run, in a form of its own.
-/// The engine keeps it in a state file while the change is in place.
+/// What an adapter needs to undo its Caps Lock change in a later run, in a form of its own:
+/// any value of the adapter's that serializes. The engine keeps it in a state file while the
+/// change is in place.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct CapsLockUndo(pub String);
+pub struct CapsLockUndo(pub serde_json::Value);
 
-/// Caps Lock, while it is the Snappy key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl CapsLockUndo {
+    /// The record of `undo`, a value of the adapter's own type.
+    pub fn of(undo: &impl Serialize) -> Result<CapsLockUndo, serde_json::Error> {
+        serde_json::to_value(undo).map(CapsLockUndo)
+    }
+
+    /// The adapter's own value back from the record.
+    pub fn read<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        T::deserialize(&self.0)
+    }
+}
+
+/// Caps Lock, while it is the Snappy key. Adapters whose helpers report it as JSON read it
+/// as `"pressed"`, `"otherInput"`, or `"released"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum CapsLockInput {
     Pressed,
     /// Another key or a mouse button was used while Caps Lock was down.
@@ -410,6 +429,11 @@ pub enum PlatformEvent {
     /// Caps Lock went down or up, or something else was used meanwhile, while it is the
     /// Snappy key.
     CapsLock(CapsLockInput),
+    /// Caps Lock stopped standing for the Snappy key without being asked, because something
+    /// else changed the keyboard settings: a keymap loaded over Snappy's change, or keyboard
+    /// settings saved without Snappy's option. The adapter has let go of it, so nothing of
+    /// Snappy's is left to undo.
+    CapsLockLost,
     WindowCreated {
         pid: u32,
     },

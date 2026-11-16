@@ -8,7 +8,7 @@
 | `wasm32-unknown-unknown` target | the settings UI's WebAssembly core | `rustup target add wasm32-unknown-unknown` |
 | `wasm-bindgen` CLI 0.2.130, matching the crate's pinned version | the same | `cargo install wasm-bindgen-cli --version 0.2.130` |
 | pnpm 9 and Node | the settings UI | then `pnpm -C apps/settings/ui install` |
-| Playwright's Chromium | the UI's end-to-end tests | `pnpm -C apps/settings/ui exec playwright install chromium` |
+| Playwright's Chromium and WebKit | the UI's end-to-end tests | `pnpm -C apps/settings/ui exec playwright install chromium webkit`, once |
 | `aarch64-pc-windows-msvc` target and `cargo-xwin` | Windows builds from the Mac | `rustup target add aarch64-pc-windows-msvc`, `cargo install --locked cargo-xwin` |
 | Docker | Linux builds, the X11 tests, the Linux live suite | Docker Desktop or any engine |
 | Tart | the macOS test VM | `brew install cirruslabs/cli/tart` |
@@ -34,6 +34,30 @@ tools/macos/bundle.sh                      # build and sign dist/Snappy.app
 ```
 
 macOS ties the Accessibility grant to the app's code signature. `signing-identity.sh` creates a self-signed identity, "Snappy Local Signing", in its own keychain (`~/Library/Keychains/snappy-signing.keychain-db`) whose password lives in `~/.config/snappy/signing-keychain-password`, readable only by you. `bundle.sh` unlocks that keychain itself, so builds sign without a prompt, and every build keeps the same identity, so the grant survives rebuilds. `SNAPPY_SIGN_IDENTITY` overrides the identity. Without one, builds are signed ad hoc and macOS asks for Accessibility again each time.
+
+### The app icon
+
+`assets/icon/snappy.svg` is the only source of Snappy's icon. `tools/icon/generate.sh` renders everything else in `assets/icon/` from it, and those files are committed, so builds need none of its tools:
+
+| File | Used by |
+|---|---|
+| `snappy.icns` | both macOS bundles (`bundle.sh` copies it to `Contents/Resources/Snappy.icns`), and the settings app, which Tauri also gives it at run time |
+| `snappy.ico` | the settings app's executable and window on Windows (`tauri.conf.json` names it; Tauri compiles it into a resource itself, which takes `llvm-rc` when cross-compiling) |
+| `snappy.res` | `snappy.exe`, linked by `apps/snappy/build.rs`; it's the same images compiled into a Windows resource, which the linker takes directly, so no resource compiler is needed |
+| `snappy.png` | the settings app's window icon on Linux |
+
+Linux builds of the daemon embed the SVG itself and install it in the user's icon theme ([platforms.md](platforms.md#linux-x11)).
+
+The menu bar, notification-area, tray, and GNOME top bar show a monochrome glyph instead, the icon's zones without its colors: a rounded window holding a solid half zone beside two dimmer quarter zones. `assets/icon/snappy-glyph.svg` is its source, drawn on a 16-unit grid so it lands on whole pixels at 16 and 32. It uses fills alone, because GNOME recolors a symbolic icon by setting the fill of every shape and would fill an outline drawn as a stroke. The same script renders it too:
+
+| File | Used by |
+|---|---|
+| `assets/icon/snappy-glyph.pdf` | the macOS menu bar item, embedded in the daemon and shown as a template image, which the menu bar tints for light and dark |
+| `apps/gnome-extension/icons/snappy-symbolic.svg` | the GNOME top bar item, the glyph in the gray of symbolic icons |
+
+The Linux tray and the Windows notification area take pixels, and Windows asks for a size that follows the display's DPI, so `snappy_platform::glyph` draws the same shapes into a coverage mask, which the Linux tray shows in white and Windows in the overlays' mint. A test checks that the SVG and that module draw the same shapes, so change both together.
+
+After changing either SVG, run `tools/icon/generate.sh` (it needs `rsvg-convert` from `brew install librsvg`, macOS's `iconutil`, and Node) and commit the SVG with what it wrote. Its output is the same for the same SVGs, so running it again leaves nothing to commit.
 
 ### Installing a new build without losing workspaces
 
@@ -102,7 +126,7 @@ The daemon moves other apps' windows, registers global shortcuts, and on macOS a
 
 The debug log records what Snappy saw, what it decided, and what happened: received events (pointer motion excepted), commands, registered shortcuts, snaps and swaps with each settle step, workspace switches with timings, and errors. Records are JSON lines with a timestamp `t`, a `level` (`warn` marks a result that differs from what was asked for), and an `event`. Window titles and keystrokes are never recorded.
 
-- Turn it on in the settings app (Settings, Troubleshooting, Debug log), which then shows where it is written, or start the daemon with `SNAPPY_DEBUG=1` to force it on for one run; the live tests do this.
+- Turn it on in the settings app (Settings, Debug, Debug log), which then shows where it is written, or start the daemon with `SNAPPY_DEBUG=1` to force it on for one run; the live tests do this.
 - It is `debug.jsonl` in the log folder ([architecture.md](architecture.md#files)). At 5 MB it moves to `debug.1.jsonl` and starts again.
 - `crates/engine/src/debug_log.rs` writes it. To add a record, call `Core::trace` (info) or `Core::flag` (warn) with a closure building the JSON; the closure runs only while the log is on, so a record costs nothing otherwise.
 - `drops.json` in the same folder keeps the last 20 modifier drags with their outcome and settle steps, even with the debug log off. It is the first place to look when a drop didn't snap.
@@ -123,12 +147,12 @@ The debug log records what Snappy saw, what it decided, and what happened: recei
 
 Undo and redo of window moves were added this way; follow `MoveHistory` and `HistoryStep` through the code as a worked example. Say the new action is "center the focused window".
 
-1. **Settings model** (`crates/core/src/settings.rs`). Add the shortcut to the section it belongs to as an `Option<KeyChord>`, with its default in that section's `defaults`; a default is the Snappy key and one other key. Each section lists its shortcuts once, in an enum: `NavigationShortcut` for `Navigation`, `HistoryStep` for `MoveHistory`, `WorkspaceStep` for `Workspaces`, and `WorkspaceShortcut` for each `Workspace`. Add a variant, put it in the enum's `ALL`, give it a title, which is the only place it is written (the settings app, conflict messages, and probes all show it), and map it to its field in the section's `get` and `slot`. Everything that walks shortcuts goes through that list: the validity checks, reading a file from before the Snappy key could be chosen (`Settings::for_each_chord`), conflicts, and registration. A shortcut with a default also names its settings file field (`field`), so a file without it gets the default where no other binding uses its chord (`MissingChord`, which `Settings::from_json` uses).
-2. **Shortcut ownership** (`crates/core/src/bindings.rs`). Add a `HotKeyAction` variant and map the shortcut to it (`HotKeyAction::of_navigation` for a navigation shortcut); `desired_hotkeys` registers it, navigation and history only while snapping is live, and conflicts and the Snappy key's availability probes name it by its title. Unit-test the defaults for conflicts and the registration.
+1. **Settings model** (`crates/core/src/settings.rs`). Add the shortcut to the section it belongs to as an `Option<KeyChord>`, with its default in that section's `defaults`; a default is the Snappy key and one other key. Each section lists its shortcuts once, in an enum: `NavigationShortcut` for `Navigation`, `HistoryStep` for `MoveHistory`, `WorkspaceStep` for `Workspaces`, and `WorkspaceShortcut` for each `Workspace`. Add a variant, put it in the enum's `ALL`, give it a title, which is the only place it is written (the settings app, conflict messages, and probes all show it), and map it to its field in the section's `get` and `slot`. Every shortcut, wherever it lives, is a `ShortcutId` (`crates/core/src/shortcuts.rs`), which reads and sets its chord, gives its default and its title, and is what conflicts and the settings app know it by; everything that walks shortcuts goes through it: the validity checks, reading a file from before the Snappy key could be chosen, conflicts, registration, resets, and the defaults a file without the shortcut gets (`give_defaults`, which gives each its default where no other binding uses its chord). A shortcut with a default also names its settings file field (`field`), so `Settings::from_json` can tell a file that lacks it.
+2. **Shortcut ownership** (`crates/core/src/bindings.rs`). Add a `HotKeyAction` variant and map the shortcut to it in `HotKeyAction::of`; `desired_hotkeys` registers it, navigation and history only while snapping is live, and conflicts and the Snappy key's availability probes name it by its title. Unit-test the defaults for conflicts and the registration.
 3. **Core logic** (`crates/core`). Put the decision, such as the centered frame, in a pure function with unit tests.
 4. **Engine** (`crates/engine/src/actions.rs`). Handle the new `HotKeyAction` in `hotkey`. Anything that moves a window goes through `Shared::submit`, typically with `run_snap`, so it is cancellable and undoable.
 5. **IPC** (`crates/ipc/src/lib.rs`). Each section's shortcuts are set by one `Command` keyed by its enum: `SetNavigationShortcut { shortcut, chord }`, `SetHistoryShortcut { step, chord }`, and `SetWorkspaceStepShortcut { step, chord }`, which `crates/engine/src/commands.rs` hands to `change`, which validates, saves, and re-registers shortcuts. A shortcut added to a section needs no command of its own. A command that changes shape bumps `PROTOCOL_VERSION` in `crates/ipc` and in the fake daemon (`apps/settings/ui/src/bridge/fake/fakeDaemon.ts`).
-6. **Settings UI.** Mirror the settings field in `apps/settings/ui/src/core/model.ts` (a navigation shortcut's field is also a `NavigationShortcut`) and add a recorder in `apps/settings/ui/src/settings/SettingsPage.tsx` (`NavigationRow` for a navigation shortcut), titled from `core.shortcutTitles()`. A new default shortcut also gets a line in help (`crates/core/src/guide.rs`). The section's local conflict check (`apps/settings/ui/src/recorder/conflicts.ts`) and the fake daemon's handling of its command (`apps/settings/ui/src/bridge/fake/reducer.ts`) already cover every shortcut in it.
+6. **Settings UI.** Mirror the settings field in `apps/settings/ui/src/core/model.ts` (a navigation shortcut's field is also a `NavigationShortcut`) and list it in its section's shortcuts (`ShortcutSection::shortcuts` in `crates/core/src/reset.rs`): the Settings page draws a recorder, with its title, for every shortcut a section lists (`apps/settings/ui/src/settings/ShortcutGroups.tsx`). A new default shortcut also gets a line in help (`crates/core/src/guide.rs`). A recorder's conflict check (`core.recordingConflict`, which knows the shortcut by its `ShortcutId`) and the fake daemon's handling of its command (`apps/settings/ui/src/bridge/fake/reducer.ts`) already cover every shortcut in it.
 7. **Tests.** An engine scenario in the feature's module of `crates/engine/tests/scenarios/` that assigns the chord, presses it through the fake platform, and checks where the window landed; a reducer test in `reducer.test.ts`; and a Playwright test in `apps/settings/ui/e2e/settings.spec.ts` for the recorder. Add a live scenario to the feature's module in `crates/live/src/scenarios/` when the action depends on how a real OS behaves.
 
 ## Code style and rules
@@ -141,7 +165,7 @@ Undo and redo of window moves were added this way; follow `MoveHistory` and `His
 
 ### User-facing messages
 
-Full sentences that say what happened and what to do next, in plain words: "Leave full screen before tiling this window.", "More than one window occupies that zone. Move one out before swapping." Name keys with the platform's own names (`Modifier::name` in `crates/core/src/keys.rs`), and the Snappy key as "Snappy" (`KeyChord::long_label`). Messages for the same situation read the same on every platform; each adapter keeps its own in `src/messages.rs`. Routine confirmations such as "Snapped." are quiet statuses that the settings app doesn't pop up.
+Full sentences that say what happened and what to do next, in plain words: "Leave full screen before tiling this window.", "More than one window occupies that zone. Move one out before swapping." Name keys with the platform's own names (`Modifier::name` in `crates/core/src/keys.rs`), and the Snappy key as "Snappy" (`KeyChord::long_label`). Messages for the same situation read the same on every platform; each adapter keeps its own in `src/messages.rs`. Write as people speak, with contractions: "couldn't" and "can't", never "could not" or "cannot". Routine confirmations such as "Snapped." are quiet statuses that the settings app doesn't pop up.
 
 ### Comments
 

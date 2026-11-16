@@ -112,7 +112,7 @@ pub(super) fn nearest_empty_zone(context: &mut Context) -> Result<Outcome, Strin
     let (right, _) = occupied_right_and_floating(context, "nocc", "nfloat", 1)?;
     let left = context.zone(0)?;
     let seen = context.snaps().len();
-    context.press(&context.navigation_key(NavigationShortcut::NearestEmpty)?)?;
+    context.press(&context.navigation_key(NavigationShortcut::NearestEmptyZone)?)?;
     let elapsed = context.wait_in("nfloat", left)?;
     context.wait_in("nocc", right)?;
     let (outcome, _) = context.finished_snap(seen)?;

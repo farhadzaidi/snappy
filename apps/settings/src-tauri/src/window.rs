@@ -62,7 +62,7 @@ pub fn focus(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW)
         && let Err(error) = window.set_focus()
     {
-        eprintln!("snappy-settings: could not focus the window: {error}");
+        eprintln!("snappy-settings: couldn't focus the window: {error}");
     }
 }
 

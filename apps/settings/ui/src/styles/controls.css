@@ -15,7 +15,7 @@
 }
 
 .button:hover:not(:disabled) {
-  background: #222831;
+  background: var(--surface-hover);
 }
 
 .button:active:not(:disabled) {
@@ -35,7 +35,7 @@
 }
 
 .button-primary:hover:not(:disabled) {
-  background: #94efcf;
+  background: var(--mint-hover);
 }
 
 .button-primary:disabled {
@@ -44,14 +44,14 @@
 }
 
 .button-destructive {
-  background: rgb(255 163 148 / 12%);
-  border-color: rgb(255 163 148 / 30%);
+  background: rgb(var(--destructive-rgb) / 12%);
+  border-color: var(--destructive-line);
   color: var(--destructive);
   font-weight: 600;
 }
 
 .button-destructive:hover:not(:disabled) {
-  background: rgb(255 163 148 / 22%);
+  background: rgb(var(--destructive-rgb) / 22%);
 }
 
 .icon-button {
@@ -67,7 +67,7 @@
 }
 
 .icon-button:hover:not(:disabled) {
-  background: rgb(255 255 255 / 6%);
+  background: var(--wash);
   color: var(--text);
 }
 
@@ -79,17 +79,12 @@
   opacity: 0.4;
 }
 
-.icon-button-destructive:hover:not(:disabled) {
-  color: var(--destructive);
-  background: rgb(255 163 148 / 10%);
-}
-
 .tool-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 32px;
-  padding: 0 10px;
+  padding: 0 var(--tool-button-padding);
   border-radius: var(--radius);
   color: var(--muted);
   font-size: 13px;
@@ -101,7 +96,7 @@
 }
 
 .tool-button:hover:not(:disabled) {
-  background: rgb(255 255 255 / 6%);
+  background: var(--wash);
   color: var(--text);
 }
 
@@ -115,21 +110,65 @@
 
 .tool-button-destructive:hover:not(:disabled) {
   color: var(--destructive);
-  background: rgb(255 163 148 / 10%);
+  background: var(--destructive-wash);
 }
 
-.text-button {
+.tool-button-compact {
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+}
+
+/* The one action a toolbar asks for, such as enabling what is off. */
+.tool-button-primary,
+.tool-button-primary:hover:not(:disabled) {
+  background: var(--mint);
+  color: var(--background);
+  font-weight: 600;
+}
+
+.tool-button-primary:hover:not(:disabled) {
+  background: var(--mint-hover);
+}
+
+/* A panel's Reset, quiet beside its title. */
+.reset-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-small);
   color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
 }
 
-.text-button:hover {
+.reset-button:hover:not(:disabled),
+.reset-button[aria-expanded="true"] {
+  background: var(--wash);
   color: var(--text);
+}
+
+.reset-button:disabled {
+  opacity: 0.45;
 }
 
 /* Segmented tabs */
 .segmented {
   display: inline-flex;
   gap: 4px;
+}
+
+/* Every segment as wide as the widest, so a row of choices reads as one control. */
+.segmented-even {
+  display: inline-grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+}
+
+.segmented-even > * {
+  justify-content: center;
 }
 
 .segment {
@@ -157,9 +196,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   width: 100%;
+  min-height: var(--row-height);
   text-align: left;
+}
+
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.toggle-hint {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .toggle:disabled {
@@ -172,7 +224,7 @@
   width: 34px;
   height: 20px;
   border-radius: 10px;
-  background: rgb(153 168 181 / 25%);
+  background: rgb(var(--muted-rgb) / 25%);
   transition: background 150ms ease;
 }
 
@@ -213,7 +265,7 @@
   border-radius: var(--radius-card);
   border: 1px solid var(--line);
   background: var(--background);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+  box-shadow: 0 12px 32px rgb(var(--shadow-rgb) / 45%);
 }
 
 .popover-below {
@@ -274,7 +326,7 @@
 }
 
 .choice-option:hover {
-  background: rgb(255 255 255 / 6%);
+  background: var(--wash);
 }
 
 .choice-option svg {
@@ -288,7 +340,7 @@
   z-index: 40;
   display: grid;
   place-items: center;
-  background: rgb(0 0 0 / 45%);
+  background: rgb(var(--shadow-rgb) / 45%);
 }
 
 .dialog {
@@ -300,7 +352,7 @@
   border-radius: var(--radius-panel);
   border: 1px solid var(--line);
   background: var(--background);
-  box-shadow: 0 20px 50px rgb(0 0 0 / 50%);
+  box-shadow: 0 20px 50px rgb(var(--shadow-rgb) / 50%);
 }
 
 .dialog-icon {
@@ -311,7 +363,7 @@
   margin-bottom: 8px;
   border-radius: var(--radius-panel);
   color: var(--destructive);
-  background: rgb(255 163 148 / 10%);
+  background: var(--destructive-wash);
 }
 
 .dialog-icon svg {
@@ -353,34 +405,82 @@
   gap: 8px;
 }
 
-/* Shortcut recorder */
+/* Shortcut recorder. It fills the column its group or list gives it, so recorders listed
+   together are as wide as the widest needs. */
 .recorder {
-  display: inline-flex;
+  display: flex;
+  flex: auto;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
+/* As wide as most shortcuts need, and wider for one whose modifiers are spelled out. */
 .recorder-button {
-  width: 144px;
+  flex: auto;
+  min-width: 168px;
   height: 34px;
   padding: 0 10px;
   border-radius: var(--radius-small);
   border: 1px solid var(--line);
   background: var(--background);
   color: var(--muted);
-  font: 500 12px var(--font-mono);
+  font: 500 13px var(--font);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.recorder-button[data-assigned="true"],
-.recorder-button[data-recording="true"] {
-  color: var(--mint);
+.recorder-button[data-assigned="true"] {
+  color: var(--text);
+}
+
+/* A shortcut longer than a narrow column or card can hold ends in an ellipsis rather than cut
+   off; the Snappy key's pill stays whole. */
+.recorder-button .chord,
+.workspace-card .chord {
+  max-width: 100%;
+}
+
+.recorder-button .chord-keys,
+.workspace-card .chord-keys {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* While recording, the field reads like an input waiting for keys, with Escape's own button
+   at its end: clearly not the × that clears a shortcut. */
+.recorder-field {
+  position: relative;
+  display: flex;
+  flex: auto;
+  min-width: 0;
 }
 
 .recorder-button[data-recording="true"] {
+  padding: 0 44px 0 12px;
   border-color: var(--mint);
+  color: var(--mint);
+  text-align: left;
+}
+
+.recorder-cancel {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font: 500 11px/18px var(--font);
+  transform: translateY(-50%);
+}
+
+.recorder-cancel:hover {
+  border-color: rgb(var(--text-rgb) / 18%);
+  color: var(--text);
 }
 
 .recorder-button:disabled {
@@ -389,8 +489,105 @@
 }
 
 .recorder-clear {
+  flex: none;
   width: 26px;
   height: 28px;
+}
+
+/* A shortcut: the Snappy key's pill, then its keys, modifiers included, in the color around
+   them, "[◧ Snappy] + Shift ⇧ + J", or only keys, "Control ⌃ + Option ⌥ + L". The keys are
+   semibold and each + between them is lighter, so the keys read first. Sized in ems, so a
+   shortcut sets at the size of the recorder, card, or line it sits in. */
+.chord {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font);
+  white-space: nowrap;
+}
+
+.chord-keys {
+  letter-spacing: 0.03em;
+}
+
+.chord-key {
+  font-weight: 600;
+}
+
+.chord-plus {
+  margin: 0 var(--chord-space);
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* The Snappy key: its glyph and name in mint on a mint wash, the same wherever it appears. */
+.snappy-key {
+  display: inline-block;
+  padding: 0 0.42em;
+  border-radius: 0.42em;
+  background: rgb(var(--mint-rgb) / 12%);
+  color: var(--mint);
+  font-weight: 500;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+
+/* The glyph, set like a character a little taller than the capitals. */
+.snappy-key-glyph {
+  width: 1.05em;
+  height: 1.05em;
+  margin-right: 0.3em;
+  vertical-align: -0.17em;
+}
+
+/* A shortcut or setting a sentence names, outlined on the text's baseline and a little
+   taller than the text so a Snappy key nested in it has room on every side. Its text ends as
+   far from its sides as a shortcut's keys sit from their +, so "[◧ Snappy] + Space" keeps one
+   rhythm to the reference's edge. Its faint wash sits on the page's dark whatever the surface
+   around it, so it reads the same in a toast, a warning, or a popover, and apart from the
+   mint pill a shortcut nests in it. */
+.reference {
+  --reference-wash: rgb(var(--text-rgb) / 4%);
+  --reference-inset: 0.2em;
+  --reference-radius: 0.4em;
+  display: inline-block;
+  padding: var(--reference-inset) var(--chord-space);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--reference-radius);
+  background: linear-gradient(var(--reference-wash), var(--reference-wash)), var(--background);
+  color: var(--text);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+/* A nested Snappy key is the text's height and sits as far in from the reference's left edge
+   as from its top and bottom, its corners following the reference's. */
+.reference .snappy-key {
+  margin-left: calc(var(--reference-inset) - var(--chord-space));
+  padding: 0 0.32em;
+  border-radius: calc(var(--reference-radius) - var(--reference-inset));
+  line-height: 1.25;
+}
+
+/* A setting a message points to: a reference with an arrow, which goes there. */
+.reference-link {
+  transition: border-color 120ms ease;
+}
+
+.reference-link svg {
+  width: 0.95em;
+  height: 0.95em;
+  margin-left: 0.25em;
+  vertical-align: -0.14em;
+  color: var(--muted);
+}
+
+.reference-link:hover {
+  --reference-wash: rgb(var(--text-rgb) / 9%);
+  border-color: rgb(var(--text-rgb) / 32%);
+}
+
+.reference-link:hover svg {
+  color: var(--text);
 }
 
 /* Groups and rows */
@@ -400,13 +597,24 @@
   gap: 16px;
   padding: 20px;
   border-radius: var(--radius-panel);
-  background: rgb(26 31 37 / 60%);
+  background: var(--panel);
 }
 
 .group-header {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.group-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Its text, not its hover box, lines up with the controls below. */
+.group-action {
+  margin: -4px -9px -4px auto;
 }
 
 .group-title {
@@ -419,22 +627,89 @@
   font-size: 12px;
 }
 
+/* The ⓘ beside a title and the explanation it shows. */
+.info-hint {
+  position: relative;
+  display: inline-flex;
+}
+
+.info-hint-button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+
+.info-hint-button:hover,
+.info-hint-button[aria-expanded="true"] {
+  color: var(--mint);
+}
+
+.info-hint-panel {
+  width: 320px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* A group's rows share its label and control columns, so its recorders are one width. */
 .group-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: var(--control-columns);
+  gap: 14px 16px;
+}
+
+.group-body > * {
+  grid-column: 1 / -1;
 }
 
 .row {
-  display: flex;
+  display: grid;
+  grid-template-columns: subgrid;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 34px;
+  min-height: var(--row-height);
 }
 
 .row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+}
+
+.row-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.row-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-badge[data-good="true"] {
+  color: var(--mint);
+  background: var(--mint-wash);
+}
+
+.status-badge[data-good="false"] {
+  color: var(--destructive);
+  background: rgb(var(--destructive-rgb) / 12%);
 }
 
 .button-row {
@@ -450,19 +725,61 @@
   font-size: 12px;
 }
 
-.notice-warning {
-  flex-direction: row;
+/* The icon sits in a line of its own, as tall as the message's, on the baseline of the
+   message's first line: it stays level with that line when a reference makes it taller. */
+.warning-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgb(var(--warning-rgb) / 22%);
+  background: rgb(var(--warning-rgb) / 7%);
   color: var(--warning);
+  font-size: 12px;
+  line-height: 18px;
+  text-wrap: pretty;
 }
 
-.notice-warning svg {
+.warning-notice-icon {
   flex: none;
+}
+
+.warning-notice-icon svg {
+  margin-top: 1px;
+  vertical-align: top;
 }
 
 .status-dot {
   display: inline-block;
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--mint);
+}
+
+/* A small schematic of a layout's zones, some of them lit. */
+.thumbnail {
+  align-self: center;
+}
+
+.thumbnail rect {
+  fill: rgb(var(--text-rgb) / 8%);
+  stroke: var(--line-strong);
+  stroke-width: 0.7;
+}
+
+.thumbnail [data-highlighted="true"] rect {
+  fill: rgb(var(--mint-rgb) / 25%);
+  stroke: rgb(var(--mint-rgb) / 55%);
+}
+
+.thumbnail text {
+  fill: var(--muted);
+  font: 500 10px var(--font);
+}
+
+.thumbnail [data-highlighted="true"] text {
+  fill: var(--mint);
 }

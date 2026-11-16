@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
-import { longLabel, modifierLabel, snappyKeyLabel } from "../core/labels";
+import { modifierLabel, snappyKeyLabel } from "../core/labels";
 import { core } from "../core/snappyCore";
 import { useAppState } from "../state/services";
 import { IconButton } from "../ui/Button";
+import { ChordLabel, ChordText, SnappyKey } from "../ui/Chord";
 import { HelpIcon } from "../ui/icons";
 import { Popover } from "../ui/Popover";
 
@@ -55,24 +56,36 @@ function HelpContent() {
       {swapModifier !== "off" && (
         <HelpRow
           title={whenTaken === "swap" ? "Stack on top while dragging" : "Swap while dragging"}
-          keys={`${drag} + ${modifierLabel(swapModifier, platform)}`}
+          keys={<Keys label={`${drag} + ${modifierLabel(swapModifier, platform)}`} />}
         />
       )}
       <hr className="help-divider" />
-      <HelpRow title="Snappy key" keys={snappyKeyLabel(settings.snappyKey, platform)} />
+      <HelpRow
+        title={
+          <>
+            <SnappyKey /> key
+          </>
+        }
+        keys={<Keys label={snappyKeyLabel(settings.snappyKey, platform)} />}
+      />
       {core.defaultShortcuts(platform).map(({ title, chord }) => (
-        <HelpRow key={title} title={title} keys={longLabel(chord, platform)} />
+        <HelpRow key={title} title={title} keys={<ChordLabel chord={chord} platform={platform} />} />
       ))}
-      <HelpRow title="Hide the screen preview" keys="Escape" />
+      <HelpRow title="Hide the screen preview" keys={<Keys label="Escape" />} />
     </div>
   );
 }
 
-function HelpRow({ title, keys }: { title: string; keys: string }) {
+function HelpRow({ title, keys }: { title: ReactNode; keys: ReactNode }) {
   return (
     <div className="help-row">
       <span>{title}</span>
       <span className="mint">{keys}</span>
     </div>
   );
+}
+
+/** Keys without the Snappy key, "Shift ⇧ + Command ⌘", drawn as a shortcut is. */
+function Keys({ label }: { label: string }) {
+  return <ChordText snappyKey={false} keys={label} label={label} />;
 }

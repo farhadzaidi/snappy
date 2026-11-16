@@ -11,8 +11,9 @@
 //! - **Taps.** Snappy presses the keymap's real Caps Lock, Shift + Caps Lock, through
 //!   `fake_input`.
 //! - **The lock screen** gets Caps Lock as usual: the option comes out while the session is
-//!   locked. When System Settings rewrites the keyboard options without Snappy's, it goes
-//!   back in, unless they now remap Caps Lock themselves, which wins.
+//!   locked and goes back in after. When System Settings rewrites the keyboard options
+//!   without Snappy's, or they changed while the session was locked, Snappy lets go and
+//!   reports Caps Lock lost; the engine decides whether to hold it again.
 
 mod fake_input;
 mod kxkbrc;
@@ -28,7 +29,7 @@ use self::fake_input::FakeKeyboard;
 use self::kxkbrc::OptionEntries;
 use self::presses::Presses;
 use crate::keystate::{self, Watch};
-use crate::messages::{CAPS_LOCK_NOT_SET_UP, caps_lock_remapped};
+use crate::messages::CAPS_LOCK_NOT_SET_UP;
 use crate::shared::{Incoming, Shared};
 use crate::{keys, shortcuts};
 
@@ -42,8 +43,6 @@ pub struct Hold {
     written: String,
     /// The session is locked, and Caps Lock is as usual meanwhile.
     locked: bool,
-    /// The user's own options remap Caps Lock now; theirs win.
-    stepped_aside: bool,
     presses: Presses,
     /// Follows the modifier keys, never other keys, while Caps Lock is the Snappy key; dropping
     /// it with the hold closes the connection.
@@ -70,9 +69,11 @@ pub fn hold(shared: &Shared, modifiers: Mods) -> Result<CapsLockUndo, String> {
     let text = kxkbrc::load(&path).map_err(not_set_up)?;
     let prior = kxkbrc::read(&text);
     let effective = prior.effective_options(session_options().as_deref());
-    let remapping = xkb::caps_lock_options(&effective);
-    if !remapping.is_empty() {
-        return Err(caps_lock_remapped(&remapping));
+    if let Some(reason) = xkb::options_refusal(&effective) {
+        return Err(reason);
+    }
+    if let Some(reason) = xkb::layout_refusal() {
+        return Err(reason.to_owned());
     }
 
     let written = kxkbrc::with_option(&effective, OPTION);
@@ -80,7 +81,7 @@ pub fn hold(shared: &Shared, modifiers: Mods) -> Result<CapsLockUndo, String> {
         prior: prior.clone(),
         written: written.clone(),
     };
-    let undo = serde_json::to_string(&undo).map_err(|error| not_set_up(std::io::Error::other(error)))?;
+    let undo = CapsLockUndo::of(&undo).map_err(|error| not_set_up(std::io::Error::other(error)))?;
 
     let folder = xkb::user_folder().ok_or_else(|| CAPS_LOCK_NOT_SET_UP.to_owned())?;
     xkb::install(&folder, modifiers, CapsLockSymbol::OneOfTheModifiers).map_err(not_set_up)?;
@@ -102,12 +103,11 @@ pub fn hold(shared: &Shared, modifiers: Mods) -> Result<CapsLockUndo, String> {
         prior,
         written,
         locked: false,
-        stepped_aside: false,
         presses: Presses::new(modifiers),
         _watch: watch(shared),
         keyboard: None,
     });
-    Ok(CapsLockUndo(undo))
+    Ok(undo)
 }
 
 fn not_set_up(error: std::io::Error) -> String {
@@ -136,16 +136,28 @@ pub fn restore(shared: &Shared) {
     let Some(hold) = shared.state().caps_lock.take() else {
         return;
     };
-    if !hold.locked && !hold.stepped_aside {
+    if !hold.locked {
         take_option_out(shared, &hold.prior, &hold.written);
     }
     shortcuts::unregister_tap(&shared.bus);
     remove_files();
 }
 
+/// Let go of Caps Lock after its option left `kxkbrc` without Snappy taking it out, so the
+/// keyboard settings there now are someone else's and stay as they are. False when it
+/// wasn't held, as when restoring got there first.
+fn let_go(shared: &Shared) -> bool {
+    let held = shared.state().caps_lock.take().is_some();
+    if held {
+        shortcuts::unregister_tap(&shared.bus);
+        remove_files();
+    }
+    held
+}
+
 /// Undo what a run that ended without restoring left behind.
 pub fn undo(shared: &Shared, undo: &CapsLockUndo) {
-    match serde_json::from_str::<Undo>(&undo.0) {
+    match undo.read::<Undo>() {
         Ok(left) => take_option_out(shared, &left.prior, &left.written),
         Err(error) => journal::warn(format_args!("can't read what undoes Caps Lock: {error}")),
     }
@@ -193,25 +205,22 @@ fn take_option_out(shared: &Shared, prior: &OptionEntries, written: &str) {
     }
 }
 
-/// Puts Snappy's option back into `kxkbrc`, taking the entries there now as the ones to
-/// restore. Returns false, leaving the file alone, when the options there remap Caps Lock.
-fn put_option_back(shared: &Shared, hold: &mut Hold) -> bool {
+/// Puts Snappy's entries back as `hold` wrote them, over the `prior` ones taking the option
+/// out left, so the engine's undo record still holds. Returns false, leaving the file
+/// alone, when the entries there are no longer those: the keyboard settings changed
+/// meanwhile.
+fn put_option_back(shared: &Shared, hold: &Hold) -> bool {
     let Some(path) = kxkbrc::path() else {
         return false;
     };
     let Ok(text) = kxkbrc::load(&path) else {
         return false;
     };
-    let current = kxkbrc::read(&text);
-    let effective = current.effective_options(session_options().as_deref());
-    if !xkb::caps_lock_options(&effective).is_empty() {
+    if kxkbrc::read(&text) != hold.prior {
         return false;
     }
-    let written = kxkbrc::with_option(&effective, OPTION);
-    match kxkbrc::store(&path, &kxkbrc::write(&text, &OptionEntries::using(&written))) {
+    match kxkbrc::store(&path, &kxkbrc::write(&text, &OptionEntries::using(&hold.written))) {
         Ok(()) => {
-            hold.prior = current;
-            hold.written = written;
             notify_kwin(shared);
             true
         }
@@ -234,33 +243,33 @@ fn notify_kwin(shared: &Shared) {
     }
 }
 
-/// The session was locked or unlocked. The lock screen gets Caps Lock as usual.
-pub fn screen_locked(shared: &Shared, locked: bool) {
+/// The session was locked or unlocked. The lock screen gets Caps Lock as usual. True when
+/// the keyboard settings changed while it was locked, so Caps Lock was let go on unlocking
+/// and the engine has to hear it was lost.
+pub fn screen_locked(shared: &Shared, locked: bool) -> bool {
     let mut state = shared.state();
     let Some(hold) = state.caps_lock.as_mut() else {
-        return;
+        return false;
     };
-    if hold.locked == locked || hold.stepped_aside {
-        return;
+    if hold.locked == locked {
+        return false;
     }
     hold.locked = locked;
     if locked {
         take_option_out(shared, &hold.prior, &hold.written);
-    } else if !put_option_back(shared, hold) {
-        step_aside(hold);
+        return false;
     }
+    let back = put_option_back(shared, hold);
+    drop(state);
+    !back && let_go(shared)
 }
 
 /// Someone else changed `kxkbrc`'s layout entries, as System Settings does when the keyboard
-/// settings are applied. Snappy's option goes back in when it was dropped, unless the
-/// options now remap Caps Lock.
-pub fn settings_changed(shared: &Shared) {
-    let mut state = shared.state();
-    let Some(hold) = state.caps_lock.as_mut() else {
-        return;
-    };
-    if hold.locked || hold.stepped_aside {
-        return;
+/// settings are applied. True when they dropped Snappy's option, so Caps Lock was let go and
+/// the engine has to hear it was lost.
+pub fn settings_changed(shared: &Shared) -> bool {
+    if shared.state().caps_lock.as_ref().is_none_or(|hold| hold.locked) {
+        return false;
     }
     let still_there = kxkbrc::path()
         .and_then(|path| kxkbrc::load(&path).ok())
@@ -269,16 +278,7 @@ pub fn settings_changed(shared: &Shared) {
             entries.resets_old_options()
                 && kxkbrc::has_option(entries.options.as_deref().unwrap_or(""), OPTION)
         });
-    if !still_there && !put_option_back(shared, hold) {
-        step_aside(hold);
-    }
-}
-
-fn step_aside(hold: &mut Hold) {
-    hold.stepped_aside = true;
-    journal::warn(
-        "the keyboard options now remap Caps Lock themselves, so Caps Lock is no longer the Snappy key",
-    );
+    !still_there && let_go(shared)
 }
 
 /// The held modifiers, from the keystate watch. True when Caps Lock went down.
@@ -300,28 +300,29 @@ pub fn released_alone(shared: &Shared) -> bool {
 }
 
 /// Turn Caps Lock on or off by pressing the keymap's real Caps Lock.
-pub fn toggle(shared: &Shared) {
+pub fn toggle(shared: &Shared) -> Result<(), String> {
     let mut state = shared.state();
-    let Some(hold) = state.caps_lock.as_mut() else {
-        return;
-    };
+    let hold = state
+        .caps_lock
+        .as_mut()
+        .ok_or_else(|| "Caps Lock isn't the Snappy key".to_owned())?;
     // A connection KWin dropped, as when it started over, is opened again once.
+    let mut failure = String::new();
     for _ in 0..2 {
-        if hold.keyboard.is_none() {
-            match FakeKeyboard::open() {
-                Ok(keyboard) => hold.keyboard = Some(keyboard),
-                Err(error) => {
-                    journal::warn(format_args!(
-                        "can't turn Caps Lock on or off through KWin: {error}"
-                    ));
-                    return;
-                }
+        let keyboard = match hold.keyboard.take() {
+            Some(keyboard) => keyboard,
+            None => {
+                FakeKeyboard::open().map_err(|error| format!("can't reach KWin's fake input: {error}"))?
+            }
+        };
+        let keyboard = hold.keyboard.insert(keyboard);
+        match keyboard.press_caps_lock() {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                hold.keyboard = None;
+                failure = format!("KWin didn't take the Caps Lock press: {error}");
             }
         }
-        match hold.keyboard.as_mut().map(FakeKeyboard::press_caps_lock) {
-            Some(Ok(())) => return,
-            _ => hold.keyboard = None,
-        }
     }
-    journal::warn("KWin didn't take the Caps Lock press");
+    Err(failure)
 }

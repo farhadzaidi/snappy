@@ -22,33 +22,6 @@ pub const SCRIPT_OTHER_VERSION: &str =
 pub const CAPS_LOCK_NOT_SET_UP: &str =
     "Snappy couldn't change KDE's keyboard settings to make Caps Lock the Snappy key.";
 
-/// Caps Lock is remapped by the keyboard options `options` already.
-pub fn caps_lock_remapped(options: &[&str]) -> String {
-    let named = match options {
-        [only] => format!("the keyboard option {only}"),
-        [first @ .., last] => format!("the keyboard options {} and {last}", first.join(", ")),
-        [] => "a keyboard option".to_owned(),
-    };
-    format!("Caps Lock is already remapped by {named}. Remove that to use Caps Lock as the Snappy key.")
-}
-
 pub fn unavailable(message: &str) -> WindowError {
     WindowError::unavailable(message)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_caps_lock_refusal_names_each_option_that_remaps_it() {
-        assert_eq!(
-            caps_lock_remapped(&["caps:escape"]),
-            "Caps Lock is already remapped by the keyboard option caps:escape. Remove that to use Caps Lock as the Snappy key."
-        );
-        assert_eq!(
-            caps_lock_remapped(&["caps:escape", "ctrl:nocaps"]),
-            "Caps Lock is already remapped by the keyboard options caps:escape and ctrl:nocaps. Remove that to use Caps Lock as the Snappy key."
-        );
-    }
 }

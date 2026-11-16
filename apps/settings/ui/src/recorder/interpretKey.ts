@@ -1,26 +1,13 @@
 // What one key press means to a shortcut recorder. A press holding every modifier of the
-// Snappy key records the Snappy key plus whatever else is held.
+// Snappy key records the Snappy key plus whatever else is held. Whether the chord can be a
+// shortcut at all is `snappy-core`'s to say.
 
 import type { KeyChord, Modifier } from "../core/model";
 import { core } from "../core/snappyCore";
-
-export interface KeyPress {
-  /** The physical key, `KeyboardEvent.code`. */
-  code: string;
-  /** The character the key produced, `KeyboardEvent.key`. */
-  key: string;
-  shiftKey: boolean;
-  ctrlKey: boolean;
-  altKey: boolean;
-  metaKey: boolean;
-}
+import type { KeyPress } from "../ui/keyPress";
 
 export type KeyOutcome =
-  | { kind: "cancel" }
-  | { kind: "clear" }
-  | { kind: "ignore" }
-  | { kind: "needsCommandModifier" }
-  | { kind: "candidate"; chord: KeyChord };
+  { kind: "cancel" } | { kind: "clear" } | { kind: "ignore" } | { kind: "candidate"; chord: KeyChord };
 
 const MODIFIER_CODES = new Set([
   "ShiftLeft",
@@ -49,9 +36,6 @@ export function interpretKey(press: KeyPress, snappyKey: Modifier[]): KeyOutcome
   const mods = modifiersOf(press);
   if (CLEARING_CODES.has(press.code) && mods.length === 0) {
     return { kind: "clear" };
-  }
-  if (!press.ctrlKey && !press.altKey && !press.metaKey) {
-    return { kind: "needsCommandModifier" };
   }
   const label = keyLabel(press);
   const recorded: KeyChord =

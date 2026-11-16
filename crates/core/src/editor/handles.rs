@@ -2,10 +2,11 @@ use super::{Axis, Side};
 use crate::geometry::{Point, Rect, Size, distance};
 use crate::layout::{MINIMUM_ZONE_SIZE, UnitRect};
 
-/// How far handles sit inside the zone's corners and edges, at most.
-const HANDLE_INSET: f64 = 7.0;
-/// Presses this close to a handle grab it.
-const HANDLE_HIT_RADIUS: f64 = 14.0;
+/// How far handle centers sit inside the zone's corners and edges, at most, so the handles
+/// stay clear of the zone's border.
+const HANDLE_INSET: f64 = 12.0;
+/// Presses this close to a handle's center grab it, a target far larger than the handle.
+const HANDLE_HIT_RADIUS: f64 = 16.0;
 /// Presses this close to an edge grab that edge.
 const EDGE_BAND: f64 = 9.0;
 /// The center region is reserved for moving, however small the zone is.
@@ -168,6 +169,33 @@ mod tests {
         assert_eq!(
             handle_at(Point::new(60.0, 196.0), size),
             Some(ResizeHandle::South)
+        );
+    }
+
+    #[test]
+    fn handles_sit_inside_the_edges_and_closer_on_small_zones() {
+        let size = Size::new(300.0, 200.0);
+        assert_eq!(
+            handle_center(ResizeHandle::NorthWest, size),
+            Point::new(12.0, 12.0)
+        );
+        assert_eq!(handle_center(ResizeHandle::East, size), Point::new(288.0, 100.0));
+        assert_eq!(
+            handle_center(ResizeHandle::SouthEast, Size::new(40.0, 24.0)),
+            Point::new(30.0, 18.0)
+        );
+    }
+
+    #[test]
+    fn a_press_between_a_corner_handle_and_the_corner_grabs_it() {
+        let size = Size::new(300.0, 200.0);
+        assert_eq!(
+            handle_at(Point::new(1.0, 1.0), size),
+            Some(ResizeHandle::NorthWest)
+        );
+        assert_eq!(
+            handle_at(Point::new(285.0, 185.0), size),
+            Some(ResizeHandle::SouthEast)
         );
     }
 

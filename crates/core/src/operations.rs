@@ -145,36 +145,11 @@ pub async fn snap(
     work_area: Option<Rect>,
     cancel: &CancelToken,
 ) -> Result<Placement, WindowError> {
-    if !frame.is_usable(1.0) {
-        return Err(WindowError::InvalidFrame);
+    let (outcome, undo_to) = place(ops, window, frame, original, work_area, cancel).await;
+    if let Some(undo_to) = undo_to {
+        history.record(vec![undo_to]);
     }
-    let before = ops.read(window)?;
-    let undo_to = Move {
-        window,
-        original: original.unwrap_or(before),
-        work_area: None,
-    };
-
-    match ops.settle(window, frame, work_area, cancel).await {
-        Ok(actual) => {
-            history.record(vec![undo_to]);
-            Ok(Placement {
-                requested: frame,
-                actual,
-            })
-        }
-        Err(WindowError::Cancelled) => {
-            // The new gesture owns the window; keep a way back if it already moved.
-            if ops.read(window).is_ok_and(|now| now != before) {
-                history.record(vec![undo_to]);
-            }
-            Err(WindowError::Cancelled)
-        }
-        Err(error) => {
-            let _ = ops.settle(window, before, None, &CancelToken::default()).await;
-            Err(error)
-        }
-    }
+    outcome
 }
 
 /// One window of a group snap and where it goes.
@@ -198,7 +173,13 @@ pub async fn snap_group(
     let mut undo_to = Vec::new();
     let mut outcomes = Vec::new();
     for planned in moves {
-        let outcome = snap_one(ops, planned, cancel, &mut undo_to).await;
+        if let Err(cancelled) = cancel.check() {
+            outcomes.push(Err(cancelled));
+            continue;
+        }
+        let work_area = Some(planned.work_area);
+        let (outcome, way_back) = place(ops, planned.window, planned.frame, None, work_area, cancel).await;
+        undo_to.extend(way_back);
         outcomes.push(outcome);
     }
     if !undo_to.is_empty() {
@@ -207,43 +188,45 @@ pub async fn snap_group(
     outcomes
 }
 
-async fn snap_one(
+/// Settle `window` at `frame`, putting it back where it was when that fails. Returns the
+/// outcome, and the move that undoes it, to `original` or else where it was, when the
+/// window moved. A cancelled settle may have moved it too: the new gesture owns the window
+/// then, and undo keeps a way back.
+async fn place(
     ops: &mut impl WindowOps,
-    planned: &GroupMove,
+    window: WindowId,
+    frame: Rect,
+    original: Option<Rect>,
+    work_area: Option<Rect>,
     cancel: &CancelToken,
-    undo_to: &mut Vec<Move>,
-) -> Result<Placement, WindowError> {
-    cancel.check()?;
-    if !planned.frame.is_usable(1.0) {
-        return Err(WindowError::InvalidFrame);
+) -> (Result<Placement, WindowError>, Option<Move>) {
+    if !frame.is_usable(1.0) {
+        return (Err(WindowError::InvalidFrame), None);
     }
-    let window = planned.window;
-    let before = ops.read(window)?;
-    let way_back = Move {
+    let before = match ops.read(window) {
+        Ok(before) => before,
+        Err(error) => return (Err(error), None),
+    };
+    let undo_to = Move {
         window,
-        original: before,
+        original: original.unwrap_or(before),
         work_area: None,
     };
-    match ops
-        .settle(window, planned.frame, Some(planned.work_area), cancel)
-        .await
-    {
-        Ok(actual) => {
-            undo_to.push(way_back);
+    match ops.settle(window, frame, work_area, cancel).await {
+        Ok(actual) => (
             Ok(Placement {
-                requested: planned.frame,
+                requested: frame,
                 actual,
-            })
-        }
+            }),
+            Some(undo_to),
+        ),
         Err(WindowError::Cancelled) => {
-            if ops.read(window).is_ok_and(|now| now != before) {
-                undo_to.push(way_back);
-            }
-            Err(WindowError::Cancelled)
+            let moved = ops.read(window).is_ok_and(|now| now != before);
+            (Err(WindowError::Cancelled), moved.then_some(undo_to))
         }
         Err(error) => {
             let _ = ops.settle(window, before, None, &CancelToken::default()).await;
-            Err(error)
+            (Err(error), None)
         }
     }
 }
@@ -300,7 +283,7 @@ pub async fn swap(
                 history.record(undo_to);
                 if error != WindowError::Cancelled {
                     return Err(WindowError::refused(
-                        "The swap could not finish. Use Undo to restore any window that could not be returned.",
+                        "The swap couldn't finish. Use Undo to restore any window that couldn't be returned.",
                     ));
                 }
             }
@@ -323,7 +306,7 @@ async fn exchange(
         .await?;
     if !source.is_filled_by(moved_occupant) {
         return Err(WindowError::refused(
-            "The other window cannot fit where this window was.",
+            "The other window can't fit where this window was.",
         ));
     }
     let moved_dragged = ops
@@ -331,7 +314,7 @@ async fn exchange(
         .await?;
     if !destination.is_occupied_by(moved_dragged) {
         return Err(WindowError::refused(
-            "The dragged window cannot fit the destination zone.",
+            "The dragged window can't fit the destination zone.",
         ));
     }
 
@@ -406,8 +389,8 @@ async fn replay(
         let restored = match ops.settle(m.window, m.original, m.work_area, cancel).await {
             Ok(frame) if near(frame, m.original) => Ok(()),
             Ok(_) => Err(WindowError::refused(match which {
-                Replay::Undo => "An app could not restore its window. Undo is available to retry.",
-                Replay::Redo => "An app could not move its window again. Redo is available to retry.",
+                Replay::Undo => "An app couldn't restore its window. Undo is available to retry.",
+                Replay::Redo => "An app couldn't move its window again. Redo is available to retry.",
             })),
             Err(error) => Err(error),
         };
@@ -812,7 +795,7 @@ mod tests {
         ));
         assert_eq!(
             result.unwrap_err().to_string(),
-            "The swap could not finish. Use Undo to restore any window that could not be returned."
+            "The swap couldn't finish. Use Undo to restore any window that couldn't be returned."
         );
         assert_eq!(
             ops.frame(2),

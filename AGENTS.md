@@ -20,7 +20,7 @@ Read [README.md](README.md), then the doc for what you're changing: [docs/archit
 - The engine owns all runtime state and is the only writer of settings, state, and log files.
 - Adapters translate between the engine and the OS. They make no policy decisions.
 - Every window move goes through the engine's window-operation queue.
-- No blocking OS call on a UI thread. Nothing polls or wakes up while Snappy is idle. Keyboard events are observed only during a drag or a window operation.
+- No blocking OS call on a UI thread. Nothing polls or wakes up while Snappy is idle. Keyboard events are observed only during a drag or a window operation. With Caps Lock as the Snappy key, Snappy also watches Caps Lock, and other keys only while it is held, to know another key was used or to run a Snappy shortcut, never recording or logging which key. The two exceptions are where the OS offers nothing narrower: Windows' keyboard hook gets every key and ignores all but Caps Lock until it is held, and KDE reports each change of the modifier keys, never other keys.
 - Shipped code has no test-only branches. Tests use `crates/fake`.
 
 ## Code

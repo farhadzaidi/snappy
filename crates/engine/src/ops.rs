@@ -43,12 +43,15 @@ impl<P: Platform + 'static> Shared<P> {
         })
     }
 
-    /// Cancel the operation in flight, if any.
+    /// Cancel the operation in flight, if any, and forget where it was headed. A cancelled
+    /// operation that hadn't started is skipped, so nothing else would clear that.
     pub fn cancel_current(&self) {
         if let Some(cancel) = &self.queue.borrow().cancel {
             cancel.cancel();
         }
-        self.core.borrow_mut().pending_navigation = None;
+        let mut core = self.core.borrow_mut();
+        core.pending_navigation = None;
+        core.workspaces.requested = None;
     }
 
     /// Run `operation` after the one in flight has stopped. The newest operation wins:

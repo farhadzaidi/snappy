@@ -200,8 +200,8 @@ impl CapsLock for X11Platform {
         caps_lock::undo(&self.shared, undo);
     }
 
-    fn toggle_caps_lock(&mut self) {
-        caps_lock::toggle(&self.shared);
+    fn toggle_caps_lock(&mut self) -> Result<(), String> {
+        caps_lock::toggle(&self.shared)
     }
 }
 

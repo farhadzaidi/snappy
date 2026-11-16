@@ -3,13 +3,24 @@
 
 import { findLayout, isPreset, optionsFor } from "../../core/layouts";
 import { modifierLabel, snappyKeyLabel } from "../../core/labels";
-import type { AppState, Command, KeyChord, Layout, Modifier, Settings, Workspace } from "../../core/model";
-import { MAX_WORKSPACES } from "../../core/model";
+import type {
+  AppState,
+  Command,
+  KeyChord,
+  Layout,
+  Modifier,
+  Reset,
+  Settings,
+  Workspace,
+} from "../../core/model";
+import { coreLimits } from "../../core/limits";
 import { core } from "../../core/snappyCore";
 
 export interface Outcome {
   state: AppState;
   error: string | null;
+  /** The title of the setting `error` names, for the app to point to. */
+  setting?: string | null;
   /** The availability answer to a `probeShortcut`. */
   probe?: boolean;
 }
@@ -21,9 +32,16 @@ export interface FakeSystem {
   capsLockRefusal?: string | undefined;
 }
 
+/** A refusal is the reply's error and, as the daemon posts it, the status too. */
 export function applyCommand(state: AppState, command: Command, system: FakeSystem): Outcome {
   const outcome = handle({ ...state, addedWorkspace: null }, command, system);
-  return { ...outcome, state: withDerivedState(outcome.state) };
+  const posted = outcome.error === null ? outcome.state : withError(outcome.state, outcome.error);
+  return { ...outcome, state: withDerivedState(posted) };
+}
+
+function withError(state: AppState, message: string): AppState {
+  const id = (state.status?.id ?? 0) + 1;
+  return { ...state, status: { id, message, isError: true, notify: true } };
 }
 
 function handle(state: AppState, command: Command, system: FakeSystem): Outcome {
@@ -91,6 +109,8 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
       return done({ ...state, loginItemEnabled: command.enabled });
     case "setDebugLog":
       return save(state, { ...settings, debugLog: command.enabled });
+    case "reset":
+      return reset(state, command.reset);
     case "importSettings":
       return withStatus(
         save(state, { ...settings, workspaces: { ...settings.workspaces, enabled: false } }),
@@ -106,6 +126,12 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
     case "applyRemedy":
       return done(state);
   }
+}
+
+/** Resetting everything turns workspaces off, as the daemon does after bringing windows back. */
+function reset(state: AppState, what: Reset): Outcome {
+  const outcome = core.resetSettings(state.settings, what, state.platform);
+  return withStatus(save(state, outcome.settings), outcome.message);
 }
 
 function done(state: AppState): Outcome {
@@ -126,21 +152,21 @@ function save(state: AppState, settings: Settings): Outcome {
  * ask about each chord the change moves, refusing with the reason when anything clashes.
  */
 function setSnappyKey(state: AppState, modifiers: Modifier[], system: FakeSystem): Outcome {
-  if (sameModifiers(modifiers, state.settings.snappyKey)) {
+  const change = core.changeSnappyKey(state.settings, modifiers, state.platform);
+  if (change === "unchanged") {
     return done(state);
   }
-  const changed = core.changeSnappyKey(state.settings, modifiers, state.platform);
-  if ("invalid" in changed) {
-    return { state, error: changed.invalid };
+  if ("refused" in change) {
+    return { state, error: change.refused };
   }
   const taken = core
-    .snappyKeyProbes(changed.valid, state.platform)
+    .snappyKeyProbes(change.changed, state.platform)
     .find((probe) => !system.isAvailable(probe.chord));
   if (taken) {
-    return { state, error: taken.refusal };
+    return { state, error: taken.refusal.message, setting: taken.refusal.setting };
   }
-  const label = snappyKeyLabel(changed.valid.snappyKey, state.platform);
-  return withStatus(done({ ...state, settings: changed.valid }), `The Snappy key is now ${label}.`);
+  const label = snappyKeyLabel(change.changed.snappyKey, state.platform);
+  return withStatus(done({ ...state, settings: change.changed }), `The Snappy key is now ${label}.`);
 }
 
 /** Hold Caps Lock as the Snappy key, refused with the reason when the system remaps it already. */
@@ -155,10 +181,6 @@ function setCapsLockAsSnappyKey(state: AppState, enabled: boolean, system: FakeS
     ? "Hold Caps Lock for the Snappy key. Tap it to turn Caps Lock on or off."
     : "Caps Lock works as usual again.";
   return withStatus(save(state, { ...state.settings, capsLockAsSnappyKey: enabled }), message);
-}
-
-function sameModifiers(a: Modifier[], b: Modifier[]): boolean {
-  return a.length === b.length && a.every((modifier) => b.includes(modifier));
 }
 
 function withStatus(outcome: Outcome, message: string, notify = true): Outcome {
@@ -317,7 +339,7 @@ function setWorkspacesEnabled(state: AppState, enabled: boolean): Outcome {
 /** A new workspace: the lowest unused number, switched to with its digit, the active layouts. */
 function addWorkspace(state: AppState): Outcome {
   const workspaces = state.settings.workspaces;
-  if (workspaces.items.length >= MAX_WORKSPACES) {
+  if (workspaces.items.length >= coreLimits().workspaces) {
     return done(state);
   }
   const number = lowestUnused((n) => workspaces.items.some((item) => item.name === `Workspace ${n}`));

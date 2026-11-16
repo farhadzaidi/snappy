@@ -3,7 +3,6 @@ import { useState } from "react";
 import { allLayouts, isEnabled } from "../core/layouts";
 import type { KeyChord, Workspace, WorkspaceShortcut } from "../core/model";
 import { core } from "../core/snappyCore";
-import { workspaceConflict } from "../recorder/conflicts";
 import { ShortcutRecorder } from "../recorder/ShortcutRecorder";
 import { useAppState, useSend } from "../state/services";
 import { Button } from "../ui/Button";
@@ -11,6 +10,7 @@ import { ChoiceMenu } from "../ui/ChoiceMenu";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { Group, Row } from "../ui/Group";
 import { TrashIcon } from "../ui/icons";
+import { ResetShortcutsButton } from "../ui/ResetShortcutsButton";
 import { WorkspaceName } from "./WorkspaceName";
 
 const SHORTCUTS: readonly WorkspaceShortcut[] = ["switchShortcut", "sendShortcut", "sendAndSwitchShortcut"];
@@ -66,14 +66,27 @@ export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace
         ))}
       </Group>
 
-      <Group title="Shortcuts">
+      <Group
+        title="Shortcuts"
+        action={
+          <ResetShortcutsButton
+            title={workspace.name}
+            reset={{ scope: "workspaceShortcuts", workspace: workspace.id }}
+          />
+        }
+      >
         {SHORTCUTS.map((shortcut) => (
           <Row key={shortcut} label={<span className="muted">{titles[shortcut]}</span>}>
             <ShortcutRecorder
               title={titles[shortcut]}
               chord={workspace[shortcut]}
               conflictOf={(chord: KeyChord) =>
-                workspaceConflict(app.settings, workspace, shortcut, chord, app.platform)
+                core.recordingConflict(
+                  app.settings,
+                  { kind: "workspace", workspace: workspace.id, shortcut },
+                  chord,
+                  app.platform,
+                )
               }
               onChange={(chord) => update({ ...workspace, [shortcut]: chord })}
             />

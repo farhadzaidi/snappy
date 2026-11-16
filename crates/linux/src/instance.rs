@@ -1,8 +1,9 @@
 //! One daemon per session: a lock file holding the daemon's process ID. A
 //! second launch sends that process `SIGUSR1`, which opens the settings window.
 //! `SIGTERM`, from `kill` or the session ending, quits the way the tray's Quit does, so
-//! parked windows come back first. `SIGUSR2` stops for a restart, as when installing a new
-//! build: windows stay where they are, and the next launch puts them back in their
+//! parked windows come back first, and so do `SIGINT` and `SIGHUP`, from Ctrl+C or closing
+//! the terminal Snappy was started from. `SIGUSR2` stops for a restart, as when installing a
+//! new build: windows stay where they are, and the next launch puts them back in their
 //! workspaces.
 
 use std::ffi::{c_int, c_void};
@@ -17,11 +18,18 @@ use std::sync::mpsc::Sender;
 use snappy_platform::PlatformEvent;
 
 const LOCK_NAME: &str = "snappy.lock";
+const SIGHUP: c_int = 1;
+const SIGINT: c_int = 2;
 const SIGUSR1: c_int = 10;
 const SIGUSR2: c_int = 12;
 const SIGTERM: c_int = 15;
 /// `SIG_ERR` as `signal` returns it.
 const SIGNAL_ERROR: usize = usize::MAX;
+/// `SIG_IGN` as `signal` takes and returns it.
+const SIGNAL_IGNORED: usize = 1;
+/// Signals a terminal sends. A launcher that ignores them, as `nohup` does `SIGHUP`, means
+/// Snappy to outlive the terminal, so an ignored one stays ignored.
+const FROM_A_TERMINAL: [c_int; 2] = [SIGINT, SIGHUP];
 
 unsafe extern "C" {
     fn signal(signum: c_int, handler: usize) -> usize;
@@ -108,7 +116,7 @@ extern "C" fn on_signal(signum: c_int) {
 fn signal_event(signum: c_int) -> Option<PlatformEvent> {
     match signum {
         SIGUSR1 => Some(PlatformEvent::OpenSettingsRequested),
-        SIGTERM => Some(PlatformEvent::QuitRequested),
+        SIGTERM | SIGINT | SIGHUP => Some(PlatformEvent::QuitRequested),
         SIGUSR2 => Some(PlatformEvent::RestartRequested),
         _ => None,
     }
@@ -131,14 +139,30 @@ fn listen(events: Sender<PlatformEvent>) -> std::io::Result<()> {
                 }
             }
         })?;
-    for signum in [SIGUSR1, SIGUSR2, SIGTERM] {
-        // SAFETY: the handler only performs an atomic load and `write`.
-        let previous = unsafe { signal(signum, on_signal as extern "C" fn(c_int) as usize) };
-        if previous == SIGNAL_ERROR {
-            return Err(std::io::Error::last_os_error());
+    handle_signals()
+}
+
+/// Send every signal Snappy answers to `on_signal`, but those from a terminal that the
+/// launcher ignores.
+fn handle_signals() -> std::io::Result<()> {
+    for signum in [SIGUSR1, SIGUSR2, SIGTERM].into_iter().chain(FROM_A_TERMINAL) {
+        let previous = set_handler(signum, on_signal as extern "C" fn(c_int) as usize)?;
+        if previous == SIGNAL_IGNORED && FROM_A_TERMINAL.contains(&signum) {
+            set_handler(signum, SIGNAL_IGNORED)?;
         }
     }
     Ok(())
+}
+
+/// Install `handler` for `signum`, returning the one it replaced.
+fn set_handler(signum: c_int, handler: usize) -> std::io::Result<usize> {
+    // SAFETY: the handlers given are `SIG_IGN` and `on_signal`, which only performs an atomic
+    // load and `write`.
+    let previous = unsafe { signal(signum, handler) };
+    if previous == SIGNAL_ERROR {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(previous)
 }
 
 #[cfg(test)]
@@ -169,8 +193,17 @@ mod tests {
     }
 
     #[test]
-    fn sigterm_quits_like_the_tray_quit_and_sigusr2_stops_for_a_restart() {
+    fn a_hangup_ignored_by_the_launcher_stays_ignored() {
+        set_handler(SIGHUP, SIGNAL_IGNORED).unwrap();
+        handle_signals().unwrap();
+        assert_eq!(set_handler(SIGHUP, SIGNAL_IGNORED).unwrap(), SIGNAL_IGNORED);
+    }
+
+    #[test]
+    fn sigterm_ctrl_c_and_a_closed_terminal_quit_like_the_tray_quit_and_sigusr2_restarts() {
         assert_eq!(signal_event(SIGTERM), Some(PlatformEvent::QuitRequested));
+        assert_eq!(signal_event(SIGINT), Some(PlatformEvent::QuitRequested));
+        assert_eq!(signal_event(SIGHUP), Some(PlatformEvent::QuitRequested));
         assert_eq!(signal_event(SIGUSR2), Some(PlatformEvent::RestartRequested));
         assert_eq!(signal_event(SIGUSR1), Some(PlatformEvent::OpenSettingsRequested));
         assert_eq!(signal_event(0), None);

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { lastCommandOf, openApp } from "./support";
+import { lastCommandOf, openApp, widthsOf } from "./support";
 
 const reason = "Log out and back in to finish setting up Snappy's GNOME Shell extension.";
 
@@ -13,6 +13,12 @@ const setUnavailableReason = (page: Page, unavailableReason: string | null) =>
       })),
     unavailableReason,
   );
+
+test("the page tabs put the editor beside the layouts", async ({ page }) => {
+  await openApp(page);
+  const tabs = page.getByRole("navigation", { name: "Pages" }).getByRole("button");
+  await expect(tabs).toHaveText(["Layouts", "Editor", "Workspaces", "Settings"]);
+});
 
 test("why snapping can't run shows under the header until it can", async ({ page }) => {
   await openApp(page, "linux");
@@ -53,4 +59,11 @@ test("notes about the desktop show under the header", async ({ page }) => {
   );
   await expect(page.getByRole("note").filter({ hasText: note })).toBeVisible();
   await expect(page.getByRole("button", { name: "Log out now" })).toHaveCount(0);
+});
+
+test("the page tabs are all one width", async ({ page }) => {
+  await openApp(page);
+  const widths = await widthsOf(page.getByRole("navigation", { name: "Pages" }).getByRole("button"));
+  expect(widths).toHaveLength(4);
+  expect(new Set(widths).size).toBe(1);
 });

@@ -50,6 +50,20 @@ fn snappy_and_its_settings_app_have_no_dock_icon() {
 }
 
 #[test]
+fn snappy_and_its_settings_app_show_the_icon_their_bundles_carry() {
+    for plist in ["Snappy.plist", "SnappySettings.plist"] {
+        assert!(
+            bundle_file(plist).contains("<key>CFBundleIconFile</key>\n\t<string>Snappy</string>"),
+            "{plist}"
+        );
+    }
+    let script = bundle_file("bundle.sh");
+    assert!(script.contains(r#"cp assets/icon/snappy.icns "$app/Contents/Resources/Snappy.icns""#));
+    assert!(script.contains(r#"cp assets/icon/snappy.icns "$helper/Contents/Resources/Snappy.icns""#));
+    assert!(workspace_root().join("assets/icon/snappy.icns").is_file());
+}
+
+#[test]
 fn launches_at_login_stay_in_the_background() {
     let agent = bundle_file("local.snappy.agent.plist");
     let arguments = plist_value(&agent, "ProgramArguments");

@@ -10,6 +10,8 @@
 	<string>Snappy Settings</string>
 	<key>CFBundleExecutable</key>
 	<string>snappy-settings</string>
+	<key>CFBundleIconFile</key>
+	<string>Snappy</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSUIElement</key>

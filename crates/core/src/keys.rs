@@ -9,8 +9,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// Labels never exceed this many characters.
 pub const MAX_LABEL_LENGTH: usize = 24;
 
-/// The operating system, for display names, defaults, and reserved shortcuts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The operating system, for display names, defaults, and reserved shortcuts. Written
+/// `"macos"`, `"windows"`, or `"linux"`, as the daemon tells the settings app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Platform {
     MacOs,
     Windows,
@@ -65,27 +67,22 @@ impl Modifier {
         }
     }
 
-    pub fn short_name(self, platform: Platform) -> &'static str {
+    /// The modifier's symbol on macOS ("⌘"), its name elsewhere.
+    pub fn symbol(self, platform: Platform) -> &'static str {
         match (self, platform) {
-            (Modifier::Ctrl, Platform::MacOs) => "Ctrl",
-            (Modifier::Alt, Platform::MacOs) => "Opt",
-            (Modifier::Meta, Platform::MacOs) => "Cmd",
+            (Modifier::Shift, Platform::MacOs) => "⇧",
+            (Modifier::Ctrl, Platform::MacOs) => "⌃",
+            (Modifier::Alt, Platform::MacOs) => "⌥",
+            (Modifier::Meta, Platform::MacOs) => "⌘",
             _ => self.name(platform),
         }
     }
 
-    /// The name with its symbol, as messages show it: "Shift ⇧".
+    /// The name with its symbol, as every label shows it: "Shift ⇧" on macOS, where the
+    /// symbols are what keyboards print, and the name alone elsewhere.
     pub fn label(self, platform: Platform) -> String {
         match platform {
-            Platform::MacOs => {
-                let symbol = match self {
-                    Modifier::Shift => "⇧",
-                    Modifier::Ctrl => "⌃",
-                    Modifier::Alt => "⌥",
-                    Modifier::Meta => "⌘",
-                };
-                format!("{} {symbol}", self.name(platform))
-            }
+            Platform::MacOs => format!("{} {}", self.name(platform), self.symbol(platform)),
             _ => self.name(platform).to_owned(),
         }
     }
@@ -206,11 +203,11 @@ impl SnappyKey {
         self.0
     }
 
-    /// What the Snappy key is on `platform`, for example "Control + Option + Command".
+    /// What the Snappy key is on `platform`, for example "Control ⌃ + Option ⌥ + Command ⌘".
     pub fn label(self, platform: Platform) -> String {
         self.0
             .in_display_order()
-            .map(|modifier| modifier.name(platform))
+            .map(|modifier| modifier.label(platform))
             .collect::<Vec<_>>()
             .join(" + ")
     }
@@ -331,12 +328,11 @@ impl ChordMods {
             .chain(self.others.iter().map(StoredModifier::from))
     }
 
-    /// Modifier names in display order, the Snappy key first.
-    fn names(self, name: impl Fn(Modifier) -> &'static str) -> impl Iterator<Item = &'static str> {
-        self.snappy
-            .then_some(SNAPPY_KEY_NAME)
-            .into_iter()
-            .chain(self.others.in_display_order().map(name))
+    /// The modifiers besides the Snappy key, labelled, in display order.
+    fn other_labels(self, platform: Platform) -> impl Iterator<Item = String> {
+        self.others
+            .in_display_order()
+            .map(move |modifier| modifier.label(platform))
     }
 }
 
@@ -543,6 +539,35 @@ pub struct KeyChord {
     pub label: Option<String>,
 }
 
+/// Why a chord can't be a shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidChord {
+    /// A key Snappy has no name for.
+    UnknownKey,
+    /// Neither the Snappy key nor Control, Option/Alt, or Command/Win/Super, so it would take
+    /// a key press from every app.
+    NoCommandModifier,
+    /// A label that is empty or longer than `MAX_LABEL_LENGTH`.
+    BadLabel,
+}
+
+impl InvalidChord {
+    /// What to tell someone who pressed it while recording a shortcut.
+    pub fn hint(self, platform: Platform) -> String {
+        match self {
+            InvalidChord::NoCommandModifier => format!(
+                "Include {}, {}, or {}.",
+                Modifier::Ctrl.name(platform),
+                Modifier::Alt.name(platform),
+                Modifier::Meta.name(platform)
+            ),
+            InvalidChord::UnknownKey | InvalidChord::BadLabel => {
+                "Snappy can't use that key in a shortcut.".to_owned()
+            }
+        }
+    }
+}
+
 /// What identifies a shortcut for conflicts and registration: the key and the concrete
 /// modifiers to hold, never the label. This is the form adapters register and probe, so
 /// they never see the Snappy key itself.
@@ -617,15 +642,24 @@ impl KeyChord {
         }
     }
 
-    /// Every Snappy key holds a command modifier: it has at least two modifiers, and only
-    /// one of them can be Shift.
+    /// Whether the chord can be a shortcut, and why not. Every Snappy key holds a command
+    /// modifier: it has at least two modifiers, and only one of them can be Shift.
+    pub fn check(&self) -> Result<(), InvalidChord> {
+        if !self.code.is_known() {
+            return Err(InvalidChord::UnknownKey);
+        }
+        if !self.mods.has_snappy_key() && !self.mods.others().has_command_modifier() {
+            return Err(InvalidChord::NoCommandModifier);
+        }
+        let label_fits = |label: &String| !label.is_empty() && label.chars().count() <= MAX_LABEL_LENGTH;
+        if !self.label.as_ref().is_none_or(label_fits) {
+            return Err(InvalidChord::BadLabel);
+        }
+        Ok(())
+    }
+
     pub fn is_valid(&self) -> bool {
-        self.code.is_known()
-            && (self.mods.has_snappy_key() || self.mods.others().has_command_modifier())
-            && self
-                .label
-                .as_ref()
-                .is_none_or(|label| !label.is_empty() && label.chars().count() <= MAX_LABEL_LENGTH)
+        self.check().is_ok()
     }
 
     /// The key's own label, without modifiers.
@@ -633,22 +667,39 @@ impl KeyChord {
         self.label.clone().unwrap_or_else(|| self.code.default_label())
     }
 
-    fn label_with(&self, name: impl Fn(Modifier) -> &'static str) -> String {
-        let mut parts: Vec<String> = self.mods.names(name).map(str::to_owned).collect();
-        parts.push(self.key_label());
-        parts.join(" + ")
-    }
-
-    /// "Snappy + Shift + 1" or "Control + Option + L", as messages show it. The Snappy key
-    /// is always named as itself, never as the modifiers it stands for.
+    /// "Snappy + Shift ⇧ + 1" or "Control ⌃ + Option ⌥ + L" on macOS, "Ctrl + Alt + L"
+    /// elsewhere: how messages, recorders, and cards all name a chord. The Snappy key is
+    /// always named as itself, never as the modifiers it stands for.
     pub fn long_label(&self, platform: Platform) -> String {
-        self.label_with(|modifier| modifier.name(platform))
+        let parts = self.label_parts(platform);
+        if parts.snappy_key {
+            format!("{SNAPPY_KEY_NAME} + {}", parts.keys)
+        } else {
+            parts.keys
+        }
     }
 
-    /// "Snappy + Shift + 1" or "Ctrl + Opt + L", used on recorders and cards.
-    pub fn compact_label(&self, platform: Platform) -> String {
-        self.label_with(|modifier| modifier.short_name(platform))
+    /// The long label split where the Snappy key ends, so a UI can draw the key its own way.
+    pub fn label_parts(&self, platform: Platform) -> LabelParts {
+        let mut keys: Vec<String> = self.mods.other_labels(platform).collect();
+        keys.push(self.key_label());
+        LabelParts {
+            snappy_key: self.mods.has_snappy_key(),
+            keys: keys.join(" + "),
+        }
     }
+}
+
+/// A chord's long label in two parts. The Snappy key has no character of its own, so a UI
+/// names it first, with its glyph, as macOS names ⌘ Command, and joins it to `keys` with a
+/// plus: "Snappy + Shift ⇧ + 1".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelParts {
+    pub snappy_key: bool,
+    /// What follows the Snappy key, or the whole label without it: "Shift ⇧ + 1" on macOS
+    /// and "Shift + 1" elsewhere.
+    pub keys: String,
 }
 
 impl fmt::Display for KeyChord {
@@ -691,7 +742,7 @@ pub fn chords_the_system_keeps(platform: Platform) -> Vec<KeptChord> {
     match platform {
         Platform::MacOs => vec![KeptChord {
             combo: Combo::new("Backspace", [Modifier::Ctrl, Modifier::Alt, Modifier::Meta]),
-            message: "macOS reserves Control + Option + Command + Delete; it never reaches apps.",
+            message: "macOS reserves Control ⌃ + Option ⌥ + Command ⌘ + Delete; it never reaches apps.",
         }],
         Platform::Windows | Platform::Linux => Vec::new(),
     }
@@ -701,7 +752,7 @@ pub fn chords_the_system_keeps(platform: Platform) -> Vec<KeptChord> {
 mod tests {
     use super::*;
 
-    const HYPER: [Modifier; 3] = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta];
+    const DEFAULT_MODIFIERS: [Modifier; 3] = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta];
 
     const DEFAULT: SnappyKey = SnappyKey::DEFAULT;
 
@@ -713,28 +764,50 @@ mod tests {
     fn labels_name_the_snappy_key_then_modifiers_in_display_order() {
         let chord = KeyChord::snappy("Digit1", []);
         assert_eq!(chord.long_label(Platform::MacOs), "Snappy + 1");
-        assert_eq!(chord.compact_label(Platform::Windows), "Snappy + 1");
         let shifted = KeyChord::snappy("BracketLeft", [Modifier::Shift]);
         assert_eq!(shifted.long_label(Platform::Linux), "Snappy + Shift + [");
         let arrow = KeyChord::new("ArrowLeft", [Modifier::Meta, Modifier::Ctrl, Modifier::Shift]);
-        assert_eq!(arrow.long_label(Platform::MacOs), "Control + Shift + Command + ←");
-        assert_eq!(arrow.compact_label(Platform::MacOs), "Ctrl + Shift + Cmd + ←");
-        assert_eq!(arrow.compact_label(Platform::Windows), "Ctrl + Shift + Win + ←");
         assert_eq!(
-            KeyChord::new("KeyQ", [Modifier::Meta])
-                .with_label("A")
-                .compact_label(Platform::MacOs),
-            "Cmd + A"
+            arrow.long_label(Platform::MacOs),
+            "Control ⌃ + Shift ⇧ + Command ⌘ + ←"
         );
-        assert_eq!(DEFAULT.label(Platform::MacOs), "Control + Option + Command");
+        assert_eq!(DEFAULT.label(Platform::MacOs), "Control ⌃ + Option ⌥ + Command ⌘");
         assert_eq!(DEFAULT.label(Platform::Windows), "Ctrl + Alt + Win");
         assert_eq!(DEFAULT.label(Platform::Linux), "Ctrl + Alt + Super");
     }
 
     #[test]
+    fn label_parts_name_modifiers_with_their_symbols_on_macos_and_by_name_elsewhere() {
+        let parts = |chord: &KeyChord, platform| {
+            let label = chord.label_parts(platform);
+            (label.snappy_key, label.keys)
+        };
+        let shifted = KeyChord::snappy("KeyJ", [Modifier::Shift]);
+        assert_eq!(parts(&shifted, Platform::MacOs), (true, "Shift ⇧ + J".to_owned()));
+        assert_eq!(parts(&shifted, Platform::Windows), (true, "Shift + J".to_owned()));
+        let digit = KeyChord::snappy("Digit1", []);
+        assert_eq!(parts(&digit, Platform::Linux), (true, "1".to_owned()));
+
+        let arrow = KeyChord::new("ArrowLeft", [Modifier::Meta, Modifier::Ctrl, Modifier::Shift]);
+        assert_eq!(
+            parts(&arrow, Platform::MacOs),
+            (false, "Control ⌃ + Shift ⇧ + Command ⌘ + ←".to_owned())
+        );
+        assert_eq!(
+            parts(&arrow, Platform::Windows),
+            (false, "Ctrl + Shift + Win + ←".to_owned())
+        );
+        let relabelled = KeyChord::new("KeyQ", [Modifier::Meta]).with_label("A");
+        assert_eq!(
+            parts(&relabelled, Platform::MacOs),
+            (false, "Command ⌘ + A".to_owned())
+        );
+    }
+
+    #[test]
     fn a_chosen_snappy_key_is_labelled_by_its_own_modifiers_and_chords_still_say_snappy() {
         let chosen = key(&[Modifier::Shift, Modifier::Alt]);
-        assert_eq!(chosen.label(Platform::MacOs), "Option + Shift");
+        assert_eq!(chosen.label(Platform::MacOs), "Option ⌥ + Shift ⇧");
         assert_eq!(chosen.label(Platform::Windows), "Alt + Shift");
         let chord = KeyChord::new("KeyJ", [Modifier::Alt, Modifier::Shift]).recorded(chosen);
         assert_eq!(chord.long_label(Platform::MacOs), "Snappy + J");
@@ -802,7 +875,7 @@ mod tests {
             Combo::new("KeyJ", [Modifier::Ctrl, Modifier::Shift]),
             "a modifier the key holds adds nothing to the keys pressed"
         );
-        assert_eq!(snappy_shift.long_label(Platform::MacOs), "Snappy + Shift + J");
+        assert_eq!(snappy_shift.long_label(Platform::MacOs), "Snappy + Shift ⇧ + J");
         assert_eq!(
             snappy_shift.combo(DEFAULT),
             Combo::new(
@@ -816,10 +889,10 @@ mod tests {
     #[test]
     fn the_snappy_key_expands_to_the_chosen_modifiers_wherever_chords_are_compared() {
         let symbolic = KeyChord::snappy("Digit1", []);
-        assert_eq!(symbolic.combo(DEFAULT), Combo::new("Digit1", HYPER));
+        assert_eq!(symbolic.combo(DEFAULT), Combo::new("Digit1", DEFAULT_MODIFIERS));
         assert_eq!(
             KeyChord::snappy("Digit1", [Modifier::Ctrl]).combo(DEFAULT),
-            Combo::new("Digit1", HYPER),
+            Combo::new("Digit1", DEFAULT_MODIFIERS),
             "a modifier the Snappy key already holds adds nothing"
         );
         let chosen = key(&[Modifier::Alt, Modifier::Meta]);
@@ -876,16 +949,50 @@ mod tests {
     }
 
     #[test]
+    fn platforms_are_written_by_the_names_the_settings_app_uses() {
+        for (platform, name) in [
+            (Platform::MacOs, "\"macos\""),
+            (Platform::Windows, "\"windows\""),
+            (Platform::Linux, "\"linux\""),
+        ] {
+            assert_eq!(serde_json::to_string(&platform).unwrap(), name);
+            assert_eq!(serde_json::from_str::<Platform>(name).unwrap(), platform);
+        }
+    }
+
+    #[test]
     fn chords_need_a_command_modifier_and_a_known_key() {
         assert!(KeyChord::snappy("KeyZ", []).is_valid());
-        assert!(!KeyChord::new("KeyZ", [Modifier::Shift]).is_valid());
-        assert!(!KeyChord::new("NotAKey", HYPER).is_valid());
+        assert_eq!(
+            KeyChord::new("KeyZ", [Modifier::Shift]).check(),
+            Err(InvalidChord::NoCommandModifier)
+        );
+        assert_eq!(
+            KeyChord::new("NotAKey", DEFAULT_MODIFIERS).check(),
+            Err(InvalidChord::UnknownKey)
+        );
+        assert_eq!(
+            KeyChord::new("KeyZ", DEFAULT_MODIFIERS).with_label("").check(),
+            Err(InvalidChord::BadLabel)
+        );
+    }
+
+    #[test]
+    fn the_hint_for_a_chord_without_a_command_modifier_names_the_platforms_modifiers() {
+        assert_eq!(
+            InvalidChord::NoCommandModifier.hint(Platform::MacOs),
+            "Include Control, Option, or Command."
+        );
+        assert_eq!(
+            InvalidChord::NoCommandModifier.hint(Platform::Windows),
+            "Include Ctrl, Alt, or Win."
+        );
     }
 
     #[test]
     fn labels_never_affect_identity() {
-        let a = KeyChord::new("Digit1", HYPER).with_label("&");
-        let b = KeyChord::new("Digit1", HYPER);
+        let a = KeyChord::new("Digit1", DEFAULT_MODIFIERS).with_label("&");
+        let b = KeyChord::new("Digit1", DEFAULT_MODIFIERS);
         assert_eq!(a.combo(DEFAULT), b.combo(DEFAULT));
     }
 
@@ -911,7 +1018,7 @@ mod tests {
             .into_iter()
             .map(|kept| kept.combo)
             .collect();
-        assert_eq!(kept, [Combo::new("Backspace", HYPER)]);
+        assert_eq!(kept, [Combo::new("Backspace", DEFAULT_MODIFIERS)]);
         assert!(chords_the_system_keeps(Platform::Windows).is_empty());
         assert!(chords_the_system_keeps(Platform::Linux).is_empty());
     }

@@ -8,7 +8,7 @@ import { EXPORT_FILE_NAME } from "../bridge";
 import { FAKE_DISPLAYS, initialState } from "./fixtures";
 import { applyCommand } from "./reducer";
 
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 5;
 
 /**
  * The same key for every spelling of one shortcut, such as Snappy + K and its modifiers held
@@ -25,6 +25,8 @@ export class FakeDaemon implements Transport {
   private readonly listeners = new Set<(message: ToSettings) => void>();
   private readonly takenByOtherApps = new Set<string>();
   private capsLockRefusal: string | undefined;
+  /** Probe answers kept back, while `holdProbeAnswers` holds them. */
+  private heldProbeAnswers: ToSettings[] | null = null;
 
   constructor(platform: PlatformName) {
     this.state = initialState(platform);
@@ -45,9 +47,12 @@ export class FakeDaemon implements Transport {
     });
     this.state = outcome.state;
 
-    const messages: ToSettings[] = [{ type: "reply", id, error: outcome.error }];
+    const error =
+      outcome.error === null ? null : { message: outcome.error, setting: outcome.setting ?? null };
+    const messages: ToSettings[] = [{ type: "reply", id, error }];
     if (outcome.probe !== undefined) {
-      messages.push({ type: "probeResult", available: outcome.probe });
+      const answer: ToSettings = { type: "probeResult", available: outcome.probe };
+      (this.heldProbeAnswers ?? messages).push(answer);
     }
     messages.push(this.stateMessage());
     this.listeners.forEach((listener) => this.deliver(listener, messages));
@@ -67,6 +72,18 @@ export class FakeDaemon implements Transport {
    */
   refuseCapsLock(reason: string | undefined): void {
     this.capsLockRefusal = reason;
+  }
+
+  /** Keep availability answers back until `answerProbes`, as a daemon slow to ask the OS would. */
+  holdProbeAnswers(): void {
+    this.heldProbeAnswers ??= [];
+  }
+
+  /** Send the availability answers kept back, and answer at once again. */
+  answerProbes(): void {
+    const answers = this.heldProbeAnswers ?? [];
+    this.heldProbeAnswers = null;
+    this.listeners.forEach((listener) => this.deliver(listener, answers));
   }
 
   /** Replace part of the state and broadcast it, as the daemon does after a change. */

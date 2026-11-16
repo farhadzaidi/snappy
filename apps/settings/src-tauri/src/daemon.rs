@@ -71,7 +71,7 @@ impl Inbox {
 
 fn emit(app: &AppHandle, message: &ToSettings) {
     if let Err(error) = app.emit(MESSAGE_EVENT, message) {
-        eprintln!("snappy-settings: could not relay a daemon message: {error}");
+        eprintln!("snappy-settings: couldn't relay a daemon message: {error}");
     }
 }
 
@@ -107,7 +107,7 @@ fn write_loop(receiver: Receiver<ToDaemon>) {
     let mut output = io::stdout().lock();
     for message in receiver {
         if let Err(error) = write_message(&mut output, &message) {
-            eprintln!("snappy-settings: could not write to the daemon: {error}");
+            eprintln!("snappy-settings: couldn't write to the daemon: {error}");
             return;
         }
     }
@@ -121,7 +121,7 @@ fn read_loop(app: &AppHandle) {
             Ok(Some(message)) => handle(app, message),
             Ok(None) => return app.exit(0),
             Err(error) => {
-                eprintln!("snappy-settings: could not read from the daemon: {error}");
+                eprintln!("snappy-settings: couldn't read from the daemon: {error}");
                 return app.exit(1);
             }
         }

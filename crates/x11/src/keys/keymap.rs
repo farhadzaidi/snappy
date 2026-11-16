@@ -315,11 +315,11 @@ mod tests {
     #[test]
     fn state_masks_translate_both_ways() {
         let masks = ModMasks::default();
-        let hyper: Mods = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta]
+        let snappy_key: Mods = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta]
             .into_iter()
             .collect();
-        assert_eq!(masks.mask(hyper), 0x4 | 0x8 | 0x40);
-        assert_eq!(masks.mods(0x4 | 0x8 | 0x40 | LOCK_MASK | MOD2_MASK), hyper);
+        assert_eq!(masks.mask(snappy_key), 0x4 | 0x8 | 0x40);
+        assert_eq!(masks.mods(0x4 | 0x8 | 0x40 | LOCK_MASK | MOD2_MASK), snappy_key);
         assert_eq!(masks.relevant(0x4 | LOCK_MASK | MOD2_MASK | 0x1), 0x5);
     }
 

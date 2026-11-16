@@ -54,7 +54,7 @@ fn reply(reply: &Reply) {
         .and_then(|line| writeln!(out, "{line}"))
         .and_then(|()| out.flush());
     if let Err(error) = written {
-        eprintln!("snappy-fixture: could not reply: {error}");
+        eprintln!("snappy-fixture: couldn't reply: {error}");
     }
 }
 

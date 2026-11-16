@@ -6,9 +6,7 @@ use serde::Serialize;
 
 use crate::keys::{KeyChord, Platform};
 use crate::navigate::Direction;
-use crate::settings::{
-    FocusShortcut, NUMBERED_SWITCH_SHORTCUTS, NavigationShortcut, Settings, Workspace, WorkspaceStep,
-};
+use crate::settings::{NUMBERED_SWITCH_SHORTCUTS, NavigationShortcut, Settings, Workspace, WorkspaceStep};
 
 /// One line of help: what a family of default shortcuts does, and its keys as one chord
 /// whose label names every key, such as "← → ↑ ↓".
@@ -24,10 +22,6 @@ pub fn default_shortcuts(platform: Platform) -> Vec<GuideEntry> {
     let navigation = |shortcut: NavigationShortcut| defaults.navigation.get(shortcut).cloned();
     let steps = |step: WorkspaceStep| defaults.workspaces.step(step).cloned();
     let numbered = |number: usize| Workspace::numbered("", number).switch_shortcut;
-    let return_key = match platform {
-        Platform::MacOs => "Return",
-        Platform::Windows | Platform::Linux => "Enter",
-    };
 
     let entries = [
         (
@@ -37,26 +31,21 @@ pub fn default_shortcuts(platform: Platform) -> Vec<GuideEntry> {
         (
             "Focus the window up, left, down, or right".to_owned(),
             listed(
-                [
-                    FocusShortcut::FocusUp,
-                    FocusShortcut::FocusLeft,
-                    FocusShortcut::FocusDown,
-                    FocusShortcut::FocusRight,
-                ]
-                .map(|shortcut| navigation(shortcut.into())),
+                [Direction::Up, Direction::Left, Direction::Down, Direction::Right]
+                    .map(|direction| navigation(NavigationShortcut::Focus(direction))),
             ),
         ),
         (
             "Select or unselect the window".to_owned(),
-            navigation(FocusShortcut::SelectWindow.into()).map(|chord| chord.with_label(return_key)),
+            navigation(NavigationShortcut::SelectWindow),
         ),
         (
             "Clear the selection".to_owned(),
-            navigation(FocusShortcut::ClearSelection.into()),
+            navigation(NavigationShortcut::ClearSelection),
         ),
         (
             "Move to the nearest empty zone, or the selection into empty zones".to_owned(),
-            navigation(NavigationShortcut::NearestEmpty),
+            navigation(NavigationShortcut::NearestEmptyZone),
         ),
         (
             format!("Switch to workspace 1–{NUMBERED_SWITCH_SHORTCUTS}, taking the selection along"),
@@ -118,7 +107,7 @@ mod tests {
             [
                 ("Move to the neighboring zone", "Snappy + ← → ↑ ↓"),
                 ("Focus the window up, left, down, or right", "Snappy + I J K L"),
-                ("Select or unselect the window", "Snappy + Return"),
+                ("Select or unselect the window", "Snappy + ↩"),
                 ("Clear the selection", "Snappy + \\"),
                 (
                     "Move to the nearest empty zone, or the selection into empty zones",
@@ -138,17 +127,16 @@ mod tests {
     }
 
     #[test]
-    fn help_names_the_return_key_as_each_platform_does() {
-        for (platform, name) in [
-            (Platform::MacOs, "Snappy + Return"),
-            (Platform::Windows, "Snappy + Enter"),
-            (Platform::Linux, "Snappy + Enter"),
-        ] {
-            let select = labels(platform)
-                .into_iter()
-                .find(|(title, _)| title == "Select or unselect the window")
-                .map(|(_, keys)| keys);
-            assert_eq!(select.as_deref(), Some(name));
-        }
+    fn help_labels_each_key_as_the_settings_do() {
+        let defaults = Settings::defaults(Platform::Windows);
+        let select = defaults
+            .navigation
+            .get(NavigationShortcut::SelectWindow)
+            .map(|chord| chord.long_label(Platform::Windows));
+        let help = labels(Platform::Windows)
+            .into_iter()
+            .find(|(title, _)| title == "Select or unselect the window")
+            .map(|(_, keys)| keys);
+        assert_eq!(help, select);
     }
 }

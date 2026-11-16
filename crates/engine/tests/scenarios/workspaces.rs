@@ -11,10 +11,11 @@ use snappy_ipc::{Command, ToSettings};
 use snappy_platform::{LiveControl, PlatformEvent, WindowId};
 
 use crate::support::{
-    FLOATING, LEFT_ZONE, RIGHT_ZONE, active, app_state, command, default_workspaces, enable_workspaces,
-    event, frame_of, hotkey_id, is_parked, live_engine, on_parking_desktop, paths_kept, press_default,
-    scenario, send_to, settle, side_display, snappy, status_text, switch_to, two_zoned_windows,
-    window_counts, window_one_on_the_parking_desktop, with_settings_window, with_window, writes_to,
+    FLOATING, LEFT_ZONE, RIGHT_ZONE, active, app_state, click_away, command, default_workspaces,
+    enable_workspaces, event, focus, frame_of, frozen, hotkey_id, is_parked, live_engine, on_parking_desktop,
+    paths_kept, place, press_default, remembered_workspaces, saved_windows, scenario, send_to, settle,
+    side_display, snappy, status_text, switch_to, two_zoned_windows, window_counts,
+    window_one_on_the_parking_desktop, with_settings_window, with_window, writes_to,
 };
 
 #[test]
@@ -458,21 +459,29 @@ fn a_switch_saves_only_the_active_workspace_and_reverts_when_that_fails() {
         assert_eq!(saved(), expected);
         assert_eq!(frame_of(&engine, 2), RIGHT_ZONE);
 
-        // A directory where the save's temporary file goes makes the save fail.
-        let blocker = file.with_file_name(".settings.json.tmp");
-        std::fs::create_dir(&blocker).unwrap();
+        // Selected, window 2 would go along to workspace 3.
+        focus(&engine, 2);
+        press_default(&engine, "Enter").await;
+        // A folder where the settings file goes makes any save of it fail.
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
         event(&engine, PlatformEvent::HotKey(switch_to(&engine, 3)));
         settle(&engine).await;
-        std::fs::remove_dir(&blocker).unwrap();
+        std::fs::remove_dir(&file).unwrap();
         assert_eq!(engine.settings().workspaces.active_id, "workspace-2");
         assert_eq!(frame_of(&engine, 2), RIGHT_ZONE, "switched back");
         assert!(is_parked(&engine, 1));
+        assert_eq!(
+            remembered_workspaces(name)[&2],
+            "workspace-2",
+            "saved as it is after switching back"
+        );
         let status = engine.status().unwrap();
         assert!(
             status.is_error
                 && status
                     .message
-                    .starts_with("Could not save the workspace selection")
+                    .starts_with("Couldn't save the workspace selection")
         );
     });
 }
@@ -488,6 +497,71 @@ fn while_a_switch_is_pending_next_counts_from_the_requested_workspace() {
         settle(&engine).await;
         assert_eq!(engine.settings().workspaces.active_id, "workspace-3");
         assert!(is_parked(&engine, 1));
+    });
+}
+
+#[test]
+fn a_switch_a_click_cancels_before_it_runs_can_be_asked_for_again() {
+    scenario(|| async {
+        let engine = live_engine("cancelled-switch", with_window(FLOATING));
+        enable_workspaces(&engine);
+        // A snap the app is slow to follow, a switch queued behind it, and a click.
+        let switch_behind_a_slow_snap_then_click = async |number: u8| {
+            place(&engine, 1, FLOATING);
+            engine.with_platform(|p| p.focused = Some(WindowId(1)));
+            frozen(&engine, 1, true);
+            event(
+                &engine,
+                PlatformEvent::HotKey(hotkey_id(&engine, &snappy("Digit1"))),
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            event(&engine, PlatformEvent::HotKey(switch_to(&engine, number)));
+            click_away(&engine);
+            frozen(&engine, 1, false);
+            settle(&engine).await;
+        };
+
+        switch_behind_a_slow_snap_then_click(2).await;
+        assert_eq!(active(&engine), "workspace-1", "the click cancelled the switch");
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 2)));
+        settle(&engine).await;
+        assert_eq!(
+            active(&engine),
+            "workspace-2",
+            "the same switch runs when asked again"
+        );
+
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 1)));
+        settle(&engine).await;
+        switch_behind_a_slow_snap_then_click(3).await;
+        event(
+            &engine,
+            PlatformEvent::HotKey(hotkey_id(&engine, &snappy("Quote"))),
+        );
+        settle(&engine).await;
+        assert_eq!(
+            active(&engine),
+            "workspace-2",
+            "next counts from the active workspace"
+        );
+    });
+}
+
+#[test]
+fn switching_and_sending_never_list_every_window() {
+    scenario(|| async {
+        let engine = live_engine("switch-without-listing", two_zoned_windows());
+        enable_workspaces(&engine);
+        engine.with_platform(|p| {
+            p.window_listings = 0;
+            p.focused = Some(WindowId(2));
+        });
+        event(&engine, PlatformEvent::HotKey(send_to(&engine, 2)));
+        settle(&engine).await;
+        event(&engine, PlatformEvent::HotKey(switch_to(&engine, 2)));
+        settle(&engine).await;
+        assert_eq!(active(&engine), "workspace-2");
+        assert_eq!(engine.with_platform(|p| p.window_listings), 0);
     });
 }
 
@@ -578,8 +652,7 @@ fn membership_is_keyed_by_process_and_window_and_dropped_when_the_app_quits() {
         settle(&engine).await;
 
         let file = paths_kept(name).membership();
-        let entries =
-            || serde_json::from_slice::<Vec<serde_json::Value>>(&std::fs::read(&file).unwrap()).unwrap();
+        let entries = || saved_windows(&file);
         let pids = || -> Vec<u64> {
             entries()
                 .iter()

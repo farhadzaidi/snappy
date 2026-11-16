@@ -18,11 +18,14 @@
   min-height: 0;
 }
 
+/* Wide enough for a card to set its name, the current dot, and the Snappy key's shortcut on
+   one line. The cards scroll with room for the scroll bar on their right; the add tile below
+   keeps that room too, so it lines up with them. */
 .workspace-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  width: 246px;
+  gap: 8px;
+  width: 264px;
   flex: none;
 }
 
@@ -44,21 +47,31 @@
   padding: 14px;
   border-radius: var(--radius-card);
   border: 1px solid var(--line);
-  background: rgb(26 31 37 / 50%);
+  background: rgb(var(--surface-rgb) / 50%);
   text-align: left;
 }
 
 .workspace-card[aria-pressed="true"] {
-  border-color: rgb(122 232 194 / 50%);
-  background: rgb(122 232 194 / 8%);
+  border-color: rgb(var(--mint-rgb) / 50%);
+  background: rgb(var(--mint-rgb) / 8%);
 }
 
-.workspace-card-top,
-.workspace-card-bottom {
+/* The name on the left and the shortcut at the card's right edge. When both don't fit, each
+   gets an even share of the room it needs, so a long shortcut ends in an ellipsis rather
+   than pushing the name out. */
+.workspace-card-top {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content);
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-card-title {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 4px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .workspace-card-name {
@@ -69,13 +82,35 @@
   white-space: nowrap;
 }
 
-.workspace-card-bottom {
+.workspace-card-windows {
   font-size: 11px;
   font-weight: 500;
 }
 
+/* A card-shaped place for the next workspace. */
 .new-workspace {
-  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-right: 8px;
+  height: 44px;
+  border-radius: var(--radius-card);
+  border: 1px dashed var(--line-strong);
+  color: var(--muted);
+  font-weight: 500;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.new-workspace:hover:not(:disabled) {
+  border-color: rgb(var(--mint-rgb) / 50%);
+  color: var(--mint);
+}
+
+.new-workspace:disabled {
+  opacity: 0.5;
 }
 
 .workspace-detail {
@@ -107,7 +142,7 @@
 }
 
 .workspace-name:focus {
-  border-bottom-color: rgb(122 232 194 / 60%);
+  border-bottom-color: var(--mint-line);
 }
 
 .wide-menu {

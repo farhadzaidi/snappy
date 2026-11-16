@@ -1,9 +1,10 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 import type { Bridge } from "../bridge/bridge";
-import type { AppState, Command, PlatformName } from "../core/model";
+import type { AppState, Command, PlatformName, Refusal } from "../core/model";
 import type { EditorStore } from "../editor/editorStore";
-import type { DaemonClient } from "./daemonClient";
+import type { Recording } from "../recorder/recording";
+import type { DaemonClient, SendOptions } from "./daemonClient";
 import { useObservable, type Observable } from "./observable";
 import { selectedDisplay, type Page, type Session } from "./session";
 
@@ -12,6 +13,8 @@ export interface Services {
   client: DaemonClient;
   session: Observable<Session>;
   editor: EditorStore;
+  /** Which shortcut recorder is recording. */
+  recording: Recording;
   bridge: Bridge;
 }
 
@@ -46,9 +49,9 @@ export function useSession(): Session {
   return useObservable(useServices().session);
 }
 
-export function useSend(): (command: Command) => Promise<string | null> {
+export function useSend(): (command: Command, options?: SendOptions) => Promise<Refusal | null> {
   const { client } = useServices();
-  return (command) => client.send(command);
+  return (command, options) => client.send(command, options);
 }
 
 /** The display chosen for the Layouts page and the editor. */
@@ -57,7 +60,7 @@ export function useSelectedDisplay() {
 }
 
 /**
- * Page and display changes hide the on-screen preview.
+ * Page and display changes hide the on-screen preview. A new display browses its own layout.
  */
 export function useNavigation() {
   const { client, session } = useServices();
@@ -75,10 +78,15 @@ export function useNavigation() {
     },
     chooseDisplay(displayId: string) {
       const app = client.state.get();
-      if (app && selectedDisplay(app, session.get())?.id !== displayId) {
+      const changed = app !== null && selectedDisplay(app, session.get())?.id !== displayId;
+      if (changed) {
         hidePreview();
       }
-      session.update((current) => ({ ...current, displayId }));
+      session.update((current) => ({
+        ...current,
+        displayId,
+        browsedLayoutId: changed ? null : current.browsedLayoutId,
+      }));
     },
   };
 }

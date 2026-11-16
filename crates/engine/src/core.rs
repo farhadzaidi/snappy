@@ -1,6 +1,7 @@
 //! The engine's state and the behaviors that don't belong to a single feature.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use snappy_core::bindings::{HotKey, desired_hotkeys};
 use snappy_core::drag::DragIntent;
@@ -23,7 +24,7 @@ use crate::diagnostics::Diagnostics;
 use crate::focus::FocusFlash;
 use crate::marks::Marks;
 use crate::selection::{self, Selection};
-use crate::store::{Paths, SettingsStore};
+use crate::store::{Paths, ReadState, SettingsStore, StateFile, read_state};
 use crate::workspaces::WorkspaceController;
 
 /// What the engine is doing with the current primary-button press.
@@ -467,6 +468,20 @@ impl<P: Platform> Core<P> {
         self.log(Level::Warn, event, details);
     }
 
+    /// Read a state file, logging one that had to be moved aside.
+    pub fn read_state<T: StateFile>(&mut self, path: &Path) -> ReadState<T> {
+        let read = read_state(path);
+        if let ReadState::MovedAside(aside) = &read {
+            let name = |path: &Path| path.file_name().map(|name| name.to_string_lossy().into_owned());
+            let (file, moved_to) = (name(path), aside.as_deref().and_then(name));
+            self.flag(
+                "stateFileUnreadable",
+                || serde_json::json!({ "file": file, "movedTo": moved_to }),
+            );
+        }
+        read
+    }
+
     pub fn log(&mut self, level: Level, event: &str, details: impl FnOnce() -> serde_json::Value) {
         if self.debug.is_on() {
             let now = self.platform.now();
@@ -525,11 +540,6 @@ impl<P: Platform> Core<P> {
     }
 
     pub fn app_state(&mut self) -> AppState {
-        let platform = match self.capabilities.platform {
-            PlatformName::MacOs => "macos",
-            PlatformName::Windows => "windows",
-            PlatformName::Linux => "linux",
-        };
         let window_counts: BTreeMap<String, usize> = self
             .settings
             .workspaces
@@ -540,7 +550,7 @@ impl<P: Platform> Core<P> {
         AppState {
             settings: self.settings.clone(),
             displays: self.displays.clone(),
-            platform: platform.to_owned(),
+            platform: self.capabilities.platform,
             snapping: SnappingState {
                 live: self.live,
                 waiting_for_permission: self.settings.snapping.enabled && !self.permission_granted,

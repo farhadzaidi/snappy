@@ -11,6 +11,7 @@ use crate::keys::{
 };
 use crate::layout::{self, DEFAULT_LAYOUT_ID, FALLBACK_LAYOUT_ID, Layout, valid_id, valid_name};
 use crate::navigate::Direction;
+use crate::shortcuts::{self, ShortcutId};
 use crate::swap::{SwapModifier, WhenTaken};
 
 pub const FORMAT_VERSION: u32 = 1;
@@ -110,47 +111,8 @@ pub struct Navigation {
     pub clear_selection: Option<KeyChord>,
 }
 
-/// The shortcuts that move focus between windows or change the selection. None of them
-/// moves a window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum FocusShortcut {
-    FocusUp,
-    FocusLeft,
-    FocusDown,
-    FocusRight,
-    SelectWindow,
-    ClearSelection,
-}
-
-impl FocusShortcut {
-    /// The name the settings app and conflict messages use.
-    pub fn title(self) -> &'static str {
-        match self {
-            FocusShortcut::FocusUp => "Focus up",
-            FocusShortcut::FocusLeft => "Focus left",
-            FocusShortcut::FocusDown => "Focus down",
-            FocusShortcut::FocusRight => "Focus right",
-            FocusShortcut::SelectWindow => "Select window",
-            FocusShortcut::ClearSelection => "Clear selection",
-        }
-    }
-
-    /// The field that holds this shortcut's chord in the settings file.
-    fn field(self) -> &'static str {
-        match self {
-            FocusShortcut::FocusUp => "focusUp",
-            FocusShortcut::FocusLeft => "focusLeft",
-            FocusShortcut::FocusDown => "focusDown",
-            FocusShortcut::FocusRight => "focusRight",
-            FocusShortcut::SelectWindow => "selectWindow",
-            FocusShortcut::ClearSelection => "clearSelection",
-        }
-    }
-}
-
 /// The name the settings app and conflict messages give the nearest-empty-zone shortcut.
-pub const NEAREST_EMPTY_TITLE: &str = "Move to the nearest empty zone";
+pub const NEAREST_EMPTY_ZONE_TITLE: &str = "Move to the nearest empty zone";
 
 /// Every shortcut in the navigation section, so each is listed once: for validation,
 /// conflicts, registration, the defaults a file without it gets, and the command that
@@ -162,8 +124,12 @@ pub enum NavigationShortcut {
     Move(Direction),
     /// Move the focused window into the nearest empty zone, or the selection into empty
     /// zones.
-    NearestEmpty,
-    Focus(FocusShortcut),
+    NearestEmptyZone,
+    /// Focus the next window that way; moves no window.
+    Focus(Direction),
+    /// Add the focused window to the selection, or take it out.
+    SelectWindow,
+    ClearSelection,
 }
 
 impl NavigationShortcut {
@@ -173,30 +139,37 @@ impl NavigationShortcut {
         NavigationShortcut::Move(Direction::Right),
         NavigationShortcut::Move(Direction::Up),
         NavigationShortcut::Move(Direction::Down),
-        NavigationShortcut::NearestEmpty,
-        NavigationShortcut::Focus(FocusShortcut::FocusUp),
-        NavigationShortcut::Focus(FocusShortcut::FocusLeft),
-        NavigationShortcut::Focus(FocusShortcut::FocusDown),
-        NavigationShortcut::Focus(FocusShortcut::FocusRight),
-        NavigationShortcut::Focus(FocusShortcut::SelectWindow),
-        NavigationShortcut::Focus(FocusShortcut::ClearSelection),
+        NavigationShortcut::NearestEmptyZone,
+        NavigationShortcut::Focus(Direction::Up),
+        NavigationShortcut::Focus(Direction::Left),
+        NavigationShortcut::Focus(Direction::Down),
+        NavigationShortcut::Focus(Direction::Right),
+        NavigationShortcut::SelectWindow,
+        NavigationShortcut::ClearSelection,
     ];
 
     /// The name the settings app and conflict messages use.
     pub fn title(self) -> String {
         match self {
             NavigationShortcut::Move(direction) => format!("Move window {}", direction.name()),
-            NavigationShortcut::NearestEmpty => NEAREST_EMPTY_TITLE.to_owned(),
-            NavigationShortcut::Focus(shortcut) => shortcut.title().to_owned(),
+            NavigationShortcut::NearestEmptyZone => NEAREST_EMPTY_ZONE_TITLE.to_owned(),
+            NavigationShortcut::Focus(direction) => format!("Focus {}", direction.name()),
+            NavigationShortcut::SelectWindow => "Select window".to_owned(),
+            NavigationShortcut::ClearSelection => "Clear selection".to_owned(),
         }
     }
 
     /// The field that holds this shortcut's chord in the settings file.
-    fn field(self) -> &'static str {
+    pub(crate) fn field(self) -> &'static str {
         match self {
             NavigationShortcut::Move(direction) => direction.name(),
-            NavigationShortcut::NearestEmpty => "nearestEmpty",
-            NavigationShortcut::Focus(shortcut) => shortcut.field(),
+            NavigationShortcut::NearestEmptyZone => "nearestEmpty",
+            NavigationShortcut::Focus(Direction::Up) => "focusUp",
+            NavigationShortcut::Focus(Direction::Left) => "focusLeft",
+            NavigationShortcut::Focus(Direction::Down) => "focusDown",
+            NavigationShortcut::Focus(Direction::Right) => "focusRight",
+            NavigationShortcut::SelectWindow => "selectWindow",
+            NavigationShortcut::ClearSelection => "clearSelection",
         }
     }
 }
@@ -223,12 +196,6 @@ impl From<Direction> for NavigationShortcut {
     }
 }
 
-impl From<FocusShortcut> for NavigationShortcut {
-    fn from(shortcut: FocusShortcut) -> Self {
-        NavigationShortcut::Focus(shortcut)
-    }
-}
-
 impl Navigation {
     pub fn get(&self, shortcut: impl Into<NavigationShortcut>) -> Option<&KeyChord> {
         match shortcut.into() {
@@ -236,13 +203,13 @@ impl Navigation {
             NavigationShortcut::Move(Direction::Right) => self.right.as_ref(),
             NavigationShortcut::Move(Direction::Up) => self.up.as_ref(),
             NavigationShortcut::Move(Direction::Down) => self.down.as_ref(),
-            NavigationShortcut::NearestEmpty => self.nearest_empty.as_ref(),
-            NavigationShortcut::Focus(FocusShortcut::FocusUp) => self.focus_up.as_ref(),
-            NavigationShortcut::Focus(FocusShortcut::FocusLeft) => self.focus_left.as_ref(),
-            NavigationShortcut::Focus(FocusShortcut::FocusDown) => self.focus_down.as_ref(),
-            NavigationShortcut::Focus(FocusShortcut::FocusRight) => self.focus_right.as_ref(),
-            NavigationShortcut::Focus(FocusShortcut::SelectWindow) => self.select_window.as_ref(),
-            NavigationShortcut::Focus(FocusShortcut::ClearSelection) => self.clear_selection.as_ref(),
+            NavigationShortcut::NearestEmptyZone => self.nearest_empty.as_ref(),
+            NavigationShortcut::Focus(Direction::Up) => self.focus_up.as_ref(),
+            NavigationShortcut::Focus(Direction::Left) => self.focus_left.as_ref(),
+            NavigationShortcut::Focus(Direction::Down) => self.focus_down.as_ref(),
+            NavigationShortcut::Focus(Direction::Right) => self.focus_right.as_ref(),
+            NavigationShortcut::SelectWindow => self.select_window.as_ref(),
+            NavigationShortcut::ClearSelection => self.clear_selection.as_ref(),
         }
     }
 
@@ -250,19 +217,19 @@ impl Navigation {
         *self.slot(shortcut.into()) = chord;
     }
 
-    fn slot(&mut self, shortcut: NavigationShortcut) -> &mut Option<KeyChord> {
+    pub(crate) fn slot(&mut self, shortcut: NavigationShortcut) -> &mut Option<KeyChord> {
         match shortcut {
             NavigationShortcut::Move(Direction::Left) => &mut self.left,
             NavigationShortcut::Move(Direction::Right) => &mut self.right,
             NavigationShortcut::Move(Direction::Up) => &mut self.up,
             NavigationShortcut::Move(Direction::Down) => &mut self.down,
-            NavigationShortcut::NearestEmpty => &mut self.nearest_empty,
-            NavigationShortcut::Focus(FocusShortcut::FocusUp) => &mut self.focus_up,
-            NavigationShortcut::Focus(FocusShortcut::FocusLeft) => &mut self.focus_left,
-            NavigationShortcut::Focus(FocusShortcut::FocusDown) => &mut self.focus_down,
-            NavigationShortcut::Focus(FocusShortcut::FocusRight) => &mut self.focus_right,
-            NavigationShortcut::Focus(FocusShortcut::SelectWindow) => &mut self.select_window,
-            NavigationShortcut::Focus(FocusShortcut::ClearSelection) => &mut self.clear_selection,
+            NavigationShortcut::NearestEmptyZone => &mut self.nearest_empty,
+            NavigationShortcut::Focus(Direction::Up) => &mut self.focus_up,
+            NavigationShortcut::Focus(Direction::Left) => &mut self.focus_left,
+            NavigationShortcut::Focus(Direction::Down) => &mut self.focus_down,
+            NavigationShortcut::Focus(Direction::Right) => &mut self.focus_right,
+            NavigationShortcut::SelectWindow => &mut self.select_window,
+            NavigationShortcut::ClearSelection => &mut self.clear_selection,
         }
     }
 
@@ -313,7 +280,7 @@ impl MoveHistory {
         *self.slot(step) = chord;
     }
 
-    fn slot(&mut self, step: HistoryStep) -> &mut Option<KeyChord> {
+    pub(crate) fn slot(&mut self, step: HistoryStep) -> &mut Option<KeyChord> {
         match step {
             HistoryStep::Undo => &mut self.undo,
             HistoryStep::Redo => &mut self.redo,
@@ -470,7 +437,11 @@ impl Workspace {
         }
     }
 
-    fn slot(&mut self, shortcut: WorkspaceShortcut) -> &mut Option<KeyChord> {
+    pub fn set(&mut self, shortcut: WorkspaceShortcut, chord: Option<KeyChord>) {
+        *self.slot(shortcut) = chord;
+    }
+
+    pub(crate) fn slot(&mut self, shortcut: WorkspaceShortcut) -> &mut Option<KeyChord> {
         match shortcut {
             WorkspaceShortcut::Switch => &mut self.switch_shortcut,
             WorkspaceShortcut::Send => &mut self.send_shortcut,
@@ -496,12 +467,15 @@ impl Workspace {
 
 /// A workspace's own shortcuts. Written as the field of `Workspace` that holds it, such as
 /// `"switchShortcut"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkspaceShortcut {
+    #[serde(rename = "switchShortcut")]
     Switch,
     /// Send the focused window, or the selection, there and stay.
+    #[serde(rename = "sendShortcut")]
     Send,
     /// Send the focused window there, then switch, taking the selection along.
+    #[serde(rename = "sendAndSwitchShortcut")]
     SendAndSwitch,
 }
 
@@ -511,15 +485,6 @@ impl WorkspaceShortcut {
         WorkspaceShortcut::Send,
         WorkspaceShortcut::SendAndSwitch,
     ];
-
-    /// The field of `Workspace` that holds this shortcut's chord.
-    fn field(self) -> &'static str {
-        match self {
-            WorkspaceShortcut::Switch => "switchShortcut",
-            WorkspaceShortcut::Send => "sendShortcut",
-            WorkspaceShortcut::SendAndSwitch => "sendAndSwitchShortcut",
-        }
-    }
 
     /// The name the settings app and conflict messages use for the workspace named
     /// `workspace`.
@@ -532,14 +497,8 @@ impl WorkspaceShortcut {
     }
 }
 
-impl Serialize for WorkspaceShortcut {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.field())
-    }
-}
-
 /// The Snappy key with the workspace's number, for workspaces 1 to 9.
-fn numbered_switch_shortcut(number: usize) -> Option<KeyChord> {
+pub(crate) fn numbered_switch_shortcut(number: usize) -> Option<KeyChord> {
     (1..=NUMBERED_SWITCH_SHORTCUTS)
         .contains(&number)
         .then(|| KeyChord::snappy(&format!("Digit{number}"), []).with_label(number.to_string()))
@@ -578,7 +537,7 @@ impl Workspaces {
         *self.step_slot(step) = chord;
     }
 
-    fn step_slot(&mut self, step: WorkspaceStep) -> &mut Option<KeyChord> {
+    pub(crate) fn step_slot(&mut self, step: WorkspaceStep) -> &mut Option<KeyChord> {
         match step {
             WorkspaceStep::Previous => &mut self.previous,
             WorkspaceStep::Next => &mut self.next,
@@ -600,6 +559,10 @@ impl Workspaces {
 
     pub fn item(&self, id: &str) -> Option<&Workspace> {
         self.items.iter().find(|item| item.id == id)
+    }
+
+    pub fn item_mut(&mut self, id: &str) -> Option<&mut Workspace> {
+        self.items.iter_mut().find(|item| item.id == id)
     }
 
     /// The workspace `steps` away from the active one in saved order, wrapping.
@@ -824,28 +787,6 @@ impl Settings {
         self.layouts.options = options;
     }
 
-    /// Visit every chord a binding holds.
-    fn for_each_chord(&mut self, mut visit: impl FnMut(&mut KeyChord)) {
-        for shortcut in NavigationShortcut::ALL {
-            self.navigation.slot(shortcut).iter_mut().for_each(&mut visit);
-        }
-        for step in HistoryStep::ALL {
-            self.history.slot(step).iter_mut().for_each(&mut visit);
-        }
-        for step in WorkspaceStep::ALL {
-            self.workspaces.step_slot(step).iter_mut().for_each(&mut visit);
-        }
-        for item in &mut self.workspaces.items {
-            for shortcut in WorkspaceShortcut::ALL {
-                item.slot(shortcut).iter_mut().for_each(&mut visit);
-            }
-        }
-        for options in self.layouts.options.values_mut() {
-            options.select_shortcut.iter_mut().for_each(&mut visit);
-            options.zone_shortcuts.values_mut().for_each(&mut visit);
-        }
-    }
-
     /// Parse a settings file. Fields missing from the file take their defaults, except
     /// that a default shortcut is left unassigned when another binding the file has already
     /// uses its chord. Shortcuts the file has, cleared ones included, are kept as written,
@@ -871,7 +812,7 @@ impl Settings {
         forget_kept_chords(&mut written, &kept, snappy_key);
         let file: SettingsFile = serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?;
         let defaults = Settings::defaults(platform);
-        let missing = MissingChord::in_file(&file, &defaults.workspaces);
+        let missing = missing_shortcuts(&file, &defaults.workspaces);
         let navigation = match file.navigation {
             Some(written) => serde_json::from_value(written).map_err(|_| SettingsError::Invalid)?,
             None => Navigation::default(),
@@ -893,18 +834,7 @@ impl Settings {
             history: file.history.unwrap_or_default(),
             debug_log: file.debug_log.unwrap_or(defaults.debug_log),
         };
-        for chord in &missing {
-            if let Some(slot) = chord.slot(&mut settings) {
-                *slot = None;
-            }
-        }
-        let mut used = bindings::bound_combos(&settings);
-        for chord in missing {
-            let default = chord.default(&defaults);
-            if let Some(slot) = chord.slot(&mut settings) {
-                *slot = default.filter(|chord| used.insert(chord.combo(snappy_key)));
-            }
-        }
+        shortcuts::give_defaults(&mut settings, &missing);
         if written_key.is_none() {
             settings.read_as_before_the_snappy_key();
         }
@@ -918,7 +848,9 @@ impl Settings {
     /// was saved with every chord in the form recording gave it, so it is read as written.
     fn read_as_before_the_snappy_key(&mut self) {
         let key = SnappyKey::DEFAULT;
-        self.for_each_chord(|chord| chord.mods = ChordMods::recorded(chord.mods.expanded(key), key));
+        shortcuts::for_each_chord(self, |chord| {
+            chord.mods = ChordMods::recorded(chord.mods.expanded(key), key)
+        });
     }
 
     pub fn to_json(&self) -> Result<Vec<u8>, SettingsError> {
@@ -954,68 +886,37 @@ fn is_kept_chord(value: &serde_json::Value, kept: &[Combo], key: SnappyKey) -> b
             .is_ok_and(|chord| kept.contains(&chord.combo(key)))
 }
 
-/// A shortcut a settings file doesn't mention, as files written before it existed don't.
-/// It gets its default unless a binding the file has already uses that chord.
-#[derive(Debug, Clone, Copy)]
-enum MissingChord {
-    Navigation(NavigationShortcut),
-    Step(WorkspaceStep),
-    /// The switch shortcut of the workspace at this position.
-    Switch(usize),
-}
-
-impl MissingChord {
-    /// Every shortcut `file` lacks, in the order their defaults are given out. A file
-    /// without workspaces gets `defaults`, so it lacks every one of their shortcuts.
-    fn in_file(file: &SettingsFile, defaults: &Workspaces) -> Vec<MissingChord> {
-        let lacks = |section: &Option<serde_json::Value>, field: &str| {
-            section
-                .as_ref()
-                .is_none_or(|written| written.get(field).is_none())
-        };
-        let navigation = NavigationShortcut::ALL
+/// Every shortcut `file` doesn't mention, as files written before it existed don't, in the
+/// order their defaults are given out. A file without workspaces gets `defaults`, so it
+/// lacks every one of their shortcuts.
+fn missing_shortcuts(file: &SettingsFile, defaults: &Workspaces) -> Vec<ShortcutId> {
+    let lacks = |section: &Option<serde_json::Value>, field: &str| {
+        section
+            .as_ref()
+            .is_none_or(|written| written.get(field).is_none())
+    };
+    let navigation = NavigationShortcut::ALL
+        .into_iter()
+        .filter(|shortcut| lacks(&file.navigation, shortcut.field()))
+        .map(ShortcutId::from);
+    let steps = WorkspaceStep::ALL
+        .into_iter()
+        .filter(|step| lacks(&file.workspaces, step.field()))
+        .map(ShortcutId::from);
+    let switch = |id: &str| ShortcutId::workspace(id, WorkspaceShortcut::Switch);
+    let switches: Vec<ShortcutId> = match &file.workspaces {
+        Some(written) => written
+            .get("items")
+            .and_then(serde_json::Value::as_array)
             .into_iter()
-            .filter(|shortcut| lacks(&file.navigation, shortcut.field()))
-            .map(MissingChord::Navigation);
-        let steps = WorkspaceStep::ALL
-            .into_iter()
-            .filter(|step| lacks(&file.workspaces, step.field()))
-            .map(MissingChord::Step);
-        let switches: Vec<MissingChord> = match &file.workspaces {
-            Some(written) => written
-                .get("items")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .enumerate()
-                .filter(|(_, item)| item.get("switchShortcut").is_none())
-                .map(|(index, _)| MissingChord::Switch(index))
-                .collect(),
-            None => (0..defaults.items.len()).map(MissingChord::Switch).collect(),
-        };
-        navigation.chain(steps).chain(switches).collect()
-    }
-
-    /// Where the chord goes in `settings`.
-    fn slot(self, settings: &mut Settings) -> Option<&mut Option<KeyChord>> {
-        match self {
-            MissingChord::Navigation(shortcut) => Some(settings.navigation.slot(shortcut)),
-            MissingChord::Step(step) => Some(settings.workspaces.step_slot(step)),
-            MissingChord::Switch(index) => settings
-                .workspaces
-                .items
-                .get_mut(index)
-                .map(|item| &mut item.switch_shortcut),
-        }
-    }
-
-    fn default(self, defaults: &Settings) -> Option<KeyChord> {
-        match self {
-            MissingChord::Navigation(shortcut) => defaults.navigation.get(shortcut).cloned(),
-            MissingChord::Step(step) => defaults.workspaces.step(step).cloned(),
-            MissingChord::Switch(index) => numbered_switch_shortcut(index + 1),
-        }
-    }
+            .flatten()
+            .filter(|item| item.get("switchShortcut").is_none())
+            .filter_map(|item| item.get("id").and_then(serde_json::Value::as_str))
+            .map(switch)
+            .collect(),
+        None => defaults.items.iter().map(|item| switch(&item.id)).collect(),
+    };
+    navigation.chain(steps).chain(switches).collect()
 }
 
 /// The settings file as written, every section optional.
@@ -1045,7 +946,7 @@ pub enum SettingsError {
     #[error("{0}")]
     SnappyKey(#[from] SnappyKeyError),
     #[error(
-        "The existing settings file could not be loaded and has not been changed. Repair or move it, then reopen Snappy before saving."
+        "The existing settings file couldn't be loaded and has not been changed. Repair or move it, then reopen Snappy before saving."
     )]
     Protected,
 }
@@ -1530,8 +1431,10 @@ mod tests {
     #[test]
     fn a_saved_cleared_focus_or_selection_shortcut_stays_cleared() {
         let mut settings = Settings::defaults(MAC);
-        settings.navigation.set(FocusShortcut::SelectWindow, None);
-        settings.navigation.set(FocusShortcut::FocusLeft, None);
+        settings.navigation.set(NavigationShortcut::SelectWindow, None);
+        settings
+            .navigation
+            .set(NavigationShortcut::Focus(Direction::Left), None);
         let json = String::from_utf8(settings.to_json().unwrap()).unwrap();
         assert!(json.contains(r#""selectWindow": null"#), "{json}");
         let loaded = Settings::from_json(json.as_bytes(), MAC).unwrap();
@@ -1690,7 +1593,7 @@ mod tests {
             snappy("Digit4")
         );
         assert_eq!(
-            fourth.switch_shortcut.as_ref().unwrap().compact_label(MAC),
+            fourth.switch_shortcut.as_ref().unwrap().long_label(MAC),
             "Snappy + 4"
         );
         assert_eq!(fourth.send_shortcut, None);
@@ -1747,9 +1650,9 @@ mod tests {
         let taken = [
             NavigationShortcut::Move(Direction::Left),
             NavigationShortcut::Move(Direction::Up),
-            NavigationShortcut::NearestEmpty,
-            NavigationShortcut::Focus(FocusShortcut::SelectWindow),
-            NavigationShortcut::Focus(FocusShortcut::FocusRight),
+            NavigationShortcut::NearestEmptyZone,
+            NavigationShortcut::SelectWindow,
+            NavigationShortcut::Focus(Direction::Right),
         ];
         for shortcut in NavigationShortcut::ALL {
             let expected = (!taken.contains(&shortcut))

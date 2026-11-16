@@ -3,8 +3,8 @@
 
 use serde::Serialize;
 use snappy_core::editor::{
-    Axis, ResizeHandle, Side, draw, guides, move_edge, move_zone, resize_rect, resize_zone, seam_members,
-    snap, snapped_move, split,
+    Axis, CutScope, ResizeHandle, Side, cut_guides, cut_zones, draw, guides, move_edge, move_zone,
+    resize_rect, resize_zone, seam_members, snap, snapped_move,
 };
 use snappy_core::geometry::{Point, Size};
 use snappy_core::layout::{MINIMUM_ZONE_SIZE, UnitRect, Zone};
@@ -118,17 +118,10 @@ pub fn drag_divider(
     let lined_up = rect_of(&moved, zone_id)
         .map(|result| aligned(&[edge(result, axis, Side::End)], &targets))
         .unwrap_or_default();
-    let guides = match axis {
-        Axis::X => Guides {
-            x: lined_up,
-            y: Vec::new(),
-        },
-        Axis::Y => Guides {
-            x: Vec::new(),
-            y: lined_up,
-        },
-    };
-    Edit { zones: moved, guides }
+    Edit {
+        zones: moved,
+        guides: Guides::along(axis, lined_up),
+    }
 }
 
 /// The zone a drag from `from` to `to` on empty canvas draws, with both ends snapped.
@@ -148,26 +141,29 @@ pub fn draw_zone(zones: &[Zone], from: Point, to: Point, tolerance: Size) -> Dra
     Drawn { rect, guides }
 }
 
-/// Where a cut through zone `id` at `at` lands along `axis`, snapped to guides.
-pub fn cut_line(zones: &[Zone], id: &str, axis: Axis, at: f64, tolerance: f64) -> f64 {
-    snap(at, &guides(zones, Some(id), axis, false), tolerance)
+/// Where a cut under the pointer would go, before it is made.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CutPreview {
+    /// The cut's line along its axis, snapped to guides.
+    pub at: f64,
+    /// The zones the cut splits, in zone order.
+    pub zone_ids: Vec<String>,
+    pub guides: Guides,
 }
 
-/// Cut zone `id` at `at`. The second part takes `new_id` and follows the first in zone order.
-pub fn cut(zones: &[Zone], id: &str, axis: Axis, at: f64, tolerance: f64, new_id: &str) -> Option<Vec<Zone>> {
-    let index = zones.iter().position(|zone| zone.id == id)?;
-    let zone = &zones[index];
-    let (start, end) = (
-        edge(zone.rect, axis, Side::Start),
-        edge(zone.rect, axis, Side::End),
-    );
-    let line = cut_line(zones, id, axis, at, tolerance);
-    let (first, second) = split(zone, (line - start) / (end - start), axis, new_id)?;
-
-    let mut result = zones.to_vec();
-    result[index] = first;
-    result.insert(index + 1, second);
-    Some(result)
+/// The cut a click at `at` along `axis` would make, snapped to the cut's guides.
+pub fn cut_preview(zones: &[Zone], scope: CutScope, axis: Axis, at: f64, tolerance: f64) -> CutPreview {
+    let targets = cut_guides(zones, scope, axis);
+    let line = snap(at, &targets, tolerance);
+    CutPreview {
+        at: line,
+        zone_ids: cut_zones(zones, scope, axis, line)
+            .into_iter()
+            .map(|zone| zone.id.clone())
+            .collect(),
+        guides: Guides::along(axis, aligned(&[line], &targets)),
+    }
 }
 
 /// Apply a committed coordinate field: X and Y move the zone with the same
@@ -195,6 +191,22 @@ pub fn set_field(zones: &[Zone], id: &str, field: Field, value: f64) -> Vec<Zone
                 ..rect
             };
             resize_zone(zones, id, target, ResizeHandle::South)
+        }
+    }
+}
+
+impl Guides {
+    /// Lines across one axis only.
+    fn along(axis: Axis, lines: Vec<f64>) -> Self {
+        match axis {
+            Axis::X => Guides {
+                x: lines,
+                y: Vec::new(),
+            },
+            Axis::Y => Guides {
+                x: Vec::new(),
+                y: lines,
+            },
         }
     }
 }
@@ -317,13 +329,48 @@ mod tests {
     }
 
     #[test]
-    fn cuts_insert_the_second_part_after_the_first() {
+    fn a_cut_snaps_to_a_third_of_the_screen_and_shows_its_guide() {
         let zones = vec![zone("a", 0.0, 0.0, 1.0, 1.0)];
-        let result = cut(&zones, "a", Axis::X, 0.333, 0.01, "c").unwrap();
-        assert_eq!(result[0].id, "a");
-        assert_eq!(result[1].id, "c");
-        near(result[0].rect.width, 1.0 / 3.0);
-        assert!(cut(&zones, "a", Axis::Y, 0.001, 0.0001, "c").is_none());
+        let preview = cut_preview(&zones, CutScope::Zone("a"), Axis::X, 0.336, 0.01);
+        near(preview.at, 1.0 / 3.0);
+        assert_eq!(preview.zone_ids, ["a"]);
+        assert_eq!(preview.guides.x.len(), 1);
+        near(preview.guides.x[0], 1.0 / 3.0);
+        assert!(preview.guides.y.is_empty());
+    }
+
+    #[test]
+    fn a_cut_snaps_to_quarters_of_the_zone_it_cuts() {
+        let zones = vec![zone("a", 0.0, 0.0, 0.4, 1.0), zone("b", 0.4, 0.0, 0.6, 1.0)];
+        let preview = cut_preview(&zones, CutScope::Zone("b"), Axis::X, 0.553, 0.01);
+        near(preview.at, 0.55);
+        assert_eq!(preview.guides.x, vec![preview.at]);
+    }
+
+    #[test]
+    fn a_cut_away_from_every_guide_stays_at_the_pointer_and_shows_none() {
+        let zones = vec![zone("a", 0.0, 0.0, 1.0, 1.0)];
+        let preview = cut_preview(&zones, CutScope::Zone("a"), Axis::Y, 0.41, 0.01);
+        near(preview.at, 0.41);
+        assert_eq!(preview.guides, Guides::default());
+    }
+
+    #[test]
+    fn a_cut_through_names_every_zone_it_splits() {
+        let zones = vec![
+            zone("a", 0.0, 0.0, 0.5, 1.0),
+            zone("b", 0.5, 0.0, 0.5, 0.3),
+            zone("c", 0.5, 0.3, 0.5, 0.7),
+        ];
+        let preview = cut_preview(&zones, CutScope::Through, Axis::Y, 0.6, 0.01);
+        assert_eq!(preview.zone_ids, ["a", "c"]);
+        let on_seam = cut_preview(&zones, CutScope::Through, Axis::Y, 0.302, 0.01);
+        near(on_seam.at, 0.3);
+        assert_eq!(
+            on_seam.zone_ids,
+            ["a"],
+            "the zones meeting at the line stay whole"
+        );
     }
 
     #[test]

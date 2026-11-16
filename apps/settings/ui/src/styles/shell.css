@@ -21,20 +21,23 @@
 
 .brand-logo {
   display: grid;
-  color: var(--mint);
 }
 
 .brand-name {
   font: 600 18px var(--font-rounded);
 }
 
+/* Every tab as wide as the widest. */
 .tabs {
-  display: flex;
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
   gap: 4px;
 }
 
 .tab {
-  padding: 9px 12px;
+  padding: 9px 16px;
+  text-align: center;
   border-radius: var(--radius);
   color: var(--muted);
   font-weight: 500;
@@ -183,17 +186,19 @@
   pointer-events: none;
 }
 
-/* The icon and the dismiss button line up with the first line, should a message wrap. */
+/* The icon sits in a line of its own, as tall as the message's, on the baseline of the
+   message's first line: it stays level with that line should the message wrap, or a
+   reference make the line taller. The dismiss button keeps to the top. */
 .toast {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: 10px;
   max-width: min(520px, calc(100vw - 40px));
   padding: 10px 8px 10px 14px;
   border-radius: var(--radius-panel);
   border: 1px solid var(--line);
   background: var(--surface);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+  box-shadow: 0 8px 24px rgb(var(--shadow-rgb) / 30%);
   font-size: 13px;
   line-height: 20px;
   pointer-events: auto;
@@ -201,10 +206,12 @@
 }
 
 .toast-icon {
-  display: grid;
-  height: 24px;
-  place-items: center;
   color: var(--mint);
+}
+
+.toast-icon svg {
+  margin-top: 2px;
+  vertical-align: top;
 }
 
 .toast-message {
@@ -218,6 +225,7 @@
 }
 
 .toast-dismiss {
+  align-self: flex-start;
   width: 24px;
   height: 24px;
 }

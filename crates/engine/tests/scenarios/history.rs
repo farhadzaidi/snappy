@@ -259,7 +259,7 @@ fn a_swap_undo_that_cannot_land_returns_both_windows_and_keeps_the_entry() {
         assert_eq!(
             (status.message.as_str(), status.is_error),
             (
-                "An app could not restore its window. Undo is available to retry.",
+                "An app couldn't restore its window. Undo is available to retry.",
                 true
             )
         );

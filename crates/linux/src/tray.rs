@@ -6,12 +6,11 @@ use std::sync::mpsc::Sender;
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{CheckmarkItem, StandardItem, SubMenu};
 use ksni::{Icon, MenuItem, ToolTip, Tray};
-use snappy_platform::{PlatformEvent, TrayMenu};
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
+use snappy_platform::{PlatformEvent, TrayMenu, glyph};
 
 use crate::menu::{MenuEntry, build};
 
-const ICON_SIZES: [u32; 2] = [22, 44];
+const ICON_SIZES: [usize; 2] = [22, 44];
 
 pub struct SnappyTray {
     menu: TrayMenu,
@@ -109,7 +108,7 @@ impl TrayIcon {
         let tray = SnappyTray {
             menu: TrayMenu::default(),
             events,
-            icons: ICON_SIZES.into_iter().filter_map(icon).collect(),
+            icons: ICON_SIZES.into_iter().map(icon).collect(),
         };
         match tray.assume_sni_available(true).spawn() {
             Ok(handle) => Some(TrayIcon { handle }),
@@ -129,34 +128,17 @@ impl TrayIcon {
     }
 }
 
-/// A white two-zone outline: a rounded frame split by a divider, in ARGB32 network order.
-fn icon(size: u32) -> Option<Icon> {
-    let mut pixmap = Pixmap::new(size, size)?;
-    let unit = size as f32 / 22.0;
-    let mut paint = Paint::default();
-    paint.set_color(Color::WHITE);
-    paint.anti_alias = true;
-    let stroke = Stroke {
-        width: 1.6 * unit,
-        ..Stroke::default()
-    };
-    let frame = PathBuilder::from_rect(Rect::from_xywh(3.0 * unit, 4.0 * unit, 16.0 * unit, 14.0 * unit)?);
-    pixmap.stroke_path(&frame, &paint, &stroke, Transform::identity(), None);
-    let left = PathBuilder::from_rect(Rect::from_xywh(5.0 * unit, 6.0 * unit, 6.0 * unit, 10.0 * unit)?);
-    pixmap.fill_path(&left, &paint, FillRule::Winding, Transform::identity(), None);
-
-    let data = pixmap
-        .data()
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .flat_map(|&[r, g, b, a]| [a, r, g, b])
+/// The glyph in white, as ARGB32 in network order.
+fn icon(size: usize) -> Icon {
+    let data = glyph::mask(size)
+        .into_iter()
+        .flat_map(|alpha| [alpha, 255, 255, 255])
         .collect();
-    Some(Icon {
+    Icon {
         width: size as i32,
         height: size as i32,
         data,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -165,13 +147,13 @@ mod tests {
 
     #[test]
     fn icons_are_argb_in_network_order() {
-        let icon = icon(22).unwrap();
+        let icon = icon(22);
         assert_eq!(icon.data.len(), 22 * 22 * 4);
-        // Inside the filled left zone: opaque white.
-        let offset = ((10 * 22 + 7) * 4) as usize;
+        // Inside the lit half zone: opaque white.
+        let offset = (10 * 22 + 5) * 4;
         assert_eq!(&icon.data[offset..offset + 4], &[255, 255, 255, 255]);
         // The corner is clear.
-        assert_eq!(&icon.data[0..4], &[0, 0, 0, 0]);
+        assert_eq!(icon.data[0], 0);
     }
 
     #[test]

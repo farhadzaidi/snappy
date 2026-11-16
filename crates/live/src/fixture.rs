@@ -43,7 +43,7 @@ impl Fixture {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("could not start {}: {error}", program.display()))?;
+            .map_err(|error| format!("couldn't start {}: {error}", program.display()))?;
         let input = child.stdin.take().ok_or("the fixture has no input pipe")?;
         let output = child.stdout.take().ok_or("the fixture has no output pipe")?;
         Ok(Self {

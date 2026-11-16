@@ -1,9 +1,14 @@
 //! Switching, stepping, and sending between workspaces, restarting, and quitting.
 
+use std::time::Duration;
+
+use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::settings::WorkspaceStep;
+use snappy_core::workspace::{ParkingPolicy, parking_origin};
 
 use super::Outcome;
 use super::support::{Context, describe, floating, near, side_by_side, timed};
+use crate::display_mode;
 use crate::input::pause;
 
 pub(super) fn workspace_switch(context: &mut Context) -> Result<Outcome, String> {
@@ -117,6 +122,96 @@ pub(super) fn quit_returns_windows(context: &mut Context) -> Result<Outcome, Str
     let elapsed = context.wait_shown("quit", before)?;
     context.daemon.start()?;
     Ok(timed(elapsed))
+}
+
+/// Shrinking the display while a window is parked, as waking with a display that comes back
+/// smaller does, leaves the window parked at the smaller display's corner, and growing it
+/// back parks it at the original corner, with no warning from Snappy either time. The
+/// system moves windows while the displays change, which is when containment must hold
+/// off. Only the macOS VM's display has another size to change to.
+pub(super) fn display_change_keeps_windows_parked(context: &mut Context) -> Result<Outcome, String> {
+    let (Some(original), Some(smaller)) = (display_mode::size(), display_mode::smaller()) else {
+        return Ok(Outcome::skipped(
+            "The sandbox's display has no other size to change to.",
+        ));
+    };
+    let display = context.display.clone();
+    let outcome = parked_through_display_changes(context, &[smaller, original]);
+    let restored = display_mode::set(original);
+    context.display = display;
+    let outcome = outcome?;
+    restored?;
+    Ok(outcome)
+}
+
+/// How long the system and Snappy may take over a display change.
+const DISPLAY_CHANGE_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn parked_through_display_changes(context: &mut Context, sizes: &[Size]) -> Result<Outcome, String> {
+    context.open("resized", floating(&context.display, 160.0))?;
+    let before = context.fixture.frame("resized")?;
+    context.press(&context.send_key(2)?)?;
+    context.wait_parked("resized")?;
+    let warned = warnings(context).len();
+    let updated = context.logged("displaysUpdated").len();
+
+    context.begin();
+    let mut slowest: f64 = 0.0;
+    for size in sizes {
+        display_mode::set(*size)?;
+        let display = Rect::from_origin_size(Point::new(0.0, 0.0), *size);
+        context.display.frame = display;
+        let what = format!("the corner of the {}×{} display", size.width, size.height);
+        let (_, elapsed) = context.wait_for_within("resized", &what, DISPLAY_CHANGE_TIMEOUT, |frame| {
+            parking_origin(ParkingPolicy::CornerSliver, frame, &[display])
+                .is_some_and(|corner| near(frame, frame.with_origin(corner)))
+        })?;
+        slowest = slowest.max(elapsed);
+        // Anything still to come from the change lands meanwhile.
+        pause(1500);
+        let after = context.fixture.frame("resized")?;
+        if !context.is_parked(after) {
+            return Err(format!(
+                "the window came back to {} after the change",
+                describe(after)
+            ));
+        }
+        context.begin();
+    }
+
+    let new_warnings = warnings(context).split_off(warned);
+    if !new_warnings.is_empty() {
+        return Err(format!("Snappy warned: {}", new_warnings.join(" | ")));
+    }
+    let updates = context.logged("displaysUpdated").split_off(updated);
+    if let Some(failed) = updates.iter().find(|record| !record["error"].is_null()) {
+        return Err(format!("a display update failed: {}", failed["error"]));
+    }
+    if updates.len() < sizes.len() {
+        return Err(format!(
+            "Snappy logged {} display updates for {} changes",
+            updates.len(),
+            sizes.len()
+        ));
+    }
+
+    context.press(&context.switch_key(2)?)?;
+    context.wait_shown("resized", before)?;
+    context.wait_active("workspace-2")?;
+    context.press(&context.switch_key(1)?)?;
+    context.wait_parked("resized")?;
+    context.wait_active("workspace-1")?;
+    Ok(timed(slowest))
+}
+
+/// The messages Snappy flagged as warnings for the user so far.
+fn warnings(context: &Context) -> Vec<String> {
+    context
+        .logged("status")
+        .iter()
+        .filter(|record| record["level"] == "warn")
+        .map(|record| record["message"].as_str().unwrap_or_default().to_owned())
+        .collect()
 }
 
 pub(super) fn step_workspaces(context: &mut Context) -> Result<Outcome, String> {

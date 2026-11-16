@@ -85,12 +85,28 @@ describe("daemon client", () => {
   it("every command resolves with its reply, and errors show", async () => {
     const reply = client.send({ kind: "setDebugLog", enabled: true });
     const id = transport.sent.at(-1)?.id ?? 0;
-    transport.deliver({ type: "reply", id, error: "Could not save settings: disk full" });
-    await expect(reply).resolves.toBe("Could not save settings: disk full");
+    const refusal = { message: "Couldn't save settings: disk full", setting: null };
+    transport.deliver({ type: "reply", id, error: refusal });
+    await expect(reply).resolves.toEqual(refusal);
     expect(client.toast.get()).toMatchObject({
       isError: true,
-      message: "Could not save settings: disk full",
+      message: "Couldn't save settings: disk full",
     });
+  });
+
+  it("a refusal shown in place is no toast, and its status copy is dismissed", async () => {
+    transport.deliver(stateWith(null));
+    const refusal = { message: "message 1", setting: "Switch to Workspace 3" };
+    const reply = client.send({ kind: "setSnappyKey", modifiers: ["ctrl"] }, { inPlace: true });
+    const id = transport.sent.at(-1)?.id ?? 0;
+    transport.deliver({ type: "reply", id, error: refusal });
+    transport.deliver(stateWith(status(1, true)));
+    await expect(reply).resolves.toEqual(refusal);
+    expect(client.toast.get()).toBeNull();
+    expect(transport.sent.at(-1)?.command).toEqual({ kind: "dismissStatus" });
+
+    transport.deliver(stateWith(status(2, true)));
+    expect(client.toast.get()?.message).toBe("message 2");
   });
 
   it("probes resolve with the daemon's answer", async () => {

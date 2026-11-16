@@ -4,10 +4,11 @@
 use std::path::Path;
 use std::rc::Rc;
 
-use snappy_core::bindings::{Probe, availability_probes, conflict_with_layout};
+use snappy_core::bindings::{Probe, Refusal, availability_probes, conflict_with_layout};
 use snappy_core::editor::is_separated;
 use snappy_core::keys::Mods;
 use snappy_core::layout::{self, DEFAULT_LAYOUT_ID, Layout};
+use snappy_core::reset::Reset;
 use snappy_core::settings::{LayoutOptions, Settings, SettingsError, Workspace};
 use snappy_ipc::{Command, ToSettings};
 use snappy_platform::Platform;
@@ -25,9 +26,12 @@ pub(crate) fn handle<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u64, com
     );
     let result = run(shared, command);
     let mut core = shared.core.borrow_mut();
-    if let Err(message) = &result {
-        core.flag("commandFailed", || serde_json::json!({ "error": message }));
-        core.announce_error(message);
+    if let Err(refusal) = &result {
+        core.flag(
+            "commandFailed",
+            || serde_json::json!({ "error": refusal.message }),
+        );
+        core.announce_error(&refusal.message);
     }
     core.outbox.push(ToSettings::Reply {
         id,
@@ -36,7 +40,7 @@ pub(crate) fn handle<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u64, com
     core.publish_state();
 }
 
-fn run<P: Platform + 'static>(shared: &Rc<Shared<P>>, command: Command) -> Result<(), String> {
+fn run<P: Platform + 'static>(shared: &Rc<Shared<P>>, command: Command) -> Result<(), Refusal> {
     match command {
         Command::BeginRecording | Command::EndRecording => {
             let recording = matches!(command, Command::BeginRecording);
@@ -47,14 +51,13 @@ fn run<P: Platform + 'static>(shared: &Rc<Shared<P>>, command: Command) -> Resul
             core.configure_hotkeys();
             Ok(())
         }
-        Command::DeleteWorkspace { workspace } => delete_workspace(shared, &workspace),
+        Command::DeleteWorkspace { workspace } => delete_workspace(shared, &workspace).map_err(Refusal::from),
         Command::SetWorkspacesEnabled { enabled: false } => {
             shared.cancel_current();
             let mut core = shared.core.borrow_mut();
-            if !workspaces::stop(&mut core) {
-                return Ok(());
-            }
-            change(&mut core, |settings| settings.workspaces.enabled = false)
+            workspaces::stop(&mut core)
+                .map_err(|error| format!("{error} Turn workspaces off again to retry."))?;
+            change(&mut core, |settings| settings.workspaces.enabled = false).map_err(Refusal::from)
         }
         command => {
             let changes_settings = !matches!(
@@ -81,14 +84,15 @@ fn run<P: Platform + 'static>(shared: &Rc<Shared<P>>, command: Command) -> Resul
     }
 }
 
-fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String> {
-    match command {
+fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), Refusal> {
+    let result = match command {
         Command::SetSnapping { enabled } => set_snapping(core, enabled),
         Command::SetDragModifier { modifier } => change(core, |s| s.snapping.drag_modifier = modifier),
         Command::SetSwapModifier { modifier } => change(core, |s| s.snapping.swap_modifier = modifier),
         Command::SetWhenTaken { choice } => change(core, |s| s.snapping.when_taken = choice),
         Command::SetShortcutsEnabled { enabled } => change(core, |s| s.snapping.shortcuts_enabled = enabled),
-        Command::SetSnappyKey { modifiers } => set_snappy_key(core, modifiers),
+        // The one refusal that names a setting, for the app to point to.
+        Command::SetSnappyKey { modifiers } => return set_snappy_key(core, modifiers),
         Command::SetCapsLockAsSnappyKey { enabled } => caps_lock::set_enabled(core, enabled),
         Command::SetNavigationShortcut { shortcut, chord } => {
             change(core, |s| s.navigation.set(shortcut, chord))
@@ -136,6 +140,7 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
             core.platform.apply_remedy(remedy)
         }
         Command::ApplyRemedy { .. } => Ok(()),
+        Command::Reset { reset } => reset_settings(core, &reset),
         Command::ImportSettings { path } => import(core, Path::new(&path)),
         Command::ExportSettings { path } => {
             SettingsStore::write_file(Path::new(&path), &core.settings).map_err(|e| e.to_string())?;
@@ -147,7 +152,8 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), String
             Ok(())
         }
         Command::BeginRecording | Command::EndRecording | Command::DeleteWorkspace { .. } => Ok(()),
-    }
+    };
+    result.map_err(Refusal::from)
 }
 
 /// Validate and save a change, then reconfigure what depends on settings.
@@ -168,7 +174,7 @@ fn refusal(error: SettingsError) -> String {
         // Shortcut conflicts and Snappy key problems explain themselves.
         SettingsError::Conflict(message) => message,
         SettingsError::SnappyKey(error) => error.to_string(),
-        other => format!("Could not save settings: {other}"),
+        other => format!("Couldn't save settings: {other}"),
     }
 }
 
@@ -179,7 +185,7 @@ fn commit<P: Platform>(core: &mut Core<P>, valid: Settings) -> Result<(), String
     }
     core.store.save(&valid).map_err(|error| match error {
         SettingsError::Protected => error.to_string(),
-        other => format!("Could not save settings: {other}"),
+        other => format!("Couldn't save settings: {other}"),
     })?;
     core.settings = valid;
     settings_changed(core);
@@ -197,7 +203,7 @@ pub(crate) fn settings_changed<P: Platform>(core: &mut Core<P>) {
 /// modifiers first: against each other and the chords the system keeps
 /// (`Settings::with_snappy_key`), then with the OS for each chord the change moves. Nothing
 /// changes when any check fails, and the reply names what clashed.
-fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<(), String> {
+fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<(), Refusal> {
     let current = core.settings.snappy_key;
     if modifiers == current.modifiers() {
         return Ok(());
@@ -213,14 +219,14 @@ fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<()
     let checked = core
         .settings
         .with_snappy_key(modifiers, platform)
-        .map_err(refusal)
+        .map_err(|error| Refusal::from(refusal(error)))
         .and_then(|next| {
             let probes = availability_probes(&next, platform);
             probe(core, &probes).map(|()| next)
         });
     let saved = checked.and_then(|next| {
         let key = next.snappy_key;
-        commit(core, next).map(|()| key)
+        commit(core, next).map(|()| key).map_err(Refusal::from)
     });
     match saved {
         Ok(key) => {
@@ -236,7 +242,7 @@ fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<()
             core.configure_hotkeys();
             core.flag(
                 "snappyKeyRefused",
-                || serde_json::json!({ "from": from, "to": to, "reason": reason }),
+                || serde_json::json!({ "from": from, "to": to, "reason": reason.message }),
             );
             Err(reason)
         }
@@ -247,7 +253,7 @@ fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<()
 /// recording: a probed chord can be one Snappy holds now, such as Snappy + Shift + 1 in one
 /// layout becoming Snappy + 1 of another once Shift joins the key, and the OS reports
 /// those as taken. Whoever calls this registers shortcuts again afterwards.
-fn probe<P: Platform>(core: &mut Core<P>, probes: &[Probe]) -> Result<(), String> {
+fn probe<P: Platform>(core: &mut Core<P>, probes: &[Probe]) -> Result<(), Refusal> {
     core.release_hotkeys();
     match probes
         .iter()
@@ -526,16 +532,32 @@ fn delete_workspace<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: &str) -> 
             s.workspaces.active_id = destination.clone();
         }
     })
-    .map_err(|e| format!("Could not remove workspace: {e}"))?;
+    .map_err(|e| format!("Couldn't remove workspace: {e}"))?;
 
     if let Err(error) = workspaces::remove_workspace(&mut core, id, &destination) {
         let _ = core.store.save(&previous);
         core.settings = previous;
         settings_changed(&mut core);
-        return Err(format!("Could not remove workspace: {error}"));
+        return Err(format!("Couldn't remove workspace: {error}"));
     }
     drop(core);
     shared.histories.borrow_mut().remove(&format!("workspace:{id}"));
+    Ok(())
+}
+
+/// Put settings back to their defaults as `reset` says, validated and saved as any change.
+/// Resetting everything removes the workspaces, so they stop first, bringing their windows
+/// back; when a window can't come back yet, nothing is reset.
+fn reset_settings<P: Platform>(core: &mut Core<P>, reset: &Reset) -> Result<(), String> {
+    if *reset == Reset::Everything {
+        workspaces::stop(core).map_err(
+            |_| "A hidden window couldn't be brought back yet, so nothing was reset. Try again in a moment.",
+        )?;
+    }
+    let before = core.settings.clone();
+    let platform = core.platform_name();
+    change(core, |settings| *settings = before.reset(reset, platform))?;
+    core.announce(&reset.message(&before));
     Ok(())
 }
 
@@ -543,9 +565,9 @@ fn delete_workspace<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: &str) -> 
 fn import<P: Platform>(core: &mut Core<P>, path: &Path) -> Result<(), String> {
     let mut imported = SettingsStore::read_file(path, core.platform_name())
         .map_err(|error| format!("Import failed: {error}"))?;
-    if !workspaces::stop(core) {
-        return Ok(());
-    }
+    workspaces::stop(core).map_err(
+        |_| "A hidden window couldn't be brought back yet, so nothing was imported. Try again in a moment.",
+    )?;
     imported.workspaces.enabled = false;
     imported.snapping.enabled = core.settings.snapping.enabled;
     change(core, |s| *s = imported).map_err(|error| format!("Import failed: {error}"))?;

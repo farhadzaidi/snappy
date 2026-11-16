@@ -29,7 +29,7 @@ pub fn hold_as(modifiers: Mods) -> Result<CapsLockUndo, String> {
             .ok_or_else(|| messages::CAPS_LOCK_UNWATCHED.to_owned())
     });
     match held {
-        Ok(()) => Ok(CapsLockUndo(key_mapping::UNDO_NAME.to_owned())),
+        Ok(()) => Ok(CapsLockUndo(key_mapping::UNDO_NAME.into())),
         Err(reason) => {
             restore();
             Err(reason)
@@ -58,12 +58,13 @@ pub fn restore() {
 
 /// Undo the mapping a run that ended without restoring Caps Lock left in place.
 pub fn undo(undo: &CapsLockUndo) {
-    if key_mapping::named(&undo.0).is_some() {
+    if undo.0.as_str().and_then(key_mapping::named).is_some() {
         unmap();
     }
 }
 
-fn unmap() {
+/// Take Snappy's pair out of the user key mapping, if it is there.
+pub fn unmap() {
     if let Some(system) = EventSystem::connect() {
         let mapping = system.user_key_mapping();
         let without = key_mapping::without_snappy(&mapping);
@@ -74,6 +75,8 @@ fn unmap() {
 }
 
 /// Turn Caps Lock on or off, as a tap of the key does.
-pub fn toggle() {
-    hid::toggle_caps_lock();
+pub fn toggle() -> Result<(), String> {
+    hid::toggle_caps_lock()
+        .then_some(())
+        .ok_or_else(|| "the HID system didn't change the Caps Lock state".to_owned())
 }

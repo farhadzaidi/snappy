@@ -7,8 +7,10 @@ use std::io::{self, Read, Write};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use snappy_core::keys::{KeyChord, Mods};
+use snappy_core::bindings::Refusal;
+use snappy_core::keys::{KeyChord, Mods, Platform};
 use snappy_core::layout::Layout;
+use snappy_core::reset::Reset;
 use snappy_core::settings::{
     DragModifier, HistoryStep, LayoutOptions, NavigationShortcut, Settings, Workspace, WorkspaceStep,
 };
@@ -16,7 +18,7 @@ use snappy_core::swap::{SwapModifier, WhenTaken};
 use snappy_platform::{Display, Remedy};
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 5;
 /// Messages larger than this are refused; settings files are capped well below it.
 pub const MAX_MESSAGE_BYTES: u32 = 8 * 1024 * 1024;
 
@@ -29,10 +31,10 @@ pub enum ToSettings {
     },
     /// Everything the settings app shows. Sent after every change.
     State(Box<AppState>),
-    /// The answer to a command.
+    /// The answer to a command: why it was refused, if it was.
     Reply {
         id: u64,
-        error: Option<String>,
+        error: Option<Refusal>,
     },
     ProbeResult {
         available: bool,
@@ -143,6 +145,12 @@ pub enum Command {
     ApplyRemedy {
         remedy: Remedy,
     },
+    /// Put a section of shortcuts, a workspace's shortcuts, every setting, or everything
+    /// back to the defaults (`Settings::reset`). Resetting everything turns workspaces off
+    /// first, bringing their windows back.
+    Reset {
+        reset: Reset,
+    },
     ImportSettings {
         path: String,
     },
@@ -158,8 +166,8 @@ pub enum Command {
 pub struct AppState {
     pub settings: Settings,
     pub displays: Vec<Display>,
-    /// "macos", "windows", or "linux": decides modifier names and permission controls.
-    pub platform: String,
+    /// Decides modifier names and permission controls.
+    pub platform: Platform,
     pub snapping: SnappingState,
     pub workspaces: WorkspacesState,
     /// Notes from the platform about the desktop, such as another tool that also snaps.
@@ -294,6 +302,34 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_reply_carries_its_message_and_the_setting_it_names() {
+        let reply = ToSettings::Reply {
+            id: 3,
+            error: Some(Refusal {
+                message: "Snappy + 3 for Switch to Workspace 3 is already used by macOS or another app."
+                    .into(),
+                setting: Some("Switch to Workspace 3".into()),
+            }),
+        };
+        assert_eq!(
+            serde_json::to_value(&reply).unwrap(),
+            serde_json::json!({
+                "type": "reply",
+                "id": 3,
+                "error": {
+                    "message": "Snappy + 3 for Switch to Workspace 3 is already used by macOS or another app.",
+                    "setting": "Switch to Workspace 3",
+                },
+            })
+        );
+        let done = ToSettings::Reply { id: 4, error: None };
+        assert_eq!(
+            serde_json::to_string(&done).unwrap(),
+            r#"{"type":"reply","id":4,"error":null}"#
+        );
+    }
+
+    #[test]
     fn the_navigation_command_names_its_shortcut_by_the_settings_field() {
         let focus: Command =
             serde_json::from_str(r#"{"kind":"setNavigationShortcut","shortcut":"focusUp","chord":null}"#)
@@ -301,7 +337,7 @@ mod tests {
         assert_eq!(
             focus,
             Command::SetNavigationShortcut {
-                shortcut: NavigationShortcut::Focus(snappy_core::settings::FocusShortcut::FocusUp),
+                shortcut: NavigationShortcut::Focus(snappy_core::navigate::Direction::Up),
                 chord: None,
             }
         );
@@ -320,7 +356,7 @@ mod tests {
         assert!(matches!(
             nearest,
             Command::SetNavigationShortcut {
-                shortcut: NavigationShortcut::NearestEmpty,
+                shortcut: NavigationShortcut::NearestEmptyZone,
                 ..
             }
         ));

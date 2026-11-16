@@ -1,7 +1,8 @@
 //! Moving keyboard focus between windows and zones.
 
 use snappy_core::geometry::Rect;
-use snappy_core::settings::FocusShortcut;
+use snappy_core::navigate::Direction;
+use snappy_core::settings::NavigationShortcut;
 
 use super::Outcome;
 use super::support::{Context, side_by_side, timed, two_zoned};
@@ -37,11 +38,11 @@ fn focus_around(context: &mut Context) -> Result<Outcome, String> {
 
     let seen = context.logged("focusMove").len();
     let presses = [
-        FocusShortcut::FocusRight,
-        FocusShortcut::FocusDown,
-        FocusShortcut::FocusUp,
-        FocusShortcut::FocusRight,
-        FocusShortcut::FocusLeft,
+        NavigationShortcut::Focus(Direction::Right),
+        NavigationShortcut::Focus(Direction::Down),
+        NavigationShortcut::Focus(Direction::Up),
+        NavigationShortcut::Focus(Direction::Right),
+        NavigationShortcut::Focus(Direction::Left),
     ];
     context.begin();
     for shortcut in presses {
@@ -121,15 +122,15 @@ fn focus_between_zones(context: &mut Context) -> Result<Outcome, String> {
     };
     context.begin();
     for shortcut in [
-        FocusShortcut::FocusRight,
-        FocusShortcut::FocusLeft,
-        FocusShortcut::FocusDown,
+        NavigationShortcut::Focus(Direction::Right),
+        NavigationShortcut::Focus(Direction::Left),
+        NavigationShortcut::Focus(Direction::Down),
     ] {
         press(context, shortcut)?;
     }
     context.focus("zone-f")?;
-    press(context, FocusShortcut::FocusRight)?;
-    press(context, FocusShortcut::FocusLeft)?;
+    press(context, NavigationShortcut::Focus(Direction::Right))?;
+    press(context, NavigationShortcut::Focus(Direction::Left))?;
     let elapsed = context.elapsed_ms();
 
     let moves: Vec<serde_json::Value> = context.logged("focusMove").into_iter().skip(seen).collect();

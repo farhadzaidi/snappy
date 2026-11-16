@@ -1,20 +1,56 @@
 /* The settings app's palette and sizes. The app is dark only. */
 :root {
-  --background: #0e1115;
-  --sidebar: #13171c;
-  --surface: #1a1f25;
-  --line: rgb(255 255 255 / 9%);
-  --mint: #7ae8c2;
-  --mint-wash: rgb(122 232 194 / 10%);
-  --muted: #99a8b5;
-  --destructive: #ffa394;
-  --warning: #ffb35c;
-  --text: #ffffff;
+  /* Each color's channels, so its see-through shades are written from the color itself. */
+  --background-rgb: 14 17 21;
+  --surface-rgb: 26 31 37;
+  --text-rgb: 255 255 255;
+  --mint-rgb: 122 232 194;
+  --muted-rgb: 153 168 181;
+  --destructive-rgb: 255 163 148;
+  --warning-rgb: 255 179 92;
+  --shadow-rgb: 0 0 0;
+
+  --background: rgb(var(--background-rgb));
+  /* The editor's sidebar, over the window's background. */
+  --sidebar: rgb(19 23 28 / 50%);
+  --surface: rgb(var(--surface-rgb));
+  --surface-hover: #222831;
+  /* A group or toolbar laid over the window. */
+  --panel: rgb(var(--surface-rgb) / 60%);
+  --text: rgb(var(--text-rgb));
+  --muted: rgb(var(--muted-rgb));
+  --line: rgb(var(--text-rgb) / 9%);
+  --line-strong: rgb(var(--text-rgb) / 14%);
+  /* Behind a control under the pointer, or one that is open. */
+  --wash: rgb(var(--text-rgb) / 6%);
+  --mint: rgb(var(--mint-rgb));
+  --mint-hover: #94efcf;
+  --mint-wash: rgb(var(--mint-rgb) / 10%);
+  /* Focus rings, and the edges of what has focus or is being drawn. */
+  --mint-line: rgb(var(--mint-rgb) / 60%);
+  --destructive: rgb(var(--destructive-rgb));
+  --destructive-wash: rgb(var(--destructive-rgb) / 10%);
+  --destructive-line: rgb(var(--destructive-rgb) / 30%);
+  --warning: rgb(var(--warning-rgb));
 
   --radius-small: 7px;
   --radius: 8px;
   --radius-card: 10px;
   --radius-panel: 12px;
+
+  /* Every settings row, with a menu, a recorder, or a switch, is at least this tall. */
+  --row-height: 38px;
+
+  /* Labels, then their controls in one column as wide as the widest control needs, so the
+     recorders of a group or list are one width and line up at both edges. When space runs
+     short, labels wrap down to their longest word before a control shortens. */
+  --control-columns: 1fr minmax(0, max-content);
+
+  /* A toolbar button's space on each side of its icon and label. */
+  --tool-button-padding: 10px;
+
+  /* The space each side of a shortcut's +, in ems so it scales with the text it sits in. */
+  --chord-space: 0.3em;
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-rounded: ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -57,7 +93,10 @@ textarea {
   color: inherit;
 }
 
+/* The system WebKit's own style sheet aligns a button's flex items at their start instead of
+   stretching them as other boxes do. The settings window is WebKit on macOS and Linux. */
 button {
+  align-items: normal;
   background: none;
   border: none;
   padding: 0;
@@ -69,7 +108,7 @@ button:disabled {
 }
 
 :focus-visible {
-  outline: 2px solid rgb(122 232 194 / 60%);
+  outline: 2px solid var(--mint-line);
   outline-offset: 2px;
 }
 
@@ -86,10 +125,6 @@ p {
 
 .muted {
   color: var(--muted);
-}
-
-.mono {
-  font-family: var(--font-mono);
 }
 
 .mint {

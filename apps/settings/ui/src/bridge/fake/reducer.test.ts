@@ -25,6 +25,39 @@ const noOptions = { enabled: true, selectShortcut: null, zoneShortcuts: {} };
 const snappy = (code: string): KeyChord => ({ code, mods: ["snappy"] });
 
 describe("fake daemon", () => {
+  it("resetting a section puts its defaults back with the core's message", () => {
+    const start = initialState("macos");
+    const { state } = run(
+      start,
+      { kind: "setNavigationShortcut", shortcut: "left", chord: snappy("KeyA") },
+      { kind: "reset", reset: { scope: "shortcuts", section: "moveBetweenZones" } },
+    );
+    expect(state.settings.navigation.left).toEqual(start.settings.navigation.left);
+    expect(state.status).toMatchObject({ message: "Move between zones shortcuts reset.", isError: false });
+  });
+
+  it("resetting everything removes custom layouts and turns workspaces off", () => {
+    const { state } = run(
+      initialState("macos"),
+      { kind: "saveLayout", layout: custom, options: noOptions, display: "display-1" },
+      { kind: "setWorkspacesEnabled", enabled: true },
+      { kind: "reset", reset: { scope: "everything" } },
+    );
+    expect(state.settings.layouts.custom).toEqual([]);
+    expect(state.settings.workspaces.enabled).toBe(false);
+    expect(state.workspaces.running).toBe(false);
+  });
+
+  it("a refusal is the status too, as the daemon posts it", () => {
+    const outcome = run(initialState("macos"), {
+      kind: "setNavigationShortcut",
+      shortcut: "left",
+      chord: { code: "KeyQ", mods: ["meta"] },
+    });
+    expect(outcome.error).not.toBeNull();
+    expect(outcome.state.status).toMatchObject({ message: outcome.error, isError: true });
+  });
+
   it("applying assigns the display and the default layout quietly", () => {
     const { state } = run(initialState("macos"), {
       kind: "applyLayout",
@@ -87,7 +120,7 @@ describe("fake daemon", () => {
       shortcut: "left",
       chord: { code: "KeyQ", mods: ["meta"] },
     });
-    expect(error).toBe("Command + Q is already assigned to a standard app command.");
+    expect(error).toBe("Command ⌘ + Q is already assigned to a standard app command.");
     expect(state.settings).toEqual(before.settings);
   });
 
@@ -211,7 +244,9 @@ describe("fake daemon", () => {
       shortcut: "clearSelection",
       chord: snappy("Backspace"),
     });
-    expect(refused.error).toBe("macOS reserves Control + Option + Command + Delete; it never reaches apps.");
+    expect(refused.error).toBe(
+      "macOS reserves Control ⌃ + Option ⌥ + Command ⌘ + Delete; it never reaches apps.",
+    );
     expect(refused.state.settings.navigation.clearSelection).toMatchObject(snappy("Backslash"));
 
     for (const platform of ["windows", "linux"] as const) {
@@ -265,7 +300,7 @@ describe("fake daemon", () => {
     expect(undo.state.settings.history.undo).toEqual(snappy("KeyU"));
     const byHand: KeyChord = { code: "KeyU", mods: ["ctrl", "alt", "meta"] };
     const clash = run(undo.state, { kind: "setHistoryShortcut", step: "redo", chord: byHand });
-    expect(clash.error).toBe("Control + Option + Command + U is already assigned to Undo window move.");
+    expect(clash.error).toBe("Control ⌃ + Option ⌥ + Command ⌘ + U is already assigned to Undo window move.");
     expect(clash.state.settings.history.redo).toBeNull();
   });
 
@@ -327,7 +362,7 @@ describe("fake daemon", () => {
       chord: { code: "KeyJ", mods: ["ctrl", "alt"] },
     }).state;
     const clash = run(withUndo, { kind: "setSnappyKey", modifiers: ["ctrl", "alt"] });
-    expect(clash.error).toBe("Snappy + J for Focus left would collide with Undo window move.");
+    expect(clash.error).toBe("Snappy + J (Focus left) would clash with Undo window move.");
     expect(clash.state.settings).toEqual(withUndo.settings);
 
     const single = run(withUndo, { kind: "setSnappyKey", modifiers: ["meta"] });
@@ -353,8 +388,9 @@ describe("fake daemon", () => {
       { isAvailable: (chord) => !taken(chord) },
     );
     expect(outcome.error).toBe(
-      "Snappy + Space for Move to the nearest empty zone would be Control + Option + Space, which macOS or another app already uses.",
+      "Snappy + Space for Move to the nearest empty zone is already used by macOS or another app.",
     );
+    expect(outcome.setting).toBe("Move to the nearest empty zone");
     expect(outcome.state.settings.snappyKey).toEqual(["ctrl", "alt", "meta"]);
   });
 

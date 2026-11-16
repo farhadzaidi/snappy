@@ -90,6 +90,8 @@ impl Fake {
             std::env::set_var("XDG_DATA_HOME", home.join("data"));
             std::env::set_var("XDG_CONFIG_HOME", home.join("config"));
             std::env::set_var("GSETTINGS_BACKEND", "memory");
+            // No compositor: the keymap can't be read, so only the options are checked.
+            std::env::set_var("WAYLAND_DISPLAY", home.join("no-compositor"));
         }
 
         Command::new("dbus-daemon").arg("--version").output().ok()?;
@@ -849,7 +851,7 @@ fn holding_caps_lock_writes_snappys_option_and_asks_the_extension_with_the_snapp
         "a restarted extension holds it again"
     );
 
-    adapter.platform.toggle_caps_lock();
+    adapter.platform.toggle_caps_lock().unwrap();
     assert_eq!(fake.requests("capsLockToggle").len(), 1);
 
     adapter.platform.restore_caps_lock();
@@ -877,7 +879,7 @@ fn a_caps_lock_option_of_the_users_own_refuses_and_leaves_nothing_behind() {
         refused,
         Err(
             "Caps Lock is already remapped by the keyboard options ctrl:nocaps and caps:escape. \
-             Remove that to use Caps Lock as the Snappy key."
+             Remove them to use Caps Lock as the Snappy key."
                 .to_owned()
         )
     );
@@ -902,6 +904,33 @@ fn caps_lock_presses_arrive_as_engine_events_without_their_keys() {
             PlatformEvent::CapsLock(CapsLockInput::Released),
         ]
     );
+}
+
+#[test]
+fn a_caps_lock_option_added_while_held_wins_and_caps_lock_is_reported_lost() {
+    let fake = fake!();
+    let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
+    fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
+    let mut adapter = Adapter::start();
+    adapter
+        .platform
+        .hold_caps_lock_as(snappy_core::keys::SnappyKey::DEFAULT.modifiers())
+        .unwrap();
+
+    fake.emit(json!({"type": "keyboardOptions", "options": "compose:ralt"}));
+    assert!(
+        adapter.settle(fake).is_empty(),
+        "options that leave Caps Lock alone"
+    );
+    assert!(fake.requests("capsLockRestore").is_empty());
+
+    fake.emit(json!({"type": "keyboardOptions", "options": "compose:ralt,caps:escape"}));
+    assert_eq!(adapter.settle(fake), [PlatformEvent::CapsLockLost]);
+    assert_eq!(fake.requests("capsLockRestore").len(), 1);
+    assert!(!xkb_folder().join("symbols/snappy").exists());
+
+    fake.emit(json!({"type": "keyboardOptions", "options": "caps:escape,ctrl:nocaps"}));
+    assert!(adapter.settle(fake).is_empty(), "nothing held to lose");
 }
 
 #[test]

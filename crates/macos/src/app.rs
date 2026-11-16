@@ -104,6 +104,9 @@ fn teardown() {
     monitors::remove_all();
     hotkeys::unregister_all();
     caps_lock::stop();
+    // The engine gives Caps Lock back before quitting; this covers an engine that panicked,
+    // since the mapping outlives the process. The run loop is over, so nothing waits on it.
+    caps_lock::unmap();
     permissions::set_polling(false);
     overlay::close_all();
     desktop_guard::clear();

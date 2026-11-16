@@ -2,6 +2,7 @@
 //! windows report about themselves. They run only inside a sandbox, a VM or a container,
 //! never in the owner's session.
 
+pub mod display_mode;
 pub mod fixture;
 #[cfg(target_os = "linux")]
 pub mod gnome;

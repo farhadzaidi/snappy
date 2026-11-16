@@ -43,7 +43,8 @@ mod key {
     pub const RIGHT: u8 = 114;
 }
 
-const HYPER: [Modifier; 3] = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta];
+/// The default Snappy key's modifiers.
+const SNAPPY_KEY: [Modifier; 3] = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta];
 
 /// A running adapter plus a client connection that plays the part of other apps.
 struct Desktop {
@@ -783,21 +784,21 @@ fn shortcuts_fire_with_and_without_num_lock() {
     let chord = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
     assert!(desktop.platform.register(&[(7, chord)]).is_empty());
 
-    let hyper_one = [key::CONTROL_L, key::ALT_L, key::SUPER_L, key::DIGIT_1];
-    desktop.tap(&hyper_one);
+    let snappy_one = [key::CONTROL_L, key::ALT_L, key::SUPER_L, key::DIGIT_1];
+    desktop.tap(&snappy_one);
     assert_eq!(
         desktop.expect(|event| matches!(event, PlatformEvent::HotKey(_))),
         Some(PlatformEvent::HotKey(7))
     );
 
     desktop.tap(&[key::NUM_LOCK]);
-    desktop.tap(&hyper_one);
+    desktop.tap(&snappy_one);
     let fired = desktop.expect(|event| matches!(event, PlatformEvent::HotKey(_)));
     desktop.tap(&[key::NUM_LOCK]);
     assert_eq!(fired, Some(PlatformEvent::HotKey(7)));
 
     desktop.platform.unregister_all();
-    desktop.tap(&hyper_one);
+    desktop.tap(&snappy_one);
     assert!(
         !desktop
             .drain()
@@ -809,8 +810,8 @@ fn shortcuts_fire_with_and_without_num_lock() {
 #[test]
 fn chords_grabbed_elsewhere_are_unavailable() {
     let mut desktop = desktop!();
-    let taken = Combo::new("KeyK", HYPER);
-    let free = Combo::new("KeyJ", HYPER);
+    let taken = Combo::new("KeyK", SNAPPY_KEY);
+    let free = Combo::new("KeyJ", SNAPPY_KEY);
     assert!(desktop.platform.is_available(&taken));
 
     // Another client takes Ctrl+Alt+Super+K.
@@ -1203,8 +1204,9 @@ impl Desktop {
 
 const VOID_SYMBOL: u32 = 0x00ff_ffff;
 const CAPS_LOCK_KEYSYM: u32 = 0xffe5;
+const ESCAPE_KEYSYM: u32 = 0xff1b;
 /// Control, Mod1, and Mod4, in `GetModifierMapping` order.
-const HYPER_ROWS: [usize; 3] = [2, 3, 6];
+const SNAPPY_KEY_ROWS: [usize; 3] = [2, 3, 6];
 
 #[test]
 fn caps_lock_held_is_the_snappy_key_a_lone_tap_comes_alone_and_restoring_gives_it_back() {
@@ -1213,8 +1215,8 @@ fn caps_lock_held_is_the_snappy_key_a_lone_tap_comes_alone_and_restoring_gives_i
     assert_eq!(before.keysyms.first(), Some(&CAPS_LOCK_KEYSYM));
     assert_eq!(before.rows, [1], "a Lock key");
 
-    let hyper: Mods = HYPER.into_iter().collect();
-    desktop.platform.hold_caps_lock_as(hyper).unwrap();
+    let snappy_key: Mods = SNAPPY_KEY.into_iter().collect();
+    desktop.platform.hold_caps_lock_as(snappy_key).unwrap();
     let held = desktop.caps_lock_key();
     assert!(
         held.keysyms
@@ -1222,9 +1224,9 @@ fn caps_lock_held_is_the_snappy_key_a_lone_tap_comes_alone_and_restoring_gives_i
             .all(|keysym| [VOID_SYMBOL, 0].contains(keysym)),
         "{held:?}"
     );
-    assert_eq!(held.rows, HYPER_ROWS);
+    assert_eq!(held.rows, SNAPPY_KEY_ROWS);
     assert!(!held.repeats);
-    let to_right = Combo::new("ArrowRight", HYPER);
+    let to_right = Combo::new("ArrowRight", SNAPPY_KEY);
     assert!(desktop.platform.register(&[(3, to_right)]).is_empty());
     desktop.drain();
 
@@ -1267,9 +1269,9 @@ fn caps_lock_held_is_the_snappy_key_a_lone_tap_comes_alone_and_restoring_gives_i
         "a mouse button is something else used"
     );
 
-    desktop.platform.toggle_caps_lock();
+    desktop.platform.toggle_caps_lock().unwrap();
     assert!(wait_until(|| desktop.caps_lock_on()));
-    desktop.platform.toggle_caps_lock();
+    desktop.platform.toggle_caps_lock().unwrap();
     assert!(wait_until(|| !desktop.caps_lock_on()));
 
     desktop.platform.unregister_all();
@@ -1289,8 +1291,8 @@ fn caps_lock_held_is_the_snappy_key_a_lone_tap_comes_alone_and_restoring_gives_i
 fn what_a_crashed_run_left_is_put_back_from_its_record() {
     let mut desktop = desktop!();
     let before = desktop.caps_lock_key();
-    let hyper: Mods = HYPER.into_iter().collect();
-    let undo = desktop.platform.hold_caps_lock_as(hyper).unwrap();
+    let snappy_key: Mods = SNAPPY_KEY.into_iter().collect();
+    let undo = desktop.platform.hold_caps_lock_as(snappy_key).unwrap();
     assert_ne!(desktop.caps_lock_key(), before);
 
     desktop.platform.undo_caps_lock(&undo);
@@ -1299,27 +1301,52 @@ fn what_a_crashed_run_left_is_put_back_from_its_record() {
     assert_eq!(desktop.caps_lock_key(), before, "undoing twice changes nothing");
     desktop.platform.restore_caps_lock();
     assert_eq!(desktop.caps_lock_key(), before);
+
+    // A start after a crash holds Caps Lock right after undoing, before the server's notice
+    // of the undo reaches the event thread.
+    desktop.platform.hold_caps_lock_as(snappy_key).unwrap();
+    desktop.platform.restore_caps_lock();
+    assert_eq!(desktop.caps_lock_key(), before);
 }
 
 #[test]
-fn a_caps_lock_option_is_refused_and_a_reloaded_keymap_holds_caps_lock_again() {
+fn a_caps_lock_option_is_refused_and_a_reloaded_keymap_lets_go_of_caps_lock() {
     let mut desktop = desktop!();
-    let hyper: Mods = HYPER.into_iter().collect();
+    let snappy_key: Mods = SNAPPY_KEY.into_iter().collect();
+    let escape_refusal = "Caps Lock is already remapped by the keyboard option caps:escape. Remove it to use Caps Lock as the Snappy key.";
     desktop.setxkbmap("caps:escape");
-    let refused = desktop.platform.hold_caps_lock_as(hyper);
+    let refused = desktop.platform.hold_caps_lock_as(snappy_key);
     desktop.setxkbmap("");
-    assert_eq!(
-        refused.unwrap_err(),
-        "Caps Lock is already remapped by the keyboard option caps:escape. Remove that to use Caps Lock as the Snappy key."
-    );
+    assert_eq!(refused.unwrap_err(), escape_refusal);
     let before = desktop.caps_lock_key();
 
-    desktop.platform.hold_caps_lock_as(hyper).unwrap();
+    // A reloaded keymap's own Caps Lock stays; the engine hears it was lost and holds again.
+    desktop.platform.hold_caps_lock_as(snappy_key).unwrap();
+    desktop.drain();
     desktop.setxkbmap("");
-    assert!(
-        wait_until(|| desktop.caps_lock_key().rows == HYPER_ROWS),
-        "held again"
+    assert!(wait_until(|| desktop
+        .drain()
+        .contains(&PlatformEvent::CapsLockLost)));
+    assert_eq!(desktop.caps_lock_key(), before);
+    desktop.platform.hold_caps_lock_as(snappy_key).unwrap();
+    assert_eq!(desktop.caps_lock_key().rows, SNAPPY_KEY_ROWS, "held again");
+
+    // One whose options remap Caps Lock keeps their Caps Lock, and holding is refused.
+    desktop.setxkbmap("caps:escape");
+    assert!(wait_until(|| desktop
+        .drain()
+        .contains(&PlatformEvent::CapsLockLost)));
+    assert_eq!(desktop.caps_lock_key().keysyms.first(), Some(&ESCAPE_KEYSYM));
+    assert_eq!(
+        desktop.platform.hold_caps_lock_as(snappy_key).unwrap_err(),
+        escape_refusal
     );
     desktop.platform.restore_caps_lock();
+    assert_eq!(
+        desktop.caps_lock_key().keysyms.first(),
+        Some(&ESCAPE_KEYSYM),
+        "theirs"
+    );
+    desktop.setxkbmap("");
     assert_eq!(desktop.caps_lock_key(), before);
 }

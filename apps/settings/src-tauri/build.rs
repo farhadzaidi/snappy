@@ -18,6 +18,6 @@ fn ensure_frontend_dist() {
     }
     match fs::create_dir_all(dist) {
         Ok(()) => println!("cargo:warning=the web UI is not built yet; run `pnpm -C apps/settings/ui build`"),
-        Err(error) => println!("cargo:warning=could not create {FRONTEND_DIST}: {error}"),
+        Err(error) => println!("cargo:warning=couldn't create {FRONTEND_DIST}: {error}"),
     }
 }

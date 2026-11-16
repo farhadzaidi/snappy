@@ -10,6 +10,7 @@ use zbus::blocking::Connection;
 use zbus::zvariant::OwnedValue;
 
 use crate::protocol::{INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME};
+use snappy_linux::journal;
 
 /// How long a request may take before the engine gives up on it. GNOME Shell answers from
 /// its main loop, normally within a frame.
@@ -36,7 +37,7 @@ impl CallError {
     /// Logs what went wrong for the daemon's output, once, where it happened.
     fn logged(self) -> CallError {
         if let CallError::Malformed(detail) = &self {
-            eprintln!("snappy: unexpected reply from GNOME Shell: {detail}");
+            journal::warn(format_args!("unexpected reply from GNOME Shell: {detail}"));
         }
         self
     }

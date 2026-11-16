@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use snappy_core::geometry::Point;
 use snappy_linux::clients::ClientTracker;
+use snappy_linux::journal;
 use snappy_linux::tray::TrayIcon;
 use snappy_platform::{CapsLockInput, LiveControl, PlatformEvent, WindowId};
 use zbus::MatchRule;
@@ -161,8 +162,16 @@ impl App {
                         self.emit(PlatformEvent::CapsLock(CapsLockInput::Pressed));
                     }
                 }
-                Incoming::ScreenLocked(locked) => caps_lock::screen_locked(&self.shared, locked),
-                Incoming::KeyboardSettingsChanged => caps_lock::settings_changed(&self.shared),
+                Incoming::ScreenLocked(locked) => {
+                    if caps_lock::screen_locked(&self.shared, locked) {
+                        self.emit(PlatformEvent::CapsLockLost);
+                    }
+                }
+                Incoming::KeyboardSettingsChanged => {
+                    if caps_lock::settings_changed(&self.shared) {
+                        self.emit(PlatformEvent::CapsLockLost);
+                    }
+                }
                 Incoming::Modifiers(mods, at) => {
                     if let Some(mods) = held.report(mods, at) {
                         self.emit(PlatformEvent::ModifiersChanged { at: pointer, mods });
@@ -204,7 +213,9 @@ impl App {
     /// differences are reported before the engine hears that it can control windows.
     fn script_started(&self, version: u32, windows: &mut WindowList) {
         if version != PROTOCOL_VERSION {
-            eprintln!("snappy: KWin runs version {version} of Snappy's script, not {PROTOCOL_VERSION}");
+            journal::warn(format_args!(
+                "KWin runs version {version} of Snappy's script, not {PROTOCOL_VERSION}"
+            ));
             self.set_live_control(LiveControl::unavailable(SCRIPT_OTHER_VERSION));
             return;
         }
@@ -278,7 +289,7 @@ fn load_script(shared: &Shared) {
         return;
     }
     if let Err(error) = script::start(&shared.bus) {
-        eprintln!("snappy: KWin didn't load Snappy's script: {error:?}");
+        journal::warn(format_args!("KWin didn't load Snappy's script: {error:?}"));
         shared.set_live_control(LiveControl::unavailable(SCRIPT_NOT_LOADED));
     }
 }

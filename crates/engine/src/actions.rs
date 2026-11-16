@@ -18,6 +18,7 @@ use snappy_platform::{Display, Platform, WindowInfo};
 use crate::core::{Core, PendingNavigation};
 use crate::drag::{swap_source, zone_slots};
 use crate::ops::{Shared, SnapRequest, SwapMove, run_redo, run_snap, run_swap, run_undo};
+use crate::workspaces::{AfterSend, SwitchFocus};
 use crate::{caps_lock, focus, selection, workspaces};
 
 pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
@@ -44,14 +45,16 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         HotKeyAction::NextWorkspace => workspaces::cycle(shared, 1),
         HotKeyAction::SendToPreviousWorkspace => workspaces::send_and_stay(shared, -1),
         HotKeyAction::SendToNextWorkspace => workspaces::send_and_stay(shared, 1),
-        HotKeyAction::SwitchWorkspace(target) => workspaces::request_switch(shared, &target, false),
-        HotKeyAction::SendToWorkspace(target) => workspaces::send_focused(shared, &target, false),
-        HotKeyAction::SendAndSwitch(target) => workspaces::send_focused(shared, &target, true),
+        HotKeyAction::SwitchWorkspace(target) => {
+            workspaces::request_switch(shared, &target, SwitchFocus::Workspace)
+        }
+        HotKeyAction::SendToWorkspace(target) => workspaces::send_focused(shared, &target, AfterSend::Stay),
+        HotKeyAction::SendAndSwitch(target) => workspaces::send_focused(shared, &target, AfterSend::Follow),
         _ if !shared.core.borrow().is_live() => {}
         HotKeyAction::UndoMove => shared.submit(run_undo),
         HotKeyAction::RedoMove => shared.submit(run_redo),
         HotKeyAction::SelectLayout(layout) => select_layout_under_pointer(shared, &layout),
-        HotKeyAction::Navigate(direction) => move_focused(shared, Target::Direction(direction)),
+        HotKeyAction::MoveWindow(direction) => move_focused(shared, Target::Direction(direction)),
         HotKeyAction::Zone => move_focused(shared, Target::Zone(combo)),
         HotKeyAction::NearestEmptyZone => fill_empty_zones(shared),
         HotKeyAction::FocusWindow(direction) => focus::focus_toward(shared, direction),

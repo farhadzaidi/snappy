@@ -1,13 +1,15 @@
 //! What Snappy shows of its own: the zone overlay and the menu bar item.
 
-#[cfg(not(target_os = "macos"))]
 use std::time::Instant;
 
 use snappy_core::geometry::Point;
+#[cfg(target_os = "macos")]
+use snappy_core::geometry::Rect;
+#[cfg(target_os = "macos")]
+use snappy_core::keys::KeyCode;
 use snappy_core::keys::Mods;
 
 use super::Outcome;
-#[cfg(not(target_os = "macos"))]
 use super::support::SETTLE_TIMEOUT;
 use super::support::{Context, daemon_windows_above, floating};
 use crate::input::pause;
@@ -115,16 +117,60 @@ pub(super) fn menu_bar_item(context: &mut Context) -> Result<Outcome, String> {
 
 #[cfg(target_os = "macos")]
 pub(super) fn menu_bar_item(context: &mut Context) -> Result<Outcome, String> {
+    status_item(context).map(|_| Outcome::default())
+}
+
+/// The daemon's item in the menu bar.
+#[cfg(target_os = "macos")]
+fn status_item(context: &Context) -> Result<Rect, String> {
     let items = daemon_windows_above(context, crate::screen::STATUS_BAR_LAYER)?;
     let menu_bar_bottom = context.display.work_area.y;
-    if items
+    items
         .iter()
-        .any(|item| item.max_y() <= menu_bar_bottom + 1.0 && item.width > 0.0)
-    {
-        Ok(Outcome::default())
-    } else {
-        Err(format!("no status item in the menu bar: {items:?}"))
+        .find(|item| item.max_y() <= menu_bar_bottom + 1.0 && item.width > 0.0)
+        .copied()
+        .ok_or_else(|| format!("no status item in the menu bar: {items:?}"))
+}
+
+/// Clicking the menu bar item opens its menu every time. The press reaches the engine
+/// too, which looks up the window under the pointer while AppKit builds the menu's
+/// accessibility on the main thread; a lookup that asks Accessibility about Snappy's own
+/// item races it, and the daemon crashes within a few dozen openings.
+#[cfg(target_os = "macos")]
+pub(super) fn menu_bar_menu_opens(context: &mut Context) -> Result<Outcome, String> {
+    const OPENINGS: u32 = 40;
+    let item = status_item(context)?.center();
+    let escape = KeyCode::new("Escape");
+    for opening in 1..=OPENINGS {
+        let input = &mut *context.input;
+        input.pointer_down(item, Mods::NONE)?;
+        input.pointer_up(item, Mods::NONE)?;
+        wait_menu(context, true).map_err(|error| format!("opening {opening}: {error}"))?;
+        context.input.key(&escape, Mods::NONE)?;
+        wait_menu(context, false).map_err(|error| format!("opening {opening}: {error}"))?;
     }
+    Ok(Outcome::default())
+}
+
+/// Waits until the daemon's menu is open, or closed when `open` is false.
+#[cfg(target_os = "macos")]
+fn wait_menu(context: &Context, open: bool) -> Result<(), String> {
+    let started = Instant::now();
+    while daemon_windows_above(context, crate::screen::POPUP_MENU_LAYER)?.is_empty() == open {
+        if started.elapsed() > SETTLE_TIMEOUT {
+            let change = if open { "open" } else { "close" };
+            return Err(format!("the menu didn't {change}"));
+        }
+        pause(20);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn menu_bar_menu_opens(_context: &mut Context) -> Result<Outcome, String> {
+    Ok(Outcome::skipped(
+        "Only macOS answers Accessibility requests about Snappy's own item inside the daemon.",
+    ))
 }
 
 /// X11's status item is a StatusNotifierItem on the session bus, not a window. It is

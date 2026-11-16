@@ -7,19 +7,20 @@ use std::cell::RefCell;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::sel;
-use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2::{AnyThread, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAccessibility, NSControlStateValueOff, NSControlStateValueOn, NSImage, NSMenu, NSMenuItem,
     NSSquareStatusItemLength, NSStatusBar, NSStatusItem,
 };
-use objc2_foundation::{NSString, ns_string};
+use objc2_foundation::{NSData, NSString, ns_string};
 use snappy_platform::{PlatformEvent, TrayMenu};
 
 use crate::delegate::Delegate;
 use crate::events::emit;
 use menu::{MenuAction, MenuEntry};
 
-const ICON_SYMBOL: &str = "rectangle.split.3x1";
+/// The menu bar glyph, rendered from `assets/icon/snappy-glyph.svg` by `tools/icon/generate.sh`.
+const GLYPH: &[u8] = include_bytes!("../../../../assets/icon/snappy-glyph.pdf");
 
 struct Tray {
     item: Retained<NSStatusItem>,
@@ -35,15 +36,8 @@ thread_local! {
 /// Adds the status item. Its menu stays empty until it first opens.
 pub fn install(delegate: &Delegate, mtm: MainThreadMarker) {
     let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSSquareStatusItemLength);
-    if let Some(button) = item.button(mtm) {
-        let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-            &NSString::from_str(ICON_SYMBOL),
-            Some(ns_string!("Snappy")),
-        );
-        if let Some(image) = image {
-            image.setTemplate(true);
-            button.setImage(Some(&image));
-        }
+    if let (Some(button), Some(image)) = (item.button(mtm), glyph()) {
+        button.setImage(Some(&image));
     }
     let menu = NSMenu::new(mtm);
     menu.setAutoenablesItems(false);
@@ -56,6 +50,14 @@ pub fn install(delegate: &Delegate, mtm: MainThreadMarker) {
             actions: Vec::new(),
         })
     });
+}
+
+/// The glyph as a template image, which the menu bar tints to match its appearance.
+fn glyph() -> Option<Retained<NSImage>> {
+    let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(GLYPH))?;
+    image.setTemplate(true);
+    image.setAccessibilityDescription(Some(ns_string!("Snappy")));
+    Some(image)
 }
 
 /// Keeps the latest content and refreshes the tooltip.

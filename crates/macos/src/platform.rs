@@ -166,8 +166,8 @@ impl CapsLock for MacPlatform {
         caps_lock::undo(undo);
     }
 
-    fn toggle_caps_lock(&mut self) {
-        caps_lock::toggle();
+    fn toggle_caps_lock(&mut self) -> Result<(), String> {
+        caps_lock::toggle()
     }
 }
 

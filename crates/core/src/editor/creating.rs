@@ -1,6 +1,8 @@
+use thiserror::Error;
+
 use super::{Axis, EPSILON, Side, is_free};
 use crate::geometry::{Point, distance};
-use crate::layout::{MINIMUM_ZONE_SIZE, UnitRect, Zone};
+use crate::layout::{MAX_ZONES, MINIMUM_ZONE_SIZE, UnitRect, Zone};
 
 /// "Add" never creates a zone larger than this in either dimension.
 const ADD_SIZE_CAP: f64 = 0.5;
@@ -93,61 +95,79 @@ fn empty_areas(zones: &[Zone]) -> impl Iterator<Item = UnitRect> + '_ {
     })
 }
 
-/// The nearest free spot for a same-size copy of `source`: beside the source,
-/// beside another zone, or against a canvas edge.
-pub fn duplicate_rect(source: UnitRect, zones: &[Zone]) -> Option<UnitRect> {
-    let positions = |axis: Axis, length: f64| -> Vec<f64> {
-        let start = source.edge(axis, Side::Start);
-        let mut values = vec![
-            source.edge(axis, Side::End),
-            start - length,
-            start,
-            0.0,
-            1.0 - length,
-        ];
+/// Why copies can't be placed, as the editor explains it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum PlaceRefusal {
+    #[error("Copy zones first.")]
+    NothingCopied,
+    #[error("Overlapping zones can't be copied.")]
+    Overlapping,
+    #[error("A layout holds at most {MAX_ZONES} zones.")]
+    TooManyZones,
+    #[error("No free space for the copies.")]
+    NoRoom,
+}
+
+/// Where same-size copies of `copied` go, keeping their arrangement, for Paste and Duplicate.
+///
+/// The copies land where the originals are when that space is free, so a cut zone pastes
+/// back where it was and a zone copied from another layout keeps its place. Otherwise they
+/// go to the nearest free spot that puts them beside where they were, beside another zone,
+/// or against a canvas edge.
+pub fn place_copies(copied: &[UnitRect], zones: &[Zone]) -> Result<Vec<UnitRect>, PlaceRefusal> {
+    let bounds = bounding_rect(copied).ok_or(PlaceRefusal::NothingCopied)?;
+    let overlapping = copied
+        .iter()
+        .enumerate()
+        .any(|(i, rect)| copied[i + 1..].iter().any(|other| rect.overlaps(*other)));
+    if overlapping {
+        return Err(PlaceRefusal::Overlapping);
+    }
+    if zones.len() + copied.len() > MAX_ZONES {
+        return Err(PlaceRefusal::TooManyZones);
+    }
+
+    let positions = |axis: Axis| -> Vec<f64> {
+        let (start, end) = (bounds.edge(axis, Side::Start), bounds.edge(axis, Side::End));
+        let length = end - start;
+        let mut values = vec![start, end, start - length, 0.0, 1.0 - length];
         for zone in zones {
             values.extend([
                 zone.rect.edge(axis, Side::End),
                 zone.rect.edge(axis, Side::Start) - length,
             ]);
         }
-        values
+        values.into_iter().map(|value| value - start).collect()
     };
-    let xs = positions(Axis::X, source.width);
-    let ys = positions(Axis::Y, source.height);
+    let (shifts_x, shifts_y) = (positions(Axis::X), positions(Axis::Y));
 
-    xs.iter()
-        .flat_map(|&x| {
-            ys.iter()
-                .map(move |&y| UnitRect::new(x, y, source.width, source.height))
-        })
-        .filter(|rect| rect.is_valid() && is_free(*rect, zones, None))
-        .fold(None, |best: Option<(UnitRect, f64)>, rect| {
-            let away = distance(rect.x - source.x, rect.y - source.y);
-            match best {
-                Some((_, nearest)) if nearest <= away => best,
-                _ => Some((rect, away)),
-            }
-        })
-        .map(|(rect, _)| rect)
+    let placed = |dx: f64, dy: f64| -> Option<Vec<UnitRect>> {
+        copied
+            .iter()
+            .map(|rect| UnitRect::new(rect.x + dx, rect.y + dy, rect.width, rect.height))
+            .map(|rect| (rect.is_valid() && is_free(rect, zones, None)).then_some(rect))
+            .collect()
+    };
+    shifts_x
+        .iter()
+        .flat_map(|&dx| shifts_y.iter().map(move |&dy| (dx, dy)))
+        .filter_map(|(dx, dy)| placed(dx, dy).map(|rects| (distance(dx, dy), rects)))
+        .min_by(|(a, _), (b, _)| a.total_cmp(b))
+        .map(|(_, rects)| rects)
+        .ok_or(PlaceRefusal::NoRoom)
 }
 
-/// Cut a zone at `fraction` of its size along `axis`. The first part keeps the
-/// zone's ID; the second takes `new_id`. `None` when either part would be too small.
-pub fn split(zone: &Zone, fraction: f64, axis: Axis, new_id: impl Into<String>) -> Option<(Zone, Zone)> {
-    let length = zone.rect.span(axis).end - zone.rect.span(axis).start;
-    if !fraction.is_finite()
-        || fraction * length < MINIMUM_ZONE_SIZE
-        || (1.0 - fraction) * length < MINIMUM_ZONE_SIZE
-    {
-        return None;
-    }
-    let cut = zone.rect.edge(axis, Side::Start) + length * fraction;
-    let mut first = zone.clone();
-    first.rect.set_edge(axis, Side::End, cut);
-    let mut second = Zone::new(new_id, zone.rect);
-    second.rect.set_edge(axis, Side::Start, cut);
-    (first.rect.is_valid() && second.rect.is_valid()).then_some((first, second))
+/// The smallest rectangle holding all of `rects`; `None` for none.
+pub(crate) fn bounding_rect(rects: &[UnitRect]) -> Option<UnitRect> {
+    let first = *rects.first()?;
+    Some(rects.iter().skip(1).fold(first, |bounds, rect| {
+        let (left, top) = (bounds.x.min(rect.x), bounds.y.min(rect.y));
+        let (right, bottom) = (
+            bounds.right().max(rect.right()),
+            bounds.bottom().max(rect.bottom()),
+        );
+        UnitRect::new(left, top, right - left, bottom - top)
+    }))
 }
 
 fn clamp_to_canvas(point: Point) -> Point {
@@ -189,28 +209,64 @@ mod tests {
     }
 
     #[test]
-    fn duplicates_land_in_the_nearest_free_spot() {
+    fn a_copy_lands_in_the_nearest_free_spot_when_its_own_is_taken() {
         let zones = vec![zone("a", 0.0, 0.0, 0.5, 1.0)];
-        let copy = duplicate_rect(zones[0].rect, &zones).unwrap();
-        near(copy.x, 0.5);
-        assert!(
-            duplicate_rect(
-                UnitRect::new(0.0, 0.0, 1.0, 1.0),
-                &[zone("f", 0.0, 0.0, 1.0, 1.0)]
-            )
-            .is_none()
-        );
+        let copies = place_copies(&[zones[0].rect], &zones).unwrap();
+        near(copies[0].x, 0.5);
+        near(copies[0].width, 0.5);
+        let full = [zone("f", 0.0, 0.0, 1.0, 1.0)];
+        assert_eq!(place_copies(&[full[0].rect], &full), Err(PlaceRefusal::NoRoom));
     }
 
     #[test]
-    fn cuts_keep_coverage_and_the_first_id() {
-        let original = zone("a", 0.0, 0.0, 1.0, 1.0);
-        let (first, second) = split(&original, 0.3, Axis::X, "b").unwrap();
-        assert_eq!(first.id, "a");
-        assert_eq!(second.id, "b");
-        near(first.rect.width, 0.3);
-        near(second.rect.x, 0.3);
-        near(first.rect.width + second.rect.width, 1.0);
-        assert!(split(&original, 0.01, Axis::Y, "c").is_none());
+    fn copies_paste_back_where_they_were_when_that_space_is_free() {
+        let copied = [UnitRect::new(0.5, 0.0, 0.5, 0.5)];
+        let zones = vec![zone("a", 0.0, 0.0, 0.5, 1.0)];
+        assert_eq!(place_copies(&copied, &zones), Ok(copied.to_vec()));
+    }
+
+    #[test]
+    fn several_copies_keep_their_arrangement_and_move_together() {
+        let zones = vec![
+            zone("a", 0.0, 0.0, 0.25, 0.5),
+            zone("b", 0.25, 0.0, 0.25, 0.5),
+            zone("c", 0.0, 0.5, 0.5, 0.5),
+        ];
+        let copies = place_copies(&[zones[0].rect, zones[1].rect], &zones).unwrap();
+        assert_eq!(copies.len(), 2);
+        near(copies[0].x, 0.5);
+        near(copies[0].y, 0.0);
+        near(copies[1].x, 0.75);
+        near(copies[1].y, 0.0);
+        assert!(copies.iter().all(|rect| is_free(*rect, &zones, None)));
+    }
+
+    #[test]
+    fn copies_of_nothing_of_overlapping_zones_or_that_would_overfill_the_layout_go_nowhere() {
+        assert_eq!(place_copies(&[], &[]), Err(PlaceRefusal::NothingCopied));
+        let overlapping = [
+            UnitRect::new(0.0, 0.0, 0.5, 0.5),
+            UnitRect::new(0.4, 0.0, 0.5, 0.5),
+        ];
+        assert_eq!(place_copies(&overlapping, &[]), Err(PlaceRefusal::Overlapping));
+        let zones: Vec<Zone> = (0..MAX_ZONES)
+            .map(|index| {
+                let (column, row) = (index % 16, index / 16);
+                zone(
+                    &format!("z{index}"),
+                    column as f64 * 0.05,
+                    row as f64 * 0.05,
+                    0.05,
+                    0.05,
+                )
+            })
+            .collect();
+        let copied = [zones[0].rect];
+        assert!(place_copies(&copied, &zones[..MAX_ZONES - 1]).is_ok());
+        assert_eq!(place_copies(&copied, &zones), Err(PlaceRefusal::TooManyZones));
+        assert_eq!(
+            PlaceRefusal::TooManyZones.to_string(),
+            "A layout holds at most 32 zones."
+        );
     }
 }

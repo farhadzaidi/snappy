@@ -14,11 +14,14 @@ pnpm -C apps/settings/ui build
 cargo build --release -p snappy -p snappy-settings
 
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Library/LaunchAgents" "$helper/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchAgents" \
+    "$helper/Contents/MacOS" "$helper/Contents/Resources"
 cp "$here/Snappy.plist" "$app/Contents/Info.plist"
+cp assets/icon/snappy.icns "$app/Contents/Resources/Snappy.icns"
 cp "$here/local.snappy.agent.plist" "$app/Contents/Library/LaunchAgents/"
 cp target/release/snappy "$app/Contents/MacOS/snappy"
 cp "$here/SnappySettings.plist" "$helper/Contents/Info.plist"
+cp assets/icon/snappy.icns "$helper/Contents/Resources/Snappy.icns"
 cp target/release/snappy-settings "$helper/Contents/MacOS/snappy-settings"
 
 source "$here/signing-env.sh"

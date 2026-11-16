@@ -134,7 +134,9 @@ impl EventLoop {
             }
             Event::MappingNotify(_) | Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => {
                 self.shared.refresh_keyboard();
-                caps_lock::keymap_changed(&self.shared);
+                if caps_lock::keymap_changed(&self.shared) {
+                    self.emit(PlatformEvent::CapsLockLost);
+                }
             }
             Event::ClientMessage(message)
                 if message.window == self.shared.control

@@ -1,10 +1,10 @@
 //! Matching Accessibility windows against the window server's on-screen list: swap
-//! discovery and visible-window enumeration.
+//! discovery, visible-window enumeration, and which apps the pointer's hit test asks.
 
 use std::collections::BTreeMap;
 
 use snappy_core::error::WindowError;
-use snappy_core::geometry::Rect;
+use snappy_core::geometry::{Point, Rect};
 
 use crate::messages::{SWAP_NOT_SWAPPABLE, SWAP_UNIDENTIFIED, unavailable};
 use crate::thresholds::WINDOW_LIST_MATCH;
@@ -107,6 +107,31 @@ pub fn unambiguous(frames: &[Rect], focused: Option<usize>) -> Vec<bool> {
         .collect()
 }
 
+/// Which apps a hit test at a point may ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitScope {
+    /// Every app, through the system-wide element, which sees through click-through windows
+    /// as the window server does.
+    Everywhere,
+    /// Only the process owning the frontmost window beneath Snappy's own.
+    App(i32),
+    /// None: only Snappy's own windows are there.
+    Nowhere,
+}
+
+/// Where to hit-test `point`. Accessibility answers a request about Snappy's own windows
+/// inside the daemon, on the asking thread, where AppKit isn't safe to run; so wherever
+/// Snappy has a window, only the app beneath it is asked.
+pub fn hit_scope(rows: &[ServerWindow], point: Point, own_pid: i32) -> HitScope {
+    let mut at_point = rows.iter().filter(|row| row.frame.contains(point));
+    if !at_point.clone().any(|row| row.pid == own_pid) {
+        return HitScope::Everywhere;
+    }
+    at_point
+        .find(|row| row.pid != own_pid)
+        .map_or(HitScope::Nowhere, |row| HitScope::App(row.pid))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,7 +212,7 @@ mod tests {
         let elsewhere = candidate(Rect::new(0.0, 0.0, 10.0, 10.0));
         assert_eq!(
             message(match_occupants(&[ZONE], &[unreadable, elsewhere])),
-            "The window in that zone could not be identified safely. Try again."
+            "The window in that zone couldn't be identified safely. Try again."
         );
     }
 
@@ -207,5 +232,38 @@ mod tests {
             unambiguous(&[ZONE, ZONE, other], Some(1)),
             vec![false, true, true]
         );
+    }
+
+    const OWN: i32 = 99;
+    const MENU_BAR: Rect = Rect::new(0.0, 0.0, 1440.0, 24.0);
+    const STATUS_ITEM: Rect = Rect::new(1200.0, 0.0, 24.0, 24.0);
+
+    #[test]
+    fn without_snappy_windows_at_the_point_every_app_is_asked() {
+        let rows = [row(OWN, 25, STATUS_ITEM), row(10, 0, ZONE), row(1, 24, MENU_BAR)];
+        assert_eq!(hit_scope(&rows, ZONE.center(), OWN), HitScope::Everywhere);
+    }
+
+    #[test]
+    fn snappys_menu_bar_item_is_never_asked_about() {
+        let rows = [row(OWN, 25, STATUS_ITEM), row(1, 24, MENU_BAR)];
+        assert_eq!(hit_scope(&rows, STATUS_ITEM.center(), OWN), HitScope::App(1));
+    }
+
+    #[test]
+    fn beneath_snappys_overlay_only_the_window_under_it_is_asked_about() {
+        let overlay = Rect::new(0.0, 24.0, 1440.0, 876.0);
+        let rows = [
+            row(OWN, 3, overlay),
+            row(11, 0, Rect::new(0.0, 0.0, 5.0, 5.0)),
+            row(10, 0, ZONE),
+        ];
+        assert_eq!(hit_scope(&rows, ZONE.center(), OWN), HitScope::App(10));
+    }
+
+    #[test]
+    fn where_only_snappy_has_windows_nothing_is_asked() {
+        let rows = [row(OWN, 101, ZONE), row(OWN, 3, ZONE)];
+        assert_eq!(hit_scope(&rows, ZONE.center(), OWN), HitScope::Nowhere);
     }
 }

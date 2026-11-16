@@ -73,28 +73,22 @@ fn single_instance_lock(state_dir: &std::path::Path) -> Option<File> {
 mod platform {
     use snappy_engine::Paths;
 
-    use crate::runtime::{forward_events, run_engine};
+    use crate::runtime::{join_engine, spawn_engine};
 
     /// AppKit owns the main thread; the engine runs on its own.
     pub fn run(paths: Paths, open_settings: bool) -> std::io::Result<()> {
         let (events, platform_events) = std::sync::mpsc::channel();
         let app = snappy_macos::App::new(events);
         let platform = app.platform();
-
-        let (inputs, incoming) = tokio::sync::mpsc::unbounded_channel();
-        forward_events(platform_events, inputs.clone());
-        let engine = std::thread::Builder::new()
-            .name("snappy-engine".into())
-            .spawn(move || {
-                let result = run_engine(platform, paths, inputs, incoming, open_settings);
-                snappy_macos::request_termination();
-                result
-            })?;
-
+        let engine = spawn_engine(
+            platform,
+            paths,
+            platform_events,
+            open_settings,
+            snappy_macos::request_termination,
+        )?;
         app.run();
-        engine
-            .join()
-            .map_err(|_| std::io::Error::other("engine thread panicked"))?
+        join_engine(engine)
     }
 }
 
@@ -107,7 +101,7 @@ mod platform {
     use snappy_linux::session::Session;
     use snappy_platform::{Platform, PlatformEvent};
 
-    use crate::runtime::{forward_events, run_engine};
+    use crate::runtime::{join_engine, spawn_engine};
 
     /// GNOME on Wayland goes through GNOME Shell's extension, KDE Plasma on Wayland through
     /// KWin's script; every other session through the X server, which in other Wayland
@@ -175,23 +169,12 @@ mod platform {
         stop_adapter: impl FnOnce() + Send + 'static,
         run_adapter: impl FnOnce() -> std::io::Result<()>,
     ) -> std::io::Result<()> {
-        let (inputs, incoming) = tokio::sync::mpsc::unbounded_channel();
-        forward_events(platform_events, inputs.clone());
-        let engine = std::thread::Builder::new()
-            .name("snappy-engine".into())
-            .spawn(move || {
-                let result = run_engine(platform, paths, inputs, incoming, open_settings);
-                stop_adapter();
-                result
-            })?;
-
+        let engine = spawn_engine(platform, paths, platform_events, open_settings, stop_adapter)?;
         let ran = run_adapter();
         if ran.is_err() {
             let _ = events.send(PlatformEvent::QuitRequested);
         }
-        let stopped = engine
-            .join()
-            .map_err(|_| std::io::Error::other("engine thread panicked"))?;
+        let stopped = join_engine(engine);
         ran.and(stopped)
     }
 }
@@ -201,7 +184,7 @@ mod platform {
     use snappy_engine::Paths;
     use snappy_windows::Claim;
 
-    use crate::runtime::{forward_events, run_engine};
+    use crate::runtime::{join_engine, spawn_engine};
 
     /// The Win32 message loop runs on this thread and the engine on its own. A second
     /// launch signals the running daemon to open the settings window, then exits.
@@ -214,21 +197,11 @@ mod platform {
         let app = snappy_windows::App::new(events).map_err(std::io::Error::other)?;
         let platform = app.platform();
         let stopper = app.stopper();
-
-        let (inputs, incoming) = tokio::sync::mpsc::unbounded_channel();
-        forward_events(platform_events, inputs.clone());
-        let engine = std::thread::Builder::new()
-            .name("snappy-engine".into())
-            .spawn(move || {
-                let result = run_engine(platform, paths, inputs, incoming, open_settings);
-                stopper.stop();
-                result
-            })?;
-
+        let engine = spawn_engine(platform, paths, platform_events, open_settings, move || {
+            stopper.stop();
+        })?;
         app.run();
-        engine
-            .join()
-            .map_err(|_| std::io::Error::other("engine thread panicked"))?
+        join_engine(engine)
     }
 }
 

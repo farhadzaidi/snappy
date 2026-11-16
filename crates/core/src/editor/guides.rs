@@ -2,7 +2,7 @@ use super::{Axis, Side};
 use crate::geometry::Size;
 use crate::layout::{UnitRect, Zone};
 
-/// Screen fractions every edit can snap to.
+/// Screen fractions every edit can snap to: the edges, halves, thirds, and quarters.
 pub const GUIDE_FRACTIONS: [f64; 7] = [0.0, 0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 0.75, 1.0];
 
 /// Snap targets along an axis: the guide fractions plus every other zone's edges, and
@@ -17,6 +17,14 @@ pub fn guides(zones: &[Zone], excluding: Option<&str>, axis: Axis, centers: bool
         }
     }
     targets
+}
+
+/// The same halves, thirds, and quarters within one zone along `axis`, for cutting it.
+pub fn zone_guides(rect: UnitRect, axis: Axis) -> impl Iterator<Item = f64> {
+    let span = rect.span(axis);
+    GUIDE_FRACTIONS[1..GUIDE_FRACTIONS.len() - 1]
+        .iter()
+        .map(move |fraction| span.start + (span.end - span.start) * fraction)
 }
 
 /// The target nearest `value` if it's within `tolerance`, otherwise `value` itself.
@@ -66,6 +74,43 @@ mod tests {
     fn snap_uses_the_nearest_target_within_tolerance() {
         near(snap(0.496, &[0.0, 0.5, 1.0], 0.01), 0.5);
         near(snap(0.48, &[0.0, 0.5, 1.0], 0.01), 0.48);
+    }
+
+    #[test]
+    fn the_screen_guides_hold_halves_thirds_and_quarters() {
+        let targets = guides(&[], None, Axis::X, false);
+        for fraction in [0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 0.75] {
+            near(snap(fraction + 0.004, &targets, 0.01), fraction);
+            near(snap(fraction - 0.004, &targets, 0.01), fraction);
+        }
+    }
+
+    #[test]
+    fn a_zones_guides_split_it_into_halves_thirds_and_quarters() {
+        let found: Vec<f64> = zone_guides(UnitRect::new(0.4, 0.0, 0.6, 1.0), Axis::X).collect();
+        let expected = [0.55, 0.6, 0.7, 0.8, 0.85];
+        assert_eq!(found.len(), expected.len());
+        for (found, expected) in found.into_iter().zip(expected) {
+            near(found, expected);
+        }
+    }
+
+    #[test]
+    fn moves_snap_to_thirds_and_quarters_of_the_screen() {
+        let third = snapped_move(
+            UnitRect::new(0.336, 0.0, 0.2, 0.2),
+            &[],
+            "a",
+            Size::new(0.01, 0.01),
+        );
+        near(third.x, 1.0 / 3.0);
+        let quarter = snapped_move(
+            UnitRect::new(0.1, 0.743, 0.2, 0.2),
+            &[],
+            "a",
+            Size::new(0.01, 0.01),
+        );
+        near(quarter.y, 0.75);
     }
 
     #[test]

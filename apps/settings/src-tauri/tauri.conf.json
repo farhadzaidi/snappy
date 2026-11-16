@@ -38,6 +38,11 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": false,
+    "icon": [
+      "../../../assets/icon/snappy.png",
+      "../../../assets/icon/snappy.icns",
+      "../../../assets/icon/snappy.ico"
+    ]
   }
 }

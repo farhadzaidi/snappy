@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import { DisplayChooser } from "../shell/DisplayChooser";
 import type { Collection } from "../state/session";
 import { useAppState, useServices, useSession } from "../state/services";
@@ -18,6 +20,7 @@ export function LayoutsPage() {
   const session = useSession();
   const { session: sessionStore, editor, client } = useServices();
   const { layouts, browsed, inUse } = library(app, session);
+  useKeepBrowsing(browsed?.id);
 
   /** Switching collections hides the preview and browses the display's layout. */
   const showCollection = (collection: Collection) => {
@@ -35,7 +38,7 @@ export function LayoutsPage() {
       </div>
 
       <div className="library-bar">
-        <div className="segmented" role="tablist" aria-label="Collections">
+        <div className="segmented segmented-even" role="tablist" aria-label="Collections">
           {COLLECTIONS.map(({ collection, title }) => (
             <button
               type="button"
@@ -77,4 +80,14 @@ export function LayoutsPage() {
       )}
     </div>
   );
+}
+
+/** Keep browsing the layout the page shows, so it changes only when the user picks another. */
+function useKeepBrowsing(layoutId: string | undefined) {
+  const { session } = useServices();
+  useEffect(() => {
+    if (layoutId !== undefined && session.get().browsedLayoutId !== layoutId) {
+      session.update((current) => ({ ...current, browsedLayoutId: layoutId }));
+    }
+  }, [session, layoutId]);
 }

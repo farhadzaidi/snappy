@@ -681,14 +681,14 @@ fn caps_lock_held_fires_snappy_shortcuts_and_never_turns_itself_on() {
     );
     assert_eq!(caps_lock_on(), was_on, "the key alone never toggles it");
 
-    session.platform.toggle_caps_lock();
+    session.platform.toggle_caps_lock().unwrap();
     pause(200);
     assert_ne!(caps_lock_on(), was_on, "Snappy turns it on or off");
     assert!(
         caps_lock_events(&session).is_empty(),
         "its own presses go unreported"
     );
-    session.platform.toggle_caps_lock();
+    session.platform.toggle_caps_lock().unwrap();
     pause(200);
     assert_eq!(caps_lock_on(), was_on);
 

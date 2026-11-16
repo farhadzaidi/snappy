@@ -53,7 +53,7 @@ impl WindowsPlatform {
     }
 
     fn executable() -> Result<std::path::PathBuf, String> {
-        std::env::current_exe().map_err(|error| format!("Snappy could not find its own program: {error}"))
+        std::env::current_exe().map_err(|error| format!("Snappy couldn't find its own program: {error}"))
     }
 }
 
@@ -186,8 +186,10 @@ impl CapsLock for WindowsPlatform {
 
     fn undo_caps_lock(&mut self, _undo: &CapsLockUndo) {}
 
-    fn toggle_caps_lock(&mut self) {
-        caps_lock::toggle();
+    fn toggle_caps_lock(&mut self) -> Result<(), String> {
+        caps_lock::toggle()
+            .then_some(())
+            .ok_or_else(|| "Windows didn't take the Caps Lock press".to_owned())
     }
 }
 

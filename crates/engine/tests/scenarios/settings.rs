@@ -1,8 +1,10 @@
-//! Saving, refusing, and importing settings.
+//! Saving, refusing, importing, and resetting settings.
 
-use snappy_core::keys::{KeyChord, Modifier};
+use snappy_core::keys::{KeyChord, Modifier, Platform};
+use snappy_core::layout::{Layout, preset};
 use snappy_core::navigate::Direction;
-use snappy_core::settings::{FocusShortcut, HistoryStep, Settings};
+use snappy_core::reset::{Reset, ShortcutSection};
+use snappy_core::settings::{HistoryStep, NavigationShortcut, Settings};
 use snappy_engine::Engine;
 use snappy_fake::FakePlatform;
 use snappy_ipc::Command;
@@ -64,7 +66,7 @@ fn only_valid_changes_are_saved() {
             },
         );
         let saved = std::fs::read(&file).unwrap();
-        let platform = snappy_core::keys::Platform::MacOs;
+        let platform = Platform::MacOs;
         assert_eq!(Settings::from_json(&saved, platform).unwrap(), engine.settings());
     });
 }
@@ -151,7 +153,7 @@ fn every_save_path_refuses_a_conflict_with_its_message() {
                 shortcut: Direction::Left.into(),
                 chord: Some(KeyChord::new("Digit1", [Modifier::Ctrl])),
             },
-            "Control + 1 is already assigned to Move window left.",
+            "Control ⌃ + 1 is already assigned to Move window left.",
         );
         refused(
             Command::SetWorkspaceStepShortcut {
@@ -169,7 +171,7 @@ fn every_save_path_refuses_a_conflict_with_its_message() {
         );
         refused(
             Command::SetNavigationShortcut {
-                shortcut: FocusShortcut::SelectWindow.into(),
+                shortcut: NavigationShortcut::SelectWindow,
                 chord: Some(snappy("Space")),
             },
             "Snappy + Space is already assigned to Move to the nearest empty zone.",
@@ -215,7 +217,149 @@ fn every_save_path_refuses_a_conflict_with_its_message() {
             Command::ImportSettings {
                 path: file.display().to_string(),
             },
-            "Control + 1 is already assigned to Move window left.",
+            "Control ⌃ + 1 is already assigned to Move window left.",
+        );
+    });
+}
+
+/// Save a copy of the halves layout as the custom layout "Mine", with a zone shortcut.
+fn save_custom_layout(engine: &Engine<FakePlatform>) {
+    let mut mine: Layout = preset("halves").unwrap().clone();
+    mine.id = "mine".to_owned();
+    mine.name = "Mine".to_owned();
+    let mut options = engine.settings().options(&mine);
+    options.zone_shortcuts = [(
+        mine.zones[0].id.clone(),
+        KeyChord::new("KeyQ", [Modifier::Ctrl, Modifier::Alt]),
+    )]
+    .into_iter()
+    .collect();
+    command(
+        engine,
+        Command::SaveLayout {
+            layout: mine,
+            options,
+            display: "main".into(),
+        },
+    );
+}
+
+#[test]
+fn resetting_a_section_saves_and_registers_its_defaults() {
+    scenario(|| async {
+        let name = "reset-section";
+        let engine = live_engine(name, FakePlatform::default());
+        let moved = snappy("KeyA");
+        command(
+            &engine,
+            Command::SetNavigationShortcut {
+                shortcut: Direction::Left.into(),
+                chord: Some(moved.clone()),
+            },
+        );
+        let key = engine.settings().snappy_key;
+        let registered = |chord: &KeyChord| {
+            engine.with_platform(|p| p.registered.iter().any(|(_, held)| *held == chord.combo(key)))
+        };
+        assert!(registered(&moved));
+
+        command(
+            &engine,
+            Command::Reset {
+                reset: Reset::Shortcuts {
+                    section: ShortcutSection::MoveBetweenZones,
+                },
+            },
+        );
+        let left = Settings::defaults(Platform::MacOs).navigation.left.unwrap();
+        assert_eq!(engine.settings().navigation.left, Some(left.clone()));
+        assert!(registered(&left) && !registered(&moved));
+        let saved = Settings::from_json(
+            &std::fs::read(paths_kept(name).settings).unwrap(),
+            Platform::MacOs,
+        )
+        .unwrap();
+        assert_eq!(saved.navigation.left, Some(left));
+        assert_eq!(status_text(&engine), "Move between zones shortcuts reset.");
+    });
+}
+
+#[test]
+fn resetting_settings_keeps_custom_layouts_and_workspaces() {
+    scenario(|| async {
+        let engine = live_engine("reset-settings", with_window(FLOATING));
+        save_custom_layout(&engine);
+        enable_workspaces(&engine);
+        command(&engine, Command::SetDebugLog { enabled: true });
+
+        command(
+            &engine,
+            Command::Reset {
+                reset: Reset::Settings,
+            },
+        );
+        let settings = engine.settings();
+        assert!(!settings.debug_log);
+        assert_eq!(settings.layouts.custom.len(), 1);
+        assert!(settings.layouts.options["mine"].zone_shortcuts.is_empty());
+        assert!(settings.workspaces.enabled);
+        assert_eq!(
+            settings.workspaces.items[1].switch_shortcut,
+            Some(snappy("Digit2").with_label("2")),
+            "workspaces switch with the Snappy key and their number again"
+        );
+        assert_eq!(status_text(&engine), "Settings and shortcuts reset.");
+    });
+}
+
+#[test]
+fn resetting_everything_returns_parked_windows_and_removes_custom_layouts() {
+    scenario(|| async {
+        let engine = live_engine("reset-everything", with_window(FLOATING));
+        save_custom_layout(&engine);
+        enable_workspaces(&engine);
+        command(&engine, Command::SetSnapping { enabled: false });
+        event(&engine, PlatformEvent::HotKey(send_to(&engine, 2)));
+        settle(&engine).await;
+        assert!(is_parked(&engine, 1));
+
+        frozen(&engine, 1, true);
+        let before = engine.settings();
+        command(
+            &engine,
+            Command::Reset {
+                reset: Reset::Everything,
+            },
+        );
+        assert_eq!(
+            engine.settings(),
+            before,
+            "a window that can't return stops the reset"
+        );
+        let status = engine.status().unwrap();
+        assert_eq!(
+            (status.message.as_str(), status.is_error),
+            (
+                "A hidden window couldn't be brought back yet, so nothing was reset. Try again in a moment.",
+                true
+            )
+        );
+
+        frozen(&engine, 1, false);
+        command(
+            &engine,
+            Command::Reset {
+                reset: Reset::Everything,
+            },
+        );
+        assert_eq!(frame_of(&engine, 1), FLOATING, "parked windows return first");
+        let settings = engine.settings();
+        assert!(settings.layouts.custom.is_empty());
+        assert!(!settings.workspaces.enabled);
+        assert!(!settings.snapping.enabled, "resetting never turns snapping on");
+        assert_eq!(
+            status_text(&engine),
+            "Snappy is reset. Custom layouts and workspaces were removed."
         );
     });
 }

@@ -1,7 +1,7 @@
 //! Native tab groups taken along to another workspace.
 
 use snappy_core::geometry::Point;
-use snappy_core::settings::{FocusShortcut, WorkspaceStep};
+use snappy_core::settings::{NavigationShortcut, WorkspaceStep};
 
 use super::Outcome;
 use super::support::{Context, floating, timed};
@@ -32,7 +32,7 @@ fn tabs_along_and_out(context: &mut Context) -> Result<Outcome, String> {
         pause(500);
     }
     let group = context.fixture.frame("tab-c")?;
-    context.press(&context.navigation_key(FocusShortcut::SelectWindow)?)?;
+    context.press(&context.navigation_key(NavigationShortcut::SelectWindow)?)?;
     context.wait_outlines(true)?;
 
     context.press(&context.step_key(WorkspaceStep::Next)?)?;

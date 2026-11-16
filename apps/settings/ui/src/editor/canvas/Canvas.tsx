@@ -6,7 +6,11 @@ import { core, type Handle } from "../../core/snappyCore";
 import { useObservable } from "../../state/observable";
 import { useSelectedDisplay, useServices } from "../../state/services";
 import { useElementSize } from "../../ui/useElementSize";
-import { useCanvasGesture, zoneBoxSize, ZONE_INSET_PX, type CutPreview } from "./useCanvasGesture";
+import { soleSelection } from "../draft";
+import { zoneBoxSize, ZONE_INSET_PX } from "./canvasGeometry";
+import { useCanvasGesture } from "./useCanvasGesture";
+import { useCanvasKeys } from "./useCanvasKeys";
+import type { CutUnderPointer } from "./useCutPreview";
 
 const HANDLE_CURSORS: Record<Handle, string> = {
   north: "ns-resize",
@@ -38,19 +42,24 @@ function CanvasSurface({ size }: { size: Size }) {
   const { editor } = useServices();
   const draft = useObservable(editor.draft);
   const interaction = useCanvasGesture(editor, size);
+  const onKeyDown = useCanvasKeys(editor);
   const zones = draft.current.layout.zones;
   const readOnly = editor.isReadOnly;
   const editable = !readOnly && draft.tool === "select";
+  const resizable = soleSelection(draft)?.id ?? null;
 
+  // Focusable, so a click on it gives it focus and the clipboard and Delete keys reach it.
   return (
     <div
       className="canvas"
       role="application"
       aria-label="Layout canvas"
+      tabIndex={0}
       data-tool={draft.tool}
       data-moving={interaction.moving}
       data-read-only={readOnly}
       style={{ width: size.width, height: size.height }}
+      onKeyDown={onKeyDown}
       onPointerDown={interaction.onPointerDown}
       onPointerMove={interaction.onPointerMove}
       onPointerUp={interaction.onPointerUp}
@@ -64,12 +73,12 @@ function CanvasSurface({ size }: { size: Size }) {
           zone={zone}
           number={index + 1}
           canvas={size}
-          selected={zone.id === draft.selectedZoneId}
-          editable={editable}
-          cursor={zone.id === draft.selectedZoneId ? interaction.hoverHandle : null}
-          cut={interaction.cut?.zoneId === zone.id ? interaction.cut : null}
+          selected={draft.selection.includes(zone.id)}
+          resizable={editable && zone.id === resizable}
+          cursor={zone.id === resizable ? interaction.hoverHandle : null}
         />
       ))}
+      {interaction.cut && <CutLines cut={interaction.cut} zones={zones} canvas={size} />}
       {editable && <Dividers zones={zones} canvas={size} />}
       {interaction.drawing && <DrawingBox rect={interaction.drawing} canvas={size} />}
       <GuideLines guides={interaction.guides} canvas={size} />
@@ -82,13 +91,13 @@ interface ZoneBoxProps {
   number: number;
   canvas: Size;
   selected: boolean;
-  editable: boolean;
+  /** The one selected zone, with the select tool: it shows its resize handles. */
+  resizable: boolean;
   cursor: Handle | null;
-  cut: CutPreview | null;
 }
 
 /** A zone with its number and its size in backing pixels. */
-function ZoneBox({ zone, number, canvas, selected, editable, cursor, cut }: ZoneBoxProps) {
+function ZoneBox({ zone, number, canvas, selected, resizable, cursor }: ZoneBoxProps) {
   const pixels = pixelSize(useSelectedDisplay());
   const box = zoneBoxSize(zone, canvas);
   const left = zone.rect.x * canvas.width + ZONE_INSET_PX;
@@ -106,13 +115,12 @@ function ZoneBox({ zone, number, canvas, selected, editable, cursor, cut }: Zone
         top,
         width: box.width,
         height: box.height,
-        ...(cursor && editable ? { cursor: HANDLE_CURSORS[cursor] } : {}),
+        ...(cursor && resizable ? { cursor: HANDLE_CURSORS[cursor] } : {}),
       }}
     >
       <span className="zone-number">{number}</span>
       <span className="zone-size">{sizeLabel}</span>
-      {selected && editable && <Handles size={box} />}
-      {cut && <CutLine cut={cut} zone={zone} canvas={canvas} />}
+      {resizable && <Handles size={box} />}
     </div>
   );
 }
@@ -132,18 +140,34 @@ function Handles({ size }: { size: Size }) {
   );
 }
 
-/** The dashed line where a cut will split the zone. */
-function CutLine({ cut, zone, canvas }: { cut: CutPreview; zone: Zone; canvas: Size }) {
+/**
+ * Where a cut will go: a dashed line across each zone it splits, and for a Shift cut, a fainter
+ * one from canvas edge to canvas edge.
+ */
+function CutLines({ cut, zones, canvas }: { cut: CutUnderPointer; zones: Zone[]; canvas: Size }) {
   const vertical = cut.axis === "x";
-  const offset = vertical
-    ? (cut.at - zone.rect.x) * canvas.width - ZONE_INSET_PX
-    : (cut.at - zone.rect.y) * canvas.height - ZONE_INSET_PX;
+  const line = vertical ? { left: cut.at * canvas.width } : { top: cut.at * canvas.height };
   return (
-    <span
-      className="cut-line"
-      data-vertical={vertical}
-      style={vertical ? { left: offset } : { top: offset }}
-    />
+    <>
+      {cut.through && <span className="cut-through" data-vertical={vertical} style={line} />}
+      {zones
+        .filter((zone) => cut.zoneIds.includes(zone.id))
+        .map((zone) => {
+          const box = zoneBoxSize(zone, canvas);
+          const across = vertical
+            ? { top: zone.rect.y * canvas.height + ZONE_INSET_PX, height: box.height }
+            : { left: zone.rect.x * canvas.width + ZONE_INSET_PX, width: box.width };
+          return (
+            <span
+              key={zone.id}
+              className="cut-line"
+              data-cut-zone-id={zone.id}
+              data-vertical={vertical}
+              style={{ ...line, ...across }}
+            />
+          );
+        })}
+    </>
   );
 }
 

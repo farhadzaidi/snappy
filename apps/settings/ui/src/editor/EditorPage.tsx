@@ -5,6 +5,7 @@ import { usePlatform, useServices } from "../state/services";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { UndoIcon } from "../ui/icons";
 import { Canvas } from "./canvas/Canvas";
+import { editorCommand } from "./keyboard";
 import { Sidebar } from "./sidebar/Sidebar";
 import { TitleBar } from "./TitleBar";
 import { Toolbar } from "./Toolbar";
@@ -51,13 +52,13 @@ function useUndoShortcuts() {
   const platform = usePlatform();
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const command = platform === "macos" ? event.metaKey : event.ctrlKey;
-      if (!command || event.code !== "KeyZ" || isTextField(event.target)) {
+      const command = editorCommand(event, platform);
+      if ((command !== "undo" && command !== "redo") || isTextField(event.target)) {
         return;
       }
       event.preventDefault();
       editor.commitPendingField();
-      if (event.shiftKey) {
+      if (command === "redo") {
         editor.redo();
       } else {
         editor.undo();

@@ -276,21 +276,10 @@ impl Session {
         journal_of(&self.members, &self.tabs, &BTreeMap::new())
     }
 
-    /// Show `target` and park the active workspace. Returns whether
-    /// a window was focused afterwards, so the caller can take focus when none was.
-    pub fn switch_to(
-        &mut self,
-        target: &str,
-        displays: &[Rect],
-        focus_incoming: bool,
-        io: &mut impl WorkspaceIo,
-    ) -> Result<bool, WindowError> {
-        self.switch_taking_along(target, &[], displays, focus_incoming, io)
-    }
-
-    /// Like `switch_to`, except that the active workspace's visible windows in `along` join
-    /// `target` where they are instead of being parked, and the last of them that can take
-    /// focus gets it. A tab taken along takes its whole group.
+    /// Show `target` and park the active workspace, except that the active workspace's visible
+    /// windows in `along` join `target` where they are instead of being parked, and the last of
+    /// them that can take focus gets it. A tab taken along takes its whole group. Returns
+    /// whether a window was focused afterwards, so the caller can take focus when none was.
     pub fn switch_taking_along(
         &mut self,
         target: &str,
@@ -327,7 +316,7 @@ impl Session {
             } else if member.workspace == target {
                 if !io.is_movable(*window) {
                     return Err(WindowError::unavailable(
-                        "A workspace window is unavailable. Close its dialog or leave full screen, then retry.",
+                        "A window in that workspace is full screen or has a dialog open; leave full screen or close it first.",
                     ));
                 }
                 member.parked = None;
@@ -386,9 +375,7 @@ impl Session {
                 member.frame = reachable(member.frame, areas);
             }
         } else {
-            let origin = parking_origin(self.policy, member.frame, displays)
-                .ok_or_else(|| WindowError::unavailable("No safe corner is available."))?;
-            member.parked = Some(origin);
+            member.parked = Some(self.park(member.frame, displays)?);
         }
 
         let mut next = self.members.clone();
@@ -431,28 +418,11 @@ impl Session {
         io.place(window, origin, true)?;
         if !(lands_at(io.frame(window)?, origin) && self.hidden_as(window, true, io)) {
             return Err(WindowError::refused(
-                "An application revealed a window from another workspace and refused to hide it.",
+                "A window from another workspace wouldn't stay hidden.",
             ));
         }
         self.members = next;
         Ok(true)
-    }
-
-    /// Stop tracking a window, returning it to view first.
-    pub fn release(&mut self, window: WindowId, io: &mut impl WorkspaceIo) -> Result<(), WindowError> {
-        if self.tabs.contains_key(&window) {
-            self.discard(window);
-            return io.write_journal(&self.journal());
-        }
-        let mut next = self.members.clone();
-        if let Some(member) = next.get_mut(&window) {
-            member.parked = None;
-        } else {
-            return Ok(());
-        }
-        self.transition(next, &BTreeSet::new(), io)?;
-        self.discard(window);
-        io.write_journal(&self.journal())
     }
 
     /// Move a deleted workspace's windows to `destination`.
@@ -487,13 +457,15 @@ impl Session {
     }
 
     /// Re-place every window for a new display arrangement, without revealing parked
-    /// windows.
+    /// windows. Windows that can't move right now, minimized, full screen, or showing a
+    /// dialog, stay where they are rather than holding up the rest. Returns how many
+    /// windows it moved.
     pub fn update_displays(
         &mut self,
         displays: &[Rect],
         areas: &[Rect],
         io: &mut impl WorkspaceIo,
-    ) -> Result<(), WindowError> {
+    ) -> Result<usize, WindowError> {
         let usable = |rects: &[Rect]| !rects.is_empty() && rects.iter().all(|rect| rect.is_usable(1.0));
         if !usable(displays) || !usable(areas) {
             return Err(WindowError::InvalidFrame);
@@ -505,12 +477,7 @@ impl Session {
             if self.tabs.contains_key(window) {
                 continue;
             }
-            if !io.is_movable(*window) {
-                return Err(WindowError::unavailable(
-                    "A window is busy during the display change. Close its dialog or leave full screen, then retry.",
-                ));
-            }
-            if io.is_minimized(*window) {
+            if !io.is_movable(*window) || io.is_minimized(*window) {
                 continue;
             }
             let actual = io.frame(*window)?;
@@ -524,9 +491,7 @@ impl Session {
                 member.parked = None;
                 member.frame.origin()
             } else {
-                let origin = parking_origin(self.policy, actual, displays).ok_or_else(|| {
-                    WindowError::unavailable("No safe screen corner is available after the display change.")
-                })?;
+                let origin = self.park(actual, displays)?;
                 member.parked = Some(origin);
                 origin
             };
@@ -539,7 +504,11 @@ impl Session {
         self.follow_tabs(&mut next);
         self.transition(next, &forced, io)?;
         self.work_areas = Some(areas.to_vec());
-        Ok(())
+        // A window that closed meanwhile left the session without moving.
+        Ok(forced
+            .iter()
+            .filter(|window| self.members.contains_key(window))
+            .count())
     }
 
     /// Bring every parked window back into view. Returns false if any
@@ -573,7 +542,7 @@ impl Session {
 
     fn park(&self, frame: Rect, displays: &[Rect]) -> Result<Point, WindowError> {
         parking_origin(self.policy, frame, displays).ok_or_else(|| {
-            WindowError::unavailable("No safe screen corner is available for workspace windows.")
+            WindowError::unavailable("No screen corner is free to hide windows in with these displays.")
         })
     }
 
@@ -619,7 +588,7 @@ impl Session {
     ) -> Result<(), WindowError> {
         if !io.is_movable(window) {
             return Err(WindowError::unavailable(
-                "A window became unavailable during the workspace change. Its workspace tracking has been kept.",
+                "A window couldn't move just then, so nothing changed; try again.",
             ));
         }
         if io.is_minimized(window) {
@@ -639,7 +608,7 @@ impl Session {
             Ok(())
         } else {
             Err(WindowError::refused(
-                "An app refused the workspace move. Your previous workspace has been restored.",
+                "An app kept its window from moving, so nothing changed.",
             ))
         }
     }

@@ -16,8 +16,10 @@ export function collectionLayouts(app: AppState, collection: Collection): Layout
 }
 
 /**
- * The browsed layout is the one last clicked; otherwise the selected display's layout when
- * it belongs to the collection, otherwise the collection's first.
+ * The browsed layout is the one the page keeps (`browsedLayoutId`); until there is one, or
+ * once it is gone, the selected display's layout when it belongs to the collection, otherwise
+ * the collection's first. The page keeps whatever it shows, so changes to the display's
+ * layout, such as disabling it, never browse another one.
  */
 export function library(app: AppState, session: Session): Library {
   const display = selectedDisplay(app, session);
@@ -30,13 +32,12 @@ export function library(app: AppState, session: Session): Library {
   return { layouts, browsed, inUse, displayId: display?.id };
 }
 
-export function layoutStatus(
-  app: AppState,
-  layout: Layout,
-  inUse: Layout | undefined,
-): "inUse" | "inactive" | null {
+/** In use on the selected display, disabled, or neither. */
+export type LayoutStatus = "inUse" | "disabled" | null;
+
+export function layoutStatus(app: AppState, layout: Layout, inUse: Layout | undefined): LayoutStatus {
   if (!isEnabled(app.settings, layout)) {
-    return "inactive";
+    return "disabled";
   }
   return layout.id === inUse?.id ? "inUse" : null;
 }

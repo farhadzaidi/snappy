@@ -17,6 +17,7 @@ use snappy_core::keys::{KeyChord, Modifier, Mods, Platform as PlatformName, Snap
 use snappy_core::settings::{Settings, Workspace};
 use snappy_gnome::{App, GnomePlatform, Stopper};
 use snappy_linux::key_codes;
+use snappy_linux::xkb::{self, CapsLockKey};
 use snappy_platform::{
     CapsLock, CapsLockInput, Caption, DesktopGuard, HotKeys, Input, LiveControl, Overlay, OverlayScene,
     OverlayZone, Platform, PlatformEvent, Tray, TrayMenu, WindowSystem,
@@ -80,6 +81,9 @@ impl Shell {
 
     /// A freshly started GNOME Shell ignores title bar drags of a Wayland app until the
     /// session has handled some input, so a throwaway window is clicked and dragged first.
+    /// On GNOME 49 the drag's move can outlast the button's release and holds off every
+    /// shortcut until Escape ends it, so Escape and a throwaway shortcut are pressed until the
+    /// shortcut fires.
     fn warm_up(&mut self) {
         let frame = Rect::new(1000.0, 500.0, 500.0, 300.0);
         self.open("warm-up", frame);
@@ -91,6 +95,29 @@ impl Shell {
         self.pointer_steps(grip, (20.0, 10.0), 6);
         self.button(false);
         std::thread::sleep(Duration::from_millis(300));
+        const PROBE: u32 = 9_999;
+        let probe = KeyChord::snappy("F12", []).combo(SnappyKey::DEFAULT);
+        assert!(self.platform.register(&[(PROBE, probe)]).is_empty());
+        let f12 = key_codes::evdev_keycode("F12").unwrap();
+        let escape = key_codes::evdev_keycode("Escape").unwrap();
+        let deadline = Instant::now() + WAIT;
+        loop {
+            self.key(escape, true);
+            self.key(escape, false);
+            for modifier in [Modifier::Ctrl, Modifier::Alt, Modifier::Meta] {
+                self.modifier(modifier, true);
+            }
+            self.key(f12, true);
+            self.key(f12, false);
+            for modifier in [Modifier::Meta, Modifier::Alt, Modifier::Ctrl] {
+                self.modifier(modifier, false);
+            }
+            if self.drain().contains(&PlatformEvent::HotKey(PROBE)) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "GNOME Shell never ran a shortcut");
+        }
+        self.platform.unregister_all();
         self.fixtures.clear();
         std::thread::sleep(Duration::from_millis(300));
     }
@@ -1052,9 +1079,9 @@ fn caps_lock_held_is_the_snappy_key_and_each_press_is_reported_without_its_keys(
     assert!(caps_lock_events(&shell.drain()).is_empty());
 
     // Turning Caps Lock on and off is the adapter's, as is Shift + Caps Lock, the real one.
-    shell.platform.toggle_caps_lock();
+    shell.platform.toggle_caps_lock().unwrap();
     shell.wait_caps_lock(true);
-    shell.platform.toggle_caps_lock();
+    shell.platform.toggle_caps_lock().unwrap();
     shell.wait_caps_lock(false);
     shell.modifier(Modifier::Shift, true);
     shell.key(CAPS_LOCK, true);
@@ -1085,26 +1112,72 @@ fn caps_lock_held_is_the_snappy_key_and_each_press_is_reported_without_its_keys(
     assert!(caps_lock_events(&shell.drain()).is_empty());
 }
 
+/// Sets one of GNOME's input source settings, and gives GNOME Shell time to build the keymap.
+fn input_sources(key: &str, value: &str) {
+    let status = Command::new("gsettings")
+        .args(["set", "org.gnome.desktop.input-sources", key, value])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    std::thread::sleep(Duration::from_millis(300));
+}
+
+/// What GNOME Shell's keymap, as it hands it to Wayland clients, makes of Caps Lock.
+fn keymap_caps_lock() -> Option<CapsLockKey> {
+    xkb::caps_lock_key(&snappy_linux::wayland::keymap().unwrap())
+}
+
 #[test]
 fn a_caps_lock_the_users_keyboard_options_remap_is_refused_naming_the_option() {
     let mut shell = shell!();
-    let options = |value: &str| {
-        let status = Command::new("gsettings")
-            .args(["set", "org.gnome.desktop.input-sources", "xkb-options", value])
-            .status()
-            .unwrap();
-        assert!(status.success());
-        std::thread::sleep(Duration::from_millis(300));
-    };
+    let options = |value: &str| input_sources("xkb-options", value);
     options("['caps:escape', 'compose:ralt']");
     let refused = shell.platform.hold_caps_lock_as(SnappyKey::DEFAULT.modifiers());
     options("[]");
     assert_eq!(
         refused.unwrap_err(),
-        "Caps Lock is already remapped by the keyboard option caps:escape. Remove that to use Caps \
+        "Caps Lock is already remapped by the keyboard option caps:escape. Remove it to use Caps \
          Lock as the Snappy key."
     );
     assert!(!xkb_folder().join("symbols/snappy").exists());
+
+    // One added while Caps Lock is held wins, and the engine hears Caps Lock was lost.
+    shell
+        .platform
+        .hold_caps_lock_as(SnappyKey::DEFAULT.modifiers())
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    options("['compose:ralt']");
+    assert!(!shell.drain().contains(&PlatformEvent::CapsLockLost));
+    options("['compose:ralt', 'caps:escape']");
+    shell.wait_for("Caps Lock lost", |event| *event == PlatformEvent::CapsLockLost);
+    assert!(!xkb_folder().join("symbols/snappy").exists());
+    assert_eq!(keymap_caps_lock(), Some(CapsLockKey::Remapped), "theirs");
+    options("[]");
+}
+
+#[test]
+fn a_layout_that_makes_caps_lock_another_key_is_refused() {
+    let mut shell = shell!();
+    let key = SnappyKey::DEFAULT.modifiers();
+    assert_eq!(keymap_caps_lock(), Some(CapsLockKey::Plain));
+
+    input_sources("sources", "[('xkb', 'us+colemak')]");
+    assert_eq!(keymap_caps_lock(), Some(CapsLockKey::Remapped));
+    let refused = shell.platform.hold_caps_lock_as(key);
+    input_sources("sources", "[('xkb', 'us')]");
+    assert_eq!(refused.unwrap_err(), xkb::LAYOUT_REMAPS_CAPS_LOCK);
+    assert!(!xkb_folder().join("symbols/snappy").exists());
+
+    // Snappy's own definition in the keymap is no reason to refuse a new Snappy key.
+    shell.platform.hold_caps_lock_as(key).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(keymap_caps_lock(), Some(CapsLockKey::Snappys));
+    let control_shift = Mods::from_iter([Modifier::Ctrl, Modifier::Shift]);
+    shell.platform.hold_caps_lock_as(control_shift).unwrap();
+    shell.platform.restore_caps_lock();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(keymap_caps_lock(), Some(CapsLockKey::Plain));
 }
 
 #[test]
@@ -1142,6 +1215,52 @@ fn the_extension_gives_caps_lock_back_when_snappy_goes_away() {
     tap(&shell, CAPS_LOCK);
     shell.wait_caps_lock(false);
     snappy_linux::xkb::uninstall(&xkb_folder()).unwrap();
+}
+
+#[test]
+fn a_caps_lock_press_whose_modifiers_never_show_ends_on_its_own() {
+    let mut shell = shell!();
+    shell
+        .platform
+        .hold_caps_lock_as(SnappyKey::DEFAULT.modifiers())
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    // Snappy's files change under GNOME Shell to make Caps Lock set Control alone, and an
+    // options change builds the keymap from them, so no sample ever sees the Snappy key's
+    // modifiers, as with a keymap that lacks Snappy's option.
+    snappy_linux::xkb::install(
+        &xkb_folder(),
+        Mods::from_iter([Modifier::Ctrl]),
+        snappy_linux::xkb::CapsLockSymbol::Nothing,
+    )
+    .unwrap();
+    input_sources("xkb-options", "['compose:ralt']");
+    shell.drain();
+
+    // A press whose release went unseen ends when Caps Lock goes down again.
+    tap(&shell, CAPS_LOCK);
+    std::thread::sleep(Duration::from_millis(100));
+    let second = Instant::now();
+    tap(&shell, CAPS_LOCK);
+    assert_eq!(
+        caps_lock_events(&shell.drain()),
+        [
+            caps_lock(CapsLockInput::Pressed),
+            caps_lock(CapsLockInput::Released),
+            caps_lock(CapsLockInput::Pressed)
+        ]
+    );
+    // And one that stays open ends after its limit, too late to be a tap.
+    shell.wait_for("the open press ending", |event| {
+        *event == caps_lock(CapsLockInput::Released)
+    });
+    assert!(
+        second.elapsed() >= Duration::from_millis(900),
+        "{:?}",
+        second.elapsed()
+    );
+    input_sources("xkb-options", "[]");
+    shell.platform.restore_caps_lock();
 }
 
 /// Presses and releases a key at a hand's pace.

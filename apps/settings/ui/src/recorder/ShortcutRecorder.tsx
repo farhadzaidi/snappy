@@ -1,85 +1,84 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
-import { commandModifierHint, compactLabel, recorderHelp, unavailableMessage } from "../core/labels";
-import type { KeyChord } from "../core/model";
+import { longLabel, recorderHelp } from "../core/labels";
+import type { KeyChord, Refusal } from "../core/model";
 import { core } from "../core/snappyCore";
+import { useObservable } from "../state/observable";
 import { useAppState, useServices } from "../state/services";
 import { IconButton } from "../ui/Button";
+import { ChordLabel } from "../ui/Chord";
 import { CloseIcon } from "../ui/icons";
 import { interpretKey } from "./interpretKey";
+import { useRecordingInput } from "./useRecordingInput";
 
 interface ShortcutRecorderProps {
   /** Names the shortcut for assistive technology and the clear button. */
   title: string;
   chord: KeyChord | null;
   /** The conflict this chord would create, checked locally before the probe. */
-  conflictOf: (chord: KeyChord) => string | null;
+  conflictOf: (chord: KeyChord) => Refusal | null;
   /** Without a handler the recorder only shows its shortcut. */
   onChange?: (chord: KeyChord | null) => void;
 }
 
 /**
- * Records one shortcut. While recording, the daemon has every Snappy
- * shortcut unregistered; recording ends on a result, on Escape, on leaving the recorder,
- * or when the recorder goes away.
+ * Records one shortcut. Only one recorder records at a time, and while it does the daemon
+ * has every Snappy shortcut unregistered. Recording ends on a result, on Escape or Cancel,
+ * on a press elsewhere, when another recorder starts, or when the recorder goes away.
  */
 export function ShortcutRecorder({ title, chord, conflictOf, onChange }: ShortcutRecorderProps) {
-  const { client } = useServices();
+  const { client, recording: recordings } = useServices();
   const { platform, settings } = useAppState();
-  const snappyKey = settings.snappyKey;
-  const [recording, setRecording] = useState(false);
+  const id = useId();
+  const recording = useObservable(recordings.active) === id;
   const [hint, setHint] = useState<string | null>(null);
-  const recordingRef = useRef(false);
-  const probing = useRef(false);
+  /** The candidate whose probe the recorder waits for. Its answer counts only while it is. */
+  const probing = useRef<KeyChord | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
   const descriptionId = useId();
 
   const begin = () => {
-    if (recordingRef.current || !onChange) {
+    if (!onChange) {
       return;
     }
-    recordingRef.current = true;
-    setRecording(true);
     setHint(null);
-    void client.send({ kind: "beginRecording" });
+    probing.current = null;
+    recordings.start(id);
+    // WebKit doesn't focus a clicked button; assistive technology should land on it anyway.
+    button.current?.focus();
   };
+  const finish = () => recordings.stop(id);
 
-  const finish = () => {
-    if (!recordingRef.current) {
-      return;
-    }
-    recordingRef.current = false;
-    setRecording(false);
-    void client.send({ kind: "endRecording" });
-  };
+  useEffect(() => () => recordings.stop(id), [recordings, id]);
 
-  useEffect(
-    () => () => {
-      if (recordingRef.current) {
-        void client.send({ kind: "endRecording" });
-      }
-    },
-    [client],
-  );
-
-  const refuse = (message: string) => {
+  const refuse = ({ message, setting }: Refusal) => {
     setHint(message);
-    client.announce(message, true);
+    client.announce(message, true, setting);
   };
 
   const tryCandidate = async (candidate: KeyChord) => {
+    const problem = core.chordProblem(candidate, platform);
+    if (problem !== null) {
+      refuse({ message: problem, setting: null });
+      return;
+    }
     const conflict = conflictOf(candidate);
     if (conflict !== null) {
       refuse(conflict);
       return;
     }
-    probing.current = true;
+    probing.current = candidate;
     const available = await client.probe(candidate);
-    probing.current = false;
-    if (!recordingRef.current) {
+    if (probing.current !== candidate) {
+      return;
+    }
+    probing.current = null;
+    if (!recordings.isRecording(id)) {
       return;
     }
     if (!available) {
-      refuse(unavailableMessage(candidate, platform));
+      refuse(core.unavailableShortcut(candidate, title, platform));
       return;
     }
     setHint(null);
@@ -87,60 +86,72 @@ export function ShortcutRecorder({ title, chord, conflictOf, onChange }: Shortcu
     finish();
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (!recordingRef.current) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    if (probing.current) {
-      return;
-    }
-    const outcome = interpretKey(event, snappyKey);
-    switch (outcome.kind) {
-      case "cancel":
-        finish();
-        break;
-      case "clear":
-        onChange?.(null);
-        finish();
-        break;
-      case "needsCommandModifier":
-        setHint(commandModifierHint(platform));
-        break;
-      case "candidate":
-        if (core.isValidChord(outcome.chord, platform)) {
+  useRecordingInput(recording, root, {
+    onLeave: finish,
+    onKey: (event) => {
+      const outcome = interpretKey(event, settings.snappyKey);
+      // While a probe is out, only Escape counts, so a probe that never answers can't keep
+      // the recorder from ending.
+      if (probing.current !== null && outcome.kind !== "cancel") {
+        return;
+      }
+      switch (outcome.kind) {
+        case "cancel":
+          probing.current = null;
+          finish();
+          break;
+        case "clear":
+          onChange?.(null);
+          finish();
+          break;
+        case "candidate":
           void tryCandidate(outcome.chord);
-        }
-        break;
-      case "ignore":
-        break;
-    }
-  };
+          break;
+        case "ignore":
+          break;
+      }
+    },
+  });
 
-  const valueText = recording ? "Press shortcut…" : chord ? compactLabel(chord, platform) : "Record shortcut";
+  /** The shortcut the button shows, or null while it asks for one. */
+  const shown = recording ? null : chord;
+  const prompt = recording ? "Press shortcut…" : "Record shortcut";
+  const valueText = shown ? longLabel(shown, platform) : prompt;
 
   return (
-    <div className="recorder">
-      <button
-        type="button"
-        className="recorder-button"
-        data-recording={recording}
-        data-assigned={chord !== null}
-        aria-label={title}
-        aria-describedby={descriptionId}
-        title={hint ?? recorderHelp(platform, snappyKey)}
-        disabled={!onChange}
-        onClick={begin}
-        onKeyDown={onKeyDown}
-        onBlur={finish}
-      >
-        {valueText}
-      </button>
+    <div className="recorder" ref={root}>
+      <div className="recorder-field">
+        <button
+          ref={button}
+          type="button"
+          className="recorder-button"
+          data-setting={title}
+          data-recording={recording}
+          data-assigned={chord !== null}
+          aria-label={title}
+          aria-describedby={descriptionId}
+          title={hint ?? recorderHelp(platform, settings.snappyKey)}
+          disabled={!onChange}
+          onClick={begin}
+        >
+          {shown ? <ChordLabel chord={shown} platform={platform} /> : prompt}
+        </button>
+        {recording && (
+          <button
+            type="button"
+            className="recorder-cancel"
+            aria-label="Cancel recording"
+            title="Cancel (Esc)"
+            onClick={finish}
+          >
+            esc
+          </button>
+        )}
+      </div>
       <span id={descriptionId} className="visually-hidden">
         {hint ?? valueText}
       </span>
-      {chord && onChange ? (
+      {chord && onChange && !recording ? (
         <IconButton label={`Clear ${title}`} className="recorder-clear" onClick={() => onChange(null)}>
           <CloseIcon />
         </IconButton>

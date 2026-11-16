@@ -16,20 +16,6 @@ pub const CAPS_LOCK_OTHER_SETTING: &str = "Caps Lock is already remapped by anot
 pub const CAPS_LOCK_TAKEN: &str = "Another program uses Caps Lock as a shortcut, so it can't be the Snappy key. Quit that program to use Caps Lock as the Snappy key.";
 pub const CAPS_LOCK_FAILED: &str = "The X server didn't let Snappy change Caps Lock.";
 
-/// The refusal when XKB options already remap Caps Lock, naming them.
-pub fn caps_lock_options(options: &[&str]) -> String {
-    match options {
-        [one] => format!(
-            "Caps Lock is already remapped by the keyboard option {one}. Remove that to use Caps Lock as the Snappy key."
-        ),
-        [rest @ .., last] => format!(
-            "Caps Lock is already remapped by the keyboard options {} and {last}. Remove them to use Caps Lock as the Snappy key.",
-            rest.join(", ")
-        ),
-        [] => CAPS_LOCK_OTHER_SETTING.to_owned(),
-    }
-}
-
 pub fn unavailable(message: &str) -> WindowError {
     WindowError::unavailable(message)
 }

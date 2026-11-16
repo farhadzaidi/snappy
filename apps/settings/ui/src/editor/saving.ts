@@ -1,7 +1,7 @@
 // When the editor's Save button is enabled.
 
 import type { PlatformName, Settings } from "../core/model";
-import { MAX_ZONES } from "../core/model";
+import { coreLimits } from "../core/limits";
 import { core } from "../core/snappyCore";
 import { hasChanges, type Draft, type Snapshot } from "./draft";
 
@@ -17,8 +17,8 @@ export function isComplete(snapshot: Snapshot, platform: PlatformName): boolean 
   return (
     core.isValidLayout(layout) &&
     core.isSeparated(layout.zones) &&
-    Object.keys(options.zoneShortcuts).length <= MAX_ZONES &&
-    chords.every((chord) => chord === null || core.isValidChord(chord, platform))
+    Object.keys(options.zoneShortcuts).length <= coreLimits().zones &&
+    chords.every((chord) => chord === null || core.chordProblem(chord, platform) === null)
   );
 }
 

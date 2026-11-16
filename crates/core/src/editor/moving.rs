@@ -16,9 +16,10 @@ pub fn move_zone(zones: &[Zone], id: &str, target: Point) -> Vec<Zone> {
     }
 
     let rect = zones[index].rect;
+    // A zone as wide or tall as the canvas, give or take rounding, has nowhere to go that way.
     let wanted = Point::new(
-        target.x.clamp(0.0, 1.0 - rect.width),
-        target.y.clamp(0.0, 1.0 - rect.height),
+        target.x.clamp(0.0, (1.0 - rect.width).max(0.0)),
+        target.y.clamp(0.0, (1.0 - rect.height).max(0.0)),
     );
     let others: Vec<UnitRect> = zones
         .iter()
@@ -87,6 +88,14 @@ mod tests {
         let moved = rect(&move_zone(&zones, "a", Point::new(-1.0, 5.0)), "a");
         near(moved.x, 0.0);
         near(moved.y, 0.7);
+    }
+
+    #[test]
+    fn a_zone_a_rounding_wider_than_the_canvas_moves_only_up_and_down() {
+        let zones = vec![zone("a", 0.0, 0.0, 1.000_000_5, 0.4)];
+        let moved = rect(&move_zone(&zones, "a", Point::new(0.3, 0.2)), "a");
+        near(moved.x, 0.0);
+        near(moved.y, 0.2);
     }
 
     #[test]

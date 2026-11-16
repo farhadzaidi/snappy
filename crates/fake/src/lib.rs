@@ -103,6 +103,8 @@ pub struct FakePlatform {
     pub caps_lock_undone: Vec<CapsLockUndo>,
     /// How many times Caps Lock was turned on or off.
     pub caps_lock_toggles: usize,
+    /// Turning Caps Lock on or off fails with this, as when the system doesn't take it.
+    pub caps_lock_toggle_failure: Option<String>,
     pub press_monitoring: bool,
     pub drag_monitoring: bool,
     pub overlay: Vec<OverlayCall>,
@@ -123,6 +125,8 @@ pub struct FakePlatform {
     pub restore_delay: Duration,
     /// How many times Snappy looked for windows filling zones.
     pub occupancy_queries: usize,
+    /// How many times Snappy listed every window, which is slow on some platforms.
+    pub window_listings: usize,
     pub pointer: Point,
 }
 
@@ -149,9 +153,10 @@ impl Default for FakePlatform {
             taken_elsewhere: BTreeSet::new(),
             caps_lock_held_as: None,
             caps_lock_refusal: None,
-            caps_lock_undo: CapsLockUndo("fake".to_owned()),
+            caps_lock_undo: CapsLockUndo("fake".into()),
             caps_lock_undone: Vec::new(),
             caps_lock_toggles: 0,
+            caps_lock_toggle_failure: None,
             press_monitoring: false,
             drag_monitoring: false,
             overlay: Vec::new(),
@@ -166,6 +171,7 @@ impl Default for FakePlatform {
             writes: Vec::new(),
             restore_delay: Duration::ZERO,
             occupancy_queries: 0,
+            window_listings: 0,
             pointer: Point::new(720.0, 450.0),
         }
     }
@@ -390,6 +396,7 @@ impl WindowSystem for FakePlatform {
 
     /// Like macOS, hidden tabs are listed only while their group is minimized.
     fn all_windows(&mut self) -> Vec<WindowInfo> {
+        self.window_listings += 1;
         self.windows
             .iter()
             .filter(|(_, window)| window.tab_of.is_none() || window.state.minimized)
@@ -533,8 +540,12 @@ impl CapsLock for FakePlatform {
         self.caps_lock_undone.push(undo.clone());
     }
 
-    fn toggle_caps_lock(&mut self) {
+    fn toggle_caps_lock(&mut self) -> Result<(), String> {
+        if let Some(failure) = &self.caps_lock_toggle_failure {
+            return Err(failure.clone());
+        }
         self.caps_lock_toggles += 1;
+        Ok(())
     }
 }
 

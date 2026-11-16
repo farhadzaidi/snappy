@@ -3,8 +3,7 @@
 
 mod menu;
 
-use snappy_core::geometry::Rect;
-use snappy_platform::{PlatformEvent, TrayMenu};
+use snappy_platform::{PlatformEvent, TrayMenu, glyph};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
@@ -22,7 +21,7 @@ use windows::core::{BOOL, PCWSTR};
 use self::menu::Entry;
 use crate::dispatch::WM_TRAY;
 use crate::main_state::with_main;
-use crate::overlay::{Canvas, Color, Dib};
+use crate::overlay::{Canvas, Color, Dib, Mask};
 use crate::wide::{copy_into, wide};
 
 /// The only icon Snappy adds.
@@ -39,23 +38,17 @@ pub struct Tray {
     added: bool,
 }
 
-/// Two zones side by side, in the overlay's highlight color, which reads on light and
-/// dark taskbars alike.
+/// The glyph in the overlay's highlight color, which reads on light and dark taskbars
+/// alike.
 fn draw_icon(size: usize) -> Option<HICON> {
     let mut dib = Dib::new(size, size)?;
     let mut canvas = Canvas::new(size, size, dib.pixels());
-    let unit = size as f64 / 16.0;
-    let color = Color::rgb(MINT, 1.0);
-    canvas.fill_rounded(
-        Rect::new(unit, 2.0 * unit, 6.5 * unit, 12.0 * unit),
-        1.5 * unit,
-        color,
-    );
-    canvas.fill_rounded(
-        Rect::new(8.5 * unit, 2.0 * unit, 6.5 * unit, 12.0 * unit),
-        1.5 * unit,
-        color,
-    );
+    let shape = Mask {
+        width: size,
+        height: size,
+        coverage: glyph::mask(size),
+    };
+    canvas.draw_mask(&shape, 0, 0, Color::rgb(MINT, 1.0));
     let side = i32::try_from(size).ok()?;
     // SAFETY: a monochrome mask of the icon's size; the color bitmap carries alpha.
     let mask = unsafe { CreateBitmap(side, side, 1, 1, None) };

@@ -27,7 +27,7 @@ use windows::core::{BOOL, w};
 
 use crate::class;
 
-pub use self::canvas::{Canvas, Color};
+pub use self::canvas::{Canvas, Color, Mask};
 pub use self::dib::Dib;
 use self::paint::{paint, paint_marks};
 use self::style::DEFAULT_ACCENT;

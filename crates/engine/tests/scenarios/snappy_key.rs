@@ -1,34 +1,17 @@
 //! Choosing the Snappy key.
 
+use snappy_core::bindings::Refusal;
 use snappy_core::keys::{KeyChord, Modifier, Mods, SnappyKey};
 use snappy_core::settings::HistoryStep;
 use snappy_engine::Engine;
 use snappy_fake::FakePlatform;
-use snappy_ipc::{Command, ToSettings};
+use snappy_ipc::Command;
 use snappy_platform::PlatformEvent;
 
 use crate::support::{
-    FLOATING, RIGHT_ZONE, command, event, frame_of, hotkey_id, live_engine, logged, paths_kept, relaunched,
-    scenario, settle, snappy, with_window,
+    FLOATING, RIGHT_ZONE, command, control_option, event, frame_of, hotkey_id, live_engine, logged,
+    paths_kept, relaunched, reply_to, scenario, settle, snappy, with_window,
 };
-
-fn control_option() -> Mods {
-    Mods::from_iter([Modifier::Ctrl, Modifier::Alt])
-}
-
-/// Send a command and return the daemon's reply to it.
-fn reply_to(engine: &Engine<FakePlatform>, sent: Command) -> Option<String> {
-    engine.take_outbox();
-    command(engine, sent);
-    engine
-        .take_outbox()
-        .into_iter()
-        .find_map(|message| match message {
-            ToSettings::Reply { error, .. } => Some(error),
-            _ => None,
-        })
-        .unwrap()
-}
 
 fn saved_snappy_key(name: &str) -> serde_json::Value {
     let saved = std::fs::read_to_string(paths_kept(name).settings).unwrap();
@@ -66,7 +49,7 @@ fn changing_the_snappy_key_registers_every_snappy_shortcut_with_the_new_modifier
         );
         assert_eq!(
             engine.status().unwrap().message,
-            "The Snappy key is now Control + Option."
+            "The Snappy key is now Control ⌃ + Option ⌥."
         );
         assert_eq!(saved_snappy_key(name), serde_json::json!(["ctrl", "alt"]));
         let changed = logged(name, "snappyKeyChanged");
@@ -107,8 +90,8 @@ fn a_snappy_key_change_that_clashes_with_another_shortcut_is_refused_and_changes
                 modifiers: control_option(),
             },
         );
-        let refusal = "Snappy + J for Focus left would collide with Undo window move.";
-        assert_eq!(error.as_deref(), Some(refusal));
+        let refusal = "Snappy + J (Focus left) would clash with Undo window move.";
+        assert_eq!(error, Some(Refusal::from(refusal.to_owned())));
         assert_eq!(engine.settings(), settings);
         assert_eq!(engine.with_platform(|p| p.registered.clone()), registered);
         assert_eq!(engine.with_platform(|p| p.registrations), registrations);
@@ -124,7 +107,7 @@ fn a_snappy_key_change_that_clashes_with_another_shortcut_is_refused_and_changes
             },
         );
         assert_eq!(
-            one_modifier.as_deref(),
+            one_modifier.map(|refusal| refusal.message).as_deref(),
             Some("The Snappy key needs at least two modifiers.")
         );
         assert_eq!(engine.settings(), settings);
@@ -189,8 +172,16 @@ fn a_snappy_key_change_onto_a_chord_the_os_holds_is_refused_naming_the_chord() {
                 modifiers: control_option(),
             },
         );
-        let refusal = "Snappy + Space for Move to the nearest empty zone would be Control + Option + Space, which macOS or another app already uses.";
-        assert_eq!(error.as_deref(), Some(refusal));
+        let refusal =
+            "Snappy + Space for Move to the nearest empty zone is already used by macOS or another app.";
+        assert_eq!(
+            error,
+            Some(Refusal {
+                message: refusal.to_owned(),
+                setting: Some("Move to the nearest empty zone".to_owned()),
+            }),
+            "the reply names the shortcut, for the app to point to"
+        );
         assert_eq!(engine.settings(), settings);
         assert_eq!(
             engine.with_platform(|p| p.registered.clone()),

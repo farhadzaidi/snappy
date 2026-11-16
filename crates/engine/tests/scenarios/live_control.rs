@@ -357,14 +357,14 @@ fn turning_workspaces_on_without_permission_asks_for_accessibility() {
 fn a_login_item_error_keeps_the_switch_off_and_shows_the_message() {
     scenario(|| async {
         let engine = live_engine("login-item-error", FakePlatform::default());
-        let refusal = "The login item could not be registered.";
+        let refusal = "The login item couldn't be registered.";
         engine.with_platform(|p| p.login_item_error = Some(refusal.into()));
         engine.take_outbox();
 
         command(&engine, Command::SetLoginItem { enabled: true });
         assert!(engine.take_outbox().contains(&ToSettings::Reply {
             id: 1,
-            error: Some(refusal.into()),
+            error: Some(refusal.to_owned().into()),
         }));
         let status = engine.status().unwrap();
         assert_eq!((status.message.as_str(), status.is_error), (refusal, true));

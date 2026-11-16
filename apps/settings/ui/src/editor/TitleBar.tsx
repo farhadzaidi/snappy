@@ -21,7 +21,7 @@ export function TitleBar() {
       {readOnly ? (
         <h1 className="layout-title">
           {layout.name}
-          <span className="lock" title="Preset shapes cannot be edited. Duplicate to customize.">
+          <span className="lock" title="Duplicate a preset to change its zones.">
             <LockIcon />
           </span>
         </h1>

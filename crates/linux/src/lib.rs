@@ -1,11 +1,12 @@
 //! What every Linux adapter shares, whichever display server it talks to: one daemon per
 //! session, quitting on `SIGTERM` and stopping for a restart on `SIGUSR2`, the autostart
-//! entry, process facts from `/proc`,
+//! entry and the app icon it names, process facts from `/proc`,
 //! recognizing the session, physical key codes, the menu's structure, how overlays look,
 //! stable display IDs, drawing overlays and the scenes desktop shells draw, the tray icon,
 //! warnings for the journal, and a minimal Wayland client.
 #![cfg(target_os = "linux")]
 
+pub mod app_icon;
 pub mod clients;
 pub mod display_id;
 pub mod instance;

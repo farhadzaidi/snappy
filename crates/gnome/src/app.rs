@@ -7,19 +7,19 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use snappy_core::geometry::Point;
 use snappy_linux::clients::ClientTracker;
-use snappy_platform::{CapsLockInput, PlatformEvent, WindowId};
+use snappy_linux::journal;
+use snappy_platform::{PlatformEvent, WindowId};
 use zbus::MatchRule;
 use zbus::blocking::MessageIterator;
 use zbus::message::Type;
 
 use crate::bus::{Bus, DISPLAY_CONFIG_NAME, DISPLAY_CONFIG_PATH, ExtensionInfo};
+use crate::caps_lock;
 use crate::error::GnomeError;
 use crate::extension::{self, Installed};
 use crate::keys::mods;
 use crate::platform::GnomePlatform;
-use crate::protocol::{
-    CapsLockPhase, EXTENSION_UUID, Event, INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME, WindowRecord,
-};
+use crate::protocol::{EXTENSION_UUID, Event, INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME, WindowRecord};
 use crate::shared::Shared;
 
 /// What the listening threads hand the event loop.
@@ -213,11 +213,14 @@ impl App {
                 mods: mods(mask),
             }],
             Event::Hotkey { id } => vec![PlatformEvent::HotKey(id)],
-            Event::CapsLock { phase } => vec![PlatformEvent::CapsLock(match phase {
-                CapsLockPhase::Pressed => CapsLockInput::Pressed,
-                CapsLockPhase::OtherInput => CapsLockInput::OtherInput,
-                CapsLockPhase::Released => CapsLockInput::Released,
-            })],
+            Event::CapsLock { phase } => vec![PlatformEvent::CapsLock(phase)],
+            Event::KeyboardOptions { options } => {
+                if caps_lock::options_changed(&self.shared, &options) {
+                    vec![PlatformEvent::CapsLockLost]
+                } else {
+                    Vec::new()
+                }
+            }
             Event::WindowAdded { id, pid } => windows.added(id, pid),
             Event::WindowRemoved { id } => {
                 self.shared.state().followed.remove(&id);
@@ -306,13 +309,17 @@ fn install_extension() -> bool {
     match extension::install(&folder) {
         Ok(Installed::Fresh) => {
             if let Err(error) = extension::enable_in_settings() {
-                eprintln!("snappy: could not turn on the GNOME Shell extension: {error}");
+                journal::warn(format_args!(
+                    "couldn't turn on the GNOME Shell extension: {error}"
+                ));
             }
             true
         }
         Ok(Installed::Updated | Installed::Current) => true,
         Err(error) => {
-            eprintln!("snappy: could not install the GNOME Shell extension: {error}");
+            journal::warn(format_args!(
+                "couldn't install the GNOME Shell extension: {error}"
+            ));
             folder.join("metadata.json").exists()
         }
     }

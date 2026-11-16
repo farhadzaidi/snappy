@@ -19,6 +19,11 @@ const OPTION = 'snappy:caps';
 const CAPS_LOCK = '0x42';
 /** About one sample per frame at 60 Hz, as during drags. */
 const SAMPLE_INTERVAL_MS = 16;
+/**
+ * A press whose modifiers never show, as with a keymap that lacks the app's option, ends after
+ * this long, so its grabs and sampler don't stay. Longer than a tap, so it never counts as one.
+ */
+const UNSEEN_PRESS_LIMIT_US = 1000 * 1000;
 
 const BUTTON_MASK =
     Clutter.ModifierType.BUTTON1_MASK | Clutter.ModifierType.BUTTON2_MASK |
@@ -33,10 +38,12 @@ export class CapsLock {
         this._locked = false;
         /** The manager whose options are wrapped, while they are. */
         this._wrapped = null;
+        /** The user's own options as last built while wrapped, to report when they change. */
+        this._userOptions = null;
         this._capsAction = Meta.KeyBindingAction.NONE;
         /** Grabs of the other keys, while Caps Lock is down. */
         this._keyActions = new Set();
-        /** The press in progress: whether the modifiers were seen and a button reported. */
+        /** The press in progress: when it began, whether the modifiers were seen and a button reported. */
         this._press = null;
         this._sampler = 0;
         this._keyboard = null;
@@ -120,8 +127,10 @@ export class CapsLock {
             return;
         this._unwrap();
         const build = Object.getPrototypeOf(manager)._buildOptionsString;
+        const built = options => this._optionsBuilt(options);
         manager._buildOptionsString = function () {
             const options = build.call(this);
+            built(options);
             return options === '' ? OPTION : `${options},${OPTION}`;
         };
         this._wrapped = manager;
@@ -131,6 +140,14 @@ export class CapsLock {
         if (this._wrapped !== null)
             delete this._wrapped._buildOptionsString;
         this._wrapped = null;
+        this._userOptions = null;
+    }
+
+    /** Reports the user's own options when they change while the app's option is in the keymap. */
+    _optionsBuilt(options) {
+        if (this._userOptions !== null && options !== this._userOptions)
+            this._emit({type: 'keyboardOptions', options});
+        this._userOptions = options;
     }
 
     _activated(action) {
@@ -140,10 +157,10 @@ export class CapsLock {
             this._emit({type: 'capsLock', phase: 'otherInput'});
     }
 
+    /** Caps Lock went down. A press still open missed its release, so it ends first. */
     _pressed() {
-        if (this._press !== null)
-            return;
-        this._press = {seen: false, button: false};
+        this._endPress(true);
+        this._press = {began: GLib.get_monotonic_time(), seen: false, button: false};
         this._emit({type: 'capsLock', phase: 'pressed'});
         const {modifiers, keycodes} = this._held;
         for (const keycode of keycodes) {
@@ -164,8 +181,8 @@ export class CapsLock {
 
     /**
      * Caps Lock is up once the Snappy key's modifiers it set are, having been seen down, so a
-     * sample taken before they show can't end the press. A button pressed meanwhile counts as
-     * something else used.
+     * sample taken before they show can't end the press; one whose modifiers never show ends
+     * after `UNSEEN_PRESS_LIMIT_US`. A button pressed meanwhile counts as something else used.
      */
     _sample() {
         if (this._press === null)
@@ -177,7 +194,7 @@ export class CapsLock {
         }
         if ((state & this._held.mask) === this._held.mask)
             this._press.seen = true;
-        else if (this._press.seen)
+        else if (this._press.seen || GLib.get_monotonic_time() - this._press.began > UNSEEN_PRESS_LIMIT_US)
             this._endPress(true);
     }
 

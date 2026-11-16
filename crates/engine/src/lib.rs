@@ -28,6 +28,7 @@ pub use crate::diagnostics::SwitchTiming;
 pub use crate::store::Paths;
 
 use crate::ops::Shared;
+use crate::workspaces::SwitchFocus;
 
 /// Something for the engine to handle.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +60,7 @@ impl<P: Platform + 'static> Engine<P> {
                 core.settings = settings;
             }
             Err(error) => {
-                let message = format!("Could not load settings: {error} The original file is preserved.");
+                let message = format!("Couldn't load settings: {error} The original file is preserved.");
                 core.announce_error(&message);
             }
         }
@@ -114,14 +115,14 @@ impl<P: Platform + 'static> Engine<P> {
             PlatformEvent::PointerUp { at, mods } => drag::pointer_up(shared, at, mods),
             PlatformEvent::HotKey(id) => actions::hotkey(shared, id),
             PlatformEvent::CapsLock(input) => caps_lock::input(&mut shared.core.borrow_mut(), input),
+            PlatformEvent::CapsLockLost => caps_lock::lost(&mut shared.core.borrow_mut()),
             PlatformEvent::WindowCreated { .. } => workspaces::focus_changed(shared, false),
             PlatformEvent::FocusChanged { by_activation, .. } => {
                 workspaces::focus_changed(shared, by_activation)
             }
             PlatformEvent::WindowMoved(window) => {
-                let mut core = shared.core.borrow_mut();
-                core.marked_window_moved(window);
-                workspaces::window_moved(&mut core, window)
+                shared.core.borrow_mut().marked_window_moved(window);
+                workspaces::window_moved(shared, window)
             }
             PlatformEvent::WindowDestroyed(window) => {
                 let mut core = shared.core.borrow_mut();
@@ -137,10 +138,9 @@ impl<P: Platform + 'static> Engine<P> {
             }
             PlatformEvent::DisplaysChanged => workspaces::displays_changed(shared),
             PlatformEvent::NativeDesktopChanged => {
-                let mut core = shared.core.borrow_mut();
                 // Selected windows of the desktop left behind no longer show.
-                selection::clear(&mut core, "native desktop changed");
-                workspaces::native_desktop_changed(&mut core)
+                selection::clear(&mut shared.core.borrow_mut(), "native desktop changed");
+                workspaces::native_desktop_changed(shared)
             }
             PlatformEvent::PermissionChanged => {
                 let mut core = shared.core.borrow_mut();
@@ -148,19 +148,22 @@ impl<P: Platform + 'static> Engine<P> {
                 workspaces::configure(&mut core);
             }
             PlatformEvent::LiveControlChanged => {
-                let mut core = shared.core.borrow_mut();
-                core.live_control = core.platform.live_control();
-                // Work areas may only now be known, so displays are read before anything
-                // that places windows starts.
-                core.displays = core.platform.displays();
-                core.refresh_live(true);
-                workspaces::configure(&mut core);
+                let available = {
+                    let mut core = shared.core.borrow_mut();
+                    core.live_control = core.platform.live_control();
+                    // Work areas may only now be known, so displays are read before anything
+                    // that places windows starts.
+                    core.displays = core.platform.displays();
+                    core.refresh_live(true);
+                    workspaces::configure(&mut core);
+                    core.live_control.is_available()
+                };
                 // Control came back, or the platform started over and may have shown hidden
                 // windows: running workspaces bind again and hide them again.
-                if core.live_control.is_available() {
-                    workspaces::resume(&mut core);
+                if available {
+                    workspaces::resume(shared);
                 }
-                core.publish_state();
+                shared.core.borrow_mut().publish_state();
             }
             PlatformEvent::NotesChanged => {
                 let mut core = shared.core.borrow_mut();
@@ -178,7 +181,7 @@ impl<P: Platform + 'static> Engine<P> {
                 commands::apply_layout(&mut shared.core.borrow_mut(), &display, &layout)
             }
             PlatformEvent::Tray(TrayCommand::SwitchWorkspace(id)) => {
-                workspaces::request_switch(shared, &id, false)
+                workspaces::request_switch(shared, &id, SwitchFocus::Workspace)
             }
             PlatformEvent::QuitRequested => self.shutdown(),
             PlatformEvent::RestartRequested => self.shutdown_for_restart(),
@@ -204,7 +207,7 @@ impl<P: Platform + 'static> Engine<P> {
             owner.filter(|owner| *owner != active && core.workspaces.is_running())
         };
         match owner {
-            Some(owner) => workspaces::request_switch(&self.shared, &owner, true),
+            Some(owner) => workspaces::request_switch(&self.shared, &owner, SwitchFocus::Settings),
             None => self.shared.core.borrow_mut().outbox.push(ToSettings::Focus),
         }
     }
@@ -213,7 +216,9 @@ impl<P: Platform + 'static> Engine<P> {
     pub fn shutdown(&self) {
         self.shared.cancel_current();
         let mut core = self.shared.core.borrow_mut();
-        workspaces::stop(&mut core);
+        // Quitting goes on regardless; a window that couldn't come back stays journaled, and
+        // the next launch brings it back.
+        let _ = workspaces::stop(&mut core);
         Self::release(&mut core);
     }
 

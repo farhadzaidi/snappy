@@ -44,16 +44,6 @@ pub const LOG_OUT_FAILED: &str = "Snappy couldn't ask GNOME to log out. Log out 
 pub const HIDE_REFUSED: &str = "GNOME didn't let Snappy hide this window.";
 pub const UNEXPECTED_REPLY: &str = "Snappy and its GNOME extension don't agree. Quit and reopen Snappy.";
 
-/// The user's own XKB options already change what Caps Lock does.
-pub fn caps_lock_remapped(options: &[&str]) -> String {
-    let named = match options {
-        [only] => format!("the keyboard option {only}"),
-        [first @ .., last] => format!("the keyboard options {} and {last}", first.join(", ")),
-        [] => "a keyboard option".to_owned(),
-    };
-    format!("Caps Lock is already remapped by {named}. Remove that to use Caps Lock as the Snappy key.")
-}
-
 pub const CAPS_LOCK_UNSUPPORTED: &str = "This version of GNOME can't use Caps Lock as the Snappy key yet.";
 
 /// Snappy's keyboard option couldn't be written to the user's XKB folder.
@@ -63,22 +53,4 @@ pub fn caps_lock_not_written(error: &std::io::Error) -> String {
 
 pub fn unavailable(message: &str) -> WindowError {
     WindowError::unavailable(message)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_caps_lock_option_is_named_and_several_are_listed() {
-        assert_eq!(
-            caps_lock_remapped(&["caps:escape"]),
-            "Caps Lock is already remapped by the keyboard option caps:escape. Remove that to use Caps \
-             Lock as the Snappy key."
-        );
-        assert!(
-            caps_lock_remapped(&["caps:escape", "ctrl:nocaps", "grp:caps_toggle"])
-                .contains("the keyboard options caps:escape, ctrl:nocaps and grp:caps_toggle.")
-        );
-    }
 }
