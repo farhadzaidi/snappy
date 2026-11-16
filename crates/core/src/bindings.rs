@@ -13,7 +13,9 @@ use crate::navigate::Direction;
 use crate::settings::{
     HistoryStep, LayoutOptions, NavigationShortcut, Settings, WorkspaceShortcut, WorkspaceStep,
 };
-use crate::shortcuts::{Bound, ShortcutId, bound, bound_global, bound_select, bound_workspace, bound_zones};
+use crate::shortcuts::{
+    Bound, NamedShortcut, ShortcutId, bound, bound_global, bound_select, bound_workspace, bound_zones,
+};
 
 /// What a registered shortcut does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,21 +186,21 @@ pub fn snappy_key_conflict(settings: &Settings, platform: Platform) -> Option<St
     find_conflict(settings, platform).map(|conflict| conflict.after_key_change(platform))
 }
 
-/// Why a change was refused, as the settings app shows it: the message, and the title of the
-/// setting the message names, when it names one, so the app can point to that setting.
+/// Why a change was refused, as the settings app shows it: the message, and the shortcut the
+/// message names, when it names one of Snappy's, so the app can point to that shortcut.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Refusal {
     pub message: String,
-    pub setting: Option<String>,
+    pub shortcut: Option<NamedShortcut>,
 }
 
-/// A refusal that names no setting.
+/// A refusal that names no shortcut.
 impl From<String> for Refusal {
     fn from(message: String) -> Self {
         Self {
             message,
-            setting: None,
+            shortcut: None,
         }
     }
 }
@@ -211,7 +213,7 @@ pub fn conflict_for(settings: &Settings, changed: &ShortcutId, platform: Platfor
         let conflict = conflict.seen_from(changed);
         Refusal {
             message: conflict.message(platform),
-            setting: conflict.holder().map(str::to_owned),
+            shortcut: conflict.holder().map(NamedShortcut::from),
         }
     })
 }
@@ -292,14 +294,14 @@ impl Conflict {
         }
     }
 
-    /// The title of the Snappy shortcut holding the chord. Standard app commands, the
-    /// system, and clashes within layouts have none.
-    fn holder(&self) -> Option<&str> {
+    /// The Snappy shortcut holding the chord. Standard app commands, the system, and clashes
+    /// within layouts have none.
+    fn holder(&self) -> Option<&Bound> {
         match self {
             Conflict::Taken {
                 owner: Owner::Shortcut(owner),
                 ..
-            } => Some(&owner.title),
+            } => Some(owner),
             Conflict::Taken { .. } | Conflict::Other(_) => None,
         }
     }
@@ -551,17 +553,18 @@ pub struct Probe {
     pub refusal: Refusal,
 }
 
-/// What to say when the OS or another app already holds `chord` for the shortcut titled
-/// `title`, naming that shortcut so the settings app can point to it. The Snappy key's
-/// probes and a recorder's say the same.
-pub fn unavailable_refusal(chord: &KeyChord, title: &str, platform: Platform) -> Refusal {
+/// What to say when the OS or another app already holds `chord` for `shortcut`, naming that
+/// shortcut so the settings app can point to it. The Snappy key's probes and a recorder's
+/// say the same.
+pub fn unavailable_refusal(chord: &KeyChord, shortcut: NamedShortcut, platform: Platform) -> Refusal {
     Refusal {
         message: format!(
-            "{} for {title} is already used by {} or another app.",
+            "{} for {} is already used by {} or another app.",
             chord.long_label(platform),
+            shortcut.title,
             platform.system_name()
         ),
-        setting: Some(title.to_owned()),
+        shortcut: Some(shortcut),
     }
 }
 
@@ -579,7 +582,7 @@ pub fn availability_probes(settings: &Settings, platform: Platform) -> Vec<Probe
             if !seen.insert(combo.clone()) {
                 return None;
             }
-            let refusal = unavailable_refusal(&bound.chord, &bound.title, platform);
+            let refusal = unavailable_refusal(&bound.chord, NamedShortcut::from(&bound), platform);
             Some(Probe { combo, refusal })
         })
         .collect()
@@ -602,6 +605,17 @@ mod tests {
         NavigationShortcut::Move(Direction::Left).into()
     }
 
+    fn right() -> ShortcutId {
+        NavigationShortcut::Move(Direction::Right).into()
+    }
+
+    fn named(id: ShortcutId, title: &str) -> Option<NamedShortcut> {
+        Some(NamedShortcut {
+            id,
+            title: title.to_owned(),
+        })
+    }
+
     #[test]
     fn recording_a_chord_another_shortcut_holds_names_that_shortcut() {
         let settings = Settings::defaults(MAC);
@@ -609,7 +623,7 @@ mod tests {
             recording_conflict(&settings, &left(), snappy("ArrowRight"), MAC),
             Some(Refusal {
                 message: "Snappy + → is already assigned to Move window right.".into(),
-                setting: Some("Move window right".into()),
+                shortcut: named(right(), "Move window right"),
             })
         );
         assert_eq!(recording_conflict(&settings, &left(), snappy("KeyM"), MAC), None);
@@ -627,20 +641,20 @@ mod tests {
             conflict_for(&settings, &left(), MAC),
             Some(Refusal {
                 message: "Snappy + → is already assigned to Move window right.".into(),
-                setting: Some("Move window right".into()),
+                shortcut: named(right(), "Move window right"),
             })
         );
         assert_eq!(
-            conflict_for(&settings, &NavigationShortcut::Move(Direction::Right).into(), MAC),
+            conflict_for(&settings, &right(), MAC),
             Some(Refusal {
                 message: "Snappy + → is already assigned to Move window left.".into(),
-                setting: Some("Move window left".into()),
+                shortcut: named(left(), "Move window left"),
             })
         );
     }
 
     #[test]
-    fn the_changed_side_is_found_by_identity_even_when_two_workspaces_share_a_name() {
+    fn both_sides_are_known_by_identity_even_when_two_workspaces_share_a_name() {
         let mut settings = Settings::defaults(MAC);
         for item in &mut settings.workspaces.items {
             item.name = "Work".to_owned();
@@ -648,16 +662,42 @@ mod tests {
         let by_hand = KeyChord::new("Digit1", [Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
         settings.workspaces.items[1].switch_shortcut = Some(by_hand);
         let switch = |workspace: &str| ShortcutId::workspace(workspace, WorkspaceShortcut::Switch);
-        let message =
-            |changed: &str| conflict_for(&settings, &switch(changed), MAC).map(|refusal| refusal.message);
         assert_eq!(
-            message("workspace-2").as_deref(),
-            Some("Control ⌃ + Option ⌥ + Command ⌘ + 1 is already assigned to Switch to Work.")
+            conflict_for(&settings, &switch("workspace-2"), MAC),
+            Some(Refusal {
+                message: "Control ⌃ + Option ⌥ + Command ⌘ + 1 is already assigned to Switch to Work.".into(),
+                shortcut: named(switch("workspace-1"), "Switch to Work"),
+            })
         );
         assert_eq!(
-            message("workspace-1").as_deref(),
-            Some("Snappy + 1 is already assigned to Switch to Work.")
+            conflict_for(&settings, &switch("workspace-1"), MAC),
+            Some(Refusal {
+                message: "Snappy + 1 is already assigned to Switch to Work.".into(),
+                shortcut: named(switch("workspace-2"), "Switch to Work"),
+            })
         );
+    }
+
+    #[test]
+    fn a_conflict_names_the_zone_of_its_own_layout_when_two_layouts_share_a_name() {
+        let mut settings = Settings::defaults(MAC);
+        let mut copy = preset("halves").unwrap().clone();
+        copy.id = "my-halves".to_owned();
+        settings.layouts.custom.push(copy);
+        let zone = |layout: &str| ShortcutId::Zone {
+            layout: layout.to_owned(),
+            zone: "halves-0".to_owned(),
+        };
+        zone("halves").set(&mut settings, Some(snappy("KeyM")));
+        zone("my-halves").set(&mut settings, Some(snappy("KeyN")));
+        for (code, layout) in [("KeyM", "halves"), ("KeyN", "my-halves")] {
+            let refusal = recording_conflict(&settings, &left(), snappy(code), MAC).unwrap();
+            assert_eq!(
+                refusal.shortcut,
+                named(zone(layout), "Zone 1 of Halves"),
+                "{code}"
+            );
+        }
     }
 
     #[test]
@@ -668,7 +708,7 @@ mod tests {
             conflict_for(&settings, &left(), MAC),
             Some(Refusal {
                 message: "Command ⌘ + Q is already assigned to a standard app command.".into(),
-                setting: None,
+                shortcut: None,
             })
         );
     }
@@ -1368,7 +1408,7 @@ mod tests {
             Refusal {
                 message: "Snappy + Space for Move to the nearest empty zone is already used by macOS or another app."
                     .into(),
-                setting: Some("Move to the nearest empty zone".into()),
+                shortcut: named(NavigationShortcut::NearestEmptyZone.into(), "Move to the nearest empty zone"),
             }
         );
         let redo = probes
@@ -1379,5 +1419,28 @@ mod tests {
             redo.refusal.message,
             "Snappy + R for Redo window move is already used by macOS or another app."
         );
+    }
+
+    #[test]
+    fn availability_probes_name_each_workspace_by_its_id_when_two_share_a_name() {
+        let mut settings = Settings::defaults(MAC);
+        for item in &mut settings.workspaces.items {
+            item.name = "Work".to_owned();
+        }
+        let probes = availability_probes(&settings, MAC);
+        for (code, workspace) in [("Digit1", "workspace-1"), ("Digit2", "workspace-2")] {
+            let probe = probes
+                .iter()
+                .find(|probe| probe.combo.code.as_str() == code)
+                .unwrap();
+            assert_eq!(
+                probe.refusal.shortcut,
+                named(
+                    ShortcutId::workspace(workspace, WorkspaceShortcut::Switch),
+                    "Switch to Work"
+                ),
+                "{code}"
+            );
+        }
     }
 }

@@ -91,7 +91,7 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), Refusa
         Command::SetSwapModifier { modifier } => change(core, |s| s.snapping.swap_modifier = modifier),
         Command::SetWhenTaken { choice } => change(core, |s| s.snapping.when_taken = choice),
         Command::SetShortcutsEnabled { enabled } => change(core, |s| s.snapping.shortcuts_enabled = enabled),
-        // The one refusal that names a setting, for the app to point to.
+        // The one refusal that names a shortcut, for the app to point to.
         Command::SetSnappyKey { modifiers } => return set_snappy_key(core, modifiers),
         Command::SetCapsLockAsSnappyKey { enabled } => caps_lock::set_enabled(core, enabled),
         Command::SetNavigationShortcut { shortcut, chord } => {

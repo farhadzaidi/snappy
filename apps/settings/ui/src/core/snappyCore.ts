@@ -7,6 +7,7 @@ import type {
   Layout,
   LayoutOptions,
   Modifier,
+  NamedShortcut,
   PlatformName,
   Point,
   Refusal,
@@ -225,10 +226,10 @@ export const core = {
     call<SnappyKeyChange>(wasm.changeSnappyKey, { settings, modifiers, platform }),
   /**
    * A recorder's refusal of `chord`, which the OS or another app holds: the message the
-   * Snappy key's probes give, naming the shortcut titled `title`.
+   * Snappy key's probes give, naming `shortcut`, the one being recorded.
    */
-  unavailableShortcut: (chord: KeyChord, title: string, platform: PlatformName) =>
-    call<Refusal>(wasm.unavailableShortcut, { chord, title, platform }),
+  unavailableShortcut: (chord: KeyChord, shortcut: NamedShortcut, platform: PlatformName) =>
+    call<Refusal>(wasm.unavailableShortcut, { chord, shortcut, platform }),
   /** What to ask the OS about for settings whose Snappy key just changed. */
   snappyKeyProbes: (settings: Settings, platform: PlatformName) =>
     call<AvailabilityProbe[]>(wasm.snappyKeyProbes, { settings, platform }),

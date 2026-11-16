@@ -345,16 +345,20 @@ mod tests {
         ));
         assert_eq!(unchanged, "unchanged");
 
+        let focus_up = json!({
+            "id": { "kind": "navigation", "shortcut": "focusUp" },
+            "title": "Focus up",
+        });
         let recorded = json!({
             "chord": { "code": "KeyK", "mods": ["ctrl", "alt"] },
-            "title": "Focus up",
+            "shortcut": focus_up,
             "platform": "windows",
         });
         assert_eq!(
             answer(unavailable_shortcut(&recorded.to_string())),
             json!({
                 "message": "Ctrl + Alt + K for Focus up is already used by Windows or another app.",
-                "setting": "Focus up",
+                "shortcut": focus_up,
             })
         );
 
@@ -372,7 +376,10 @@ mod tests {
             space["refusal"],
             json!({
                 "message": "Snappy + Space for Move to the nearest empty zone is already used by macOS or another app.",
-                "setting": "Move to the nearest empty zone",
+                "shortcut": {
+                    "id": { "kind": "navigation", "shortcut": "nearestEmpty" },
+                    "title": "Move to the nearest empty zone",
+                },
             })
         );
     }
@@ -453,7 +460,7 @@ mod tests {
             conflict["message"],
             "Command ⌘ + Q is already assigned to a standard app command."
         );
-        assert_eq!(conflict["setting"], Value::Null);
+        assert_eq!(conflict["shortcut"], Value::Null);
         let mut recorded = settings.clone();
         recorded.navigation.left = Some(quit);
         let validation = answer(validate_settings(
@@ -465,7 +472,13 @@ mod tests {
             "ArrowRight",
             [],
         ))));
-        assert_eq!(conflict["setting"], "Move window right");
+        assert_eq!(
+            conflict["shortcut"],
+            json!({
+                "id": { "kind": "navigation", "shortcut": "right" },
+                "title": "Move window right",
+            })
+        );
         assert_eq!(
             answer(recording_conflict_of(&request(KeyChord::snappy("KeyM", [])))),
             Value::Null

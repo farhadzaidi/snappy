@@ -16,7 +16,7 @@ use snappy_core::reset::{Reset, ShortcutSection};
 use snappy_core::settings::{
     LayoutOptions, LayoutShortcut, MAX_WORKSPACES, Settings, Workspace, WorkspaceShortcut,
 };
-use snappy_core::shortcuts::ShortcutId;
+use snappy_core::shortcuts::{NamedShortcut, ShortcutId};
 
 use crate::gestures::{self, CutPreview, Drawn, Edit};
 use crate::wire::{Axis, CutScope, Divider, Field, Handle, HandlePosition};
@@ -136,8 +136,8 @@ pub struct ChordRequest {
 #[derive(Deserialize)]
 pub struct UnavailableRequest {
     chord: KeyChord,
-    /// The title of the shortcut being recorded.
-    title: String,
+    /// The shortcut being recorded, with the title its recorder shows.
+    shortcut: NamedShortcut,
     platform: Platform,
 }
 
@@ -516,7 +516,7 @@ pub fn change_snappy_key(request: SnappyKeyChangeRequest) -> SnappyKeyChange {
 /// A recorder's refusal of a chord the OS or another app already holds, as the Snappy key's
 /// probes say it.
 pub fn unavailable_shortcut(request: UnavailableRequest) -> Refusal {
-    unavailable_refusal(&request.chord, &request.title, request.platform)
+    unavailable_refusal(&request.chord, request.shortcut, request.platform)
 }
 
 /// The chords to ask the OS about for settings whose Snappy key just changed.

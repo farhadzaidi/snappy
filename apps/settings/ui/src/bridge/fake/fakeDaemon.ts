@@ -8,7 +8,7 @@ import { EXPORT_FILE_NAME } from "../bridge";
 import { FAKE_DISPLAYS, initialState } from "./fixtures";
 import { applyCommand } from "./reducer";
 
-const PROTOCOL_VERSION = 5;
+const PROTOCOL_VERSION = 6;
 
 /**
  * The same key for every spelling of one shortcut, such as Snappy + K and its modifiers held
@@ -48,7 +48,7 @@ export class FakeDaemon implements Transport {
     this.state = outcome.state;
 
     const error =
-      outcome.error === null ? null : { message: outcome.error, setting: outcome.setting ?? null };
+      outcome.error === null ? null : { message: outcome.error, shortcut: outcome.shortcut ?? null };
     const messages: ToSettings[] = [{ type: "reply", id, error }];
     if (outcome.probe !== undefined) {
       const answer: ToSettings = { type: "probeResult", available: outcome.probe };

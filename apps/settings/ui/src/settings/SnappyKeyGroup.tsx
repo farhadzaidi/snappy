@@ -77,7 +77,7 @@ export function SnappyKeyGroup() {
           ))}
         </div>
       </Row>
-      {refusal !== null && <WarningNotice message={refusal.message} setting={refusal.setting} />}
+      {refusal !== null && <WarningNotice message={refusal.message} shortcut={refusal.shortcut} />}
       <Toggle
         label="Also use Caps Lock as the Snappy key"
         hint="A tap still toggles Caps Lock."

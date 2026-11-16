@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { allLayouts, isEnabled } from "../core/layouts";
-import type { KeyChord, Workspace, WorkspaceShortcut } from "../core/model";
+import type { KeyChord, ShortcutId, Workspace, WorkspaceShortcut } from "../core/model";
 import { core } from "../core/snappyCore";
 import { ShortcutRecorder } from "../recorder/ShortcutRecorder";
 import { useAppState, useSend } from "../state/services";
@@ -75,23 +75,22 @@ export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace
           />
         }
       >
-        {SHORTCUTS.map((shortcut) => (
-          <Row key={shortcut} label={<span className="muted">{titles[shortcut]}</span>}>
-            <ShortcutRecorder
-              title={titles[shortcut]}
-              chord={workspace[shortcut]}
-              conflictOf={(chord: KeyChord) =>
-                core.recordingConflict(
-                  app.settings,
-                  { kind: "workspace", workspace: workspace.id, shortcut },
-                  chord,
-                  app.platform,
-                )
-              }
-              onChange={(chord) => update({ ...workspace, [shortcut]: chord })}
-            />
-          </Row>
-        ))}
+        {SHORTCUTS.map((shortcut) => {
+          const id: ShortcutId = { kind: "workspace", workspace: workspace.id, shortcut };
+          return (
+            <Row key={shortcut} label={<span className="muted">{titles[shortcut]}</span>}>
+              <ShortcutRecorder
+                shortcut={id}
+                title={titles[shortcut]}
+                chord={workspace[shortcut]}
+                conflictOf={(chord: KeyChord) =>
+                  core.recordingConflict(app.settings, id, chord, app.platform)
+                }
+                onChange={(chord) => update({ ...workspace, [shortcut]: chord })}
+              />
+            </Row>
+          );
+        })}
       </Group>
 
       {confirmingDelete && (

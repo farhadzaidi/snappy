@@ -18,7 +18,7 @@ use snappy_core::swap::{SwapModifier, WhenTaken};
 use snappy_platform::{Display, Remedy};
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 /// Messages larger than this are refused; settings files are capped well below it.
 pub const MAX_MESSAGE_BYTES: u32 = 8 * 1024 * 1024;
 
@@ -261,6 +261,8 @@ pub fn read_message<T: DeserializeOwned>(reader: &mut impl Read) -> Result<Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use snappy_core::settings::WorkspaceShortcut;
+    use snappy_core::shortcuts::{NamedShortcut, ShortcutId};
 
     #[test]
     fn messages_round_trip_through_the_framing() {
@@ -302,13 +304,16 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_reply_carries_its_message_and_the_setting_it_names() {
+    fn a_refusal_reply_carries_its_message_and_the_shortcut_it_names_by_id() {
         let reply = ToSettings::Reply {
             id: 3,
             error: Some(Refusal {
                 message: "Snappy + 3 for Switch to Workspace 3 is already used by macOS or another app."
                     .into(),
-                setting: Some("Switch to Workspace 3".into()),
+                shortcut: Some(NamedShortcut {
+                    id: ShortcutId::workspace("workspace-3", WorkspaceShortcut::Switch),
+                    title: "Switch to Workspace 3".into(),
+                }),
             }),
         };
         assert_eq!(
@@ -318,7 +323,10 @@ mod tests {
                 "id": 3,
                 "error": {
                     "message": "Snappy + 3 for Switch to Workspace 3 is already used by macOS or another app.",
-                    "setting": "Switch to Workspace 3",
+                    "shortcut": {
+                        "id": { "kind": "workspace", "workspace": "workspace-3", "shortcut": "switchShortcut" },
+                        "title": "Switch to Workspace 3",
+                    },
                 },
             })
         );

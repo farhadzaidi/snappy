@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import { longLabel, recorderHelp } from "../core/labels";
-import type { KeyChord, Refusal } from "../core/model";
+import type { KeyChord, Refusal, ShortcutId } from "../core/model";
+import { shortcutKey } from "../core/shortcuts";
 import { core } from "../core/snappyCore";
 import { useObservable } from "../state/observable";
 import { useAppState, useServices } from "../state/services";
@@ -12,6 +13,8 @@ import { interpretKey } from "./interpretKey";
 import { useRecordingInput } from "./useRecordingInput";
 
 interface ShortcutRecorderProps {
+  /** The shortcut recorded, which a refusal naming it links to. */
+  shortcut: ShortcutId;
   /** Names the shortcut for assistive technology and the clear button. */
   title: string;
   chord: KeyChord | null;
@@ -26,7 +29,7 @@ interface ShortcutRecorderProps {
  * has every Snappy shortcut unregistered. Recording ends on a result, on Escape or Cancel,
  * on a press elsewhere, when another recorder starts, or when the recorder goes away.
  */
-export function ShortcutRecorder({ title, chord, conflictOf, onChange }: ShortcutRecorderProps) {
+export function ShortcutRecorder({ shortcut, title, chord, conflictOf, onChange }: ShortcutRecorderProps) {
   const { client, recording: recordings } = useServices();
   const { platform, settings } = useAppState();
   const id = useId();
@@ -52,15 +55,15 @@ export function ShortcutRecorder({ title, chord, conflictOf, onChange }: Shortcu
 
   useEffect(() => () => recordings.stop(id), [recordings, id]);
 
-  const refuse = ({ message, setting }: Refusal) => {
-    setHint(message);
-    client.announce(message, true, setting);
+  const refuse = (refusal: Refusal) => {
+    setHint(refusal.message);
+    client.announce(refusal.message, true, refusal.shortcut);
   };
 
   const tryCandidate = async (candidate: KeyChord) => {
     const problem = core.chordProblem(candidate, platform);
     if (problem !== null) {
-      refuse({ message: problem, setting: null });
+      refuse({ message: problem, shortcut: null });
       return;
     }
     const conflict = conflictOf(candidate);
@@ -78,7 +81,7 @@ export function ShortcutRecorder({ title, chord, conflictOf, onChange }: Shortcu
       return;
     }
     if (!available) {
-      refuse(core.unavailableShortcut(candidate, title, platform));
+      refuse(core.unavailableShortcut(candidate, { id: shortcut, title }, platform));
       return;
     }
     setHint(null);
@@ -125,7 +128,7 @@ export function ShortcutRecorder({ title, chord, conflictOf, onChange }: Shortcu
           ref={button}
           type="button"
           className="recorder-button"
-          data-setting={title}
+          data-shortcut={shortcutKey(shortcut)}
           data-recording={recording}
           data-assigned={chord !== null}
           aria-label={title}

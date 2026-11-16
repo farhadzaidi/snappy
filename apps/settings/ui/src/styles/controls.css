@@ -568,7 +568,7 @@
   line-height: 1.25;
 }
 
-/* A setting a message points to: a reference with an arrow, which goes there. */
+/* A shortcut a message points to: a reference with an arrow, which goes to its recorder. */
 .reference-link {
   transition: border-color 120ms ease;
 }

@@ -18,12 +18,12 @@ export function ShortcutsPanel() {
   const titles = core.layoutShortcutTitles(THIS_LAYOUT, layout.zones.length);
 
   /**
-   * The conflict the draft would have with `change` applied. It names no setting to point at,
+   * The conflict the draft would have with `change` applied. It names no shortcut to point at,
    * since the editor shows no other shortcuts.
    */
   const conflictWith = (change: Partial<LayoutOptions>): Refusal | null => {
     const message = draftConflict({ layout, options: { ...options, ...change } }, app.settings, app.platform);
-    return message === null ? null : { message, setting: null };
+    return message === null ? null : { message, shortcut: null };
   };
 
   return (
@@ -31,6 +31,7 @@ export function ShortcutsPanel() {
       <h2 className="panel-title">{titles.select}</h2>
       <div className="layout-shortcut">
         <ShortcutRecorder
+          shortcut={{ kind: "layoutSelect", layout: layout.id }}
           title={titles.select}
           chord={options.selectShortcut}
           conflictOf={(chord) => conflictWith({ selectShortcut: chord })}
@@ -52,6 +53,7 @@ export function ShortcutsPanel() {
               {index + 1}
             </button>
             <ShortcutRecorder
+              shortcut={{ kind: "zone", layout: layout.id, zone: zone.id }}
               title={titles.zones[index]}
               chord={options.zoneShortcuts[zone.id] ?? null}
               conflictOf={(chord) =>

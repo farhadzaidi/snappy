@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Transport } from "../bridge/bridge";
 import { initialState } from "../bridge/fake/fixtures";
-import type { AppState, Command, Status, ToSettings } from "../core/model";
+import type { AppState, Command, NamedShortcut, Refusal, Status, ToSettings } from "../core/model";
 import { DaemonClient, TOAST_DURATION_MS } from "./daemonClient";
 
 class ScriptedTransport implements Transport {
@@ -85,7 +85,7 @@ describe("daemon client", () => {
   it("every command resolves with its reply, and errors show", async () => {
     const reply = client.send({ kind: "setDebugLog", enabled: true });
     const id = transport.sent.at(-1)?.id ?? 0;
-    const refusal = { message: "Couldn't save settings: disk full", setting: null };
+    const refusal = { message: "Couldn't save settings: disk full", shortcut: null };
     transport.deliver({ type: "reply", id, error: refusal });
     await expect(reply).resolves.toEqual(refusal);
     expect(client.toast.get()).toMatchObject({
@@ -94,9 +94,27 @@ describe("daemon client", () => {
     });
   });
 
+  it("a refusal's toast names the shortcut the refusal names, by its ID", () => {
+    void client.send({ kind: "setSnappyKey", modifiers: ["ctrl", "alt"] });
+    const id = transport.sent.at(-1)?.id ?? 0;
+    const shortcut: NamedShortcut = {
+      id: { kind: "workspace", workspace: "workspace-2", shortcut: "switchShortcut" },
+      title: "Switch to Work",
+    };
+    const message = "Snappy + 2 for Switch to Work is already used by macOS or another app.";
+    transport.deliver({ type: "reply", id, error: { message, shortcut } });
+    expect(client.toast.get()?.shortcut).toEqual(shortcut);
+  });
+
   it("a refusal shown in place is no toast, and its status copy is dismissed", async () => {
     transport.deliver(stateWith(null));
-    const refusal = { message: "message 1", setting: "Switch to Workspace 3" };
+    const refusal: Refusal = {
+      message: "message 1",
+      shortcut: {
+        id: { kind: "workspace", workspace: "workspace-3", shortcut: "switchShortcut" },
+        title: "Switch to Workspace 3",
+      },
+    };
     const reply = client.send({ kind: "setSnappyKey", modifiers: ["ctrl"] }, { inPlace: true });
     const id = transport.sent.at(-1)?.id ?? 0;
     transport.deliver({ type: "reply", id, error: refusal });

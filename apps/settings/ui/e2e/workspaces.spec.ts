@@ -7,6 +7,8 @@ import {
   lastCommandOf,
   openApp,
   showPage,
+  spokenText,
+  toast,
   workspaceCard,
 } from "./support";
 
@@ -30,6 +32,23 @@ const assignShortcuts = (page: Page) =>
         },
       },
     })),
+  );
+
+/** Give every workspace the same name. */
+const nameEveryWorkspace = (page: Page, name: string) =>
+  page.evaluate(
+    (shared) =>
+      window.snappyFake.patchState((state) => ({
+        ...state,
+        settings: {
+          ...state.settings,
+          workspaces: {
+            ...state.settings.workspaces,
+            items: state.settings.workspaces.items.map((item) => ({ ...item, name: shared })),
+          },
+        },
+      })),
+    name,
   );
 
 test.beforeEach(async ({ page }) => {
@@ -170,6 +189,32 @@ test("the three per-workspace shortcuts are recorders", async ({ page }) => {
     page.getByRole("button", { name: "Send window to this workspace and switch", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Switch between workspaces")).toHaveCount(0);
+});
+
+test("of two workspaces with one name, a refusal links only to the shortcut of the one it names", async ({
+  page,
+}) => {
+  await nameEveryWorkspace(page, "Work");
+  await page.locator(".workspace-card").nth(1).click();
+  const send = page.getByRole("button", { name: "Send window to this workspace", exact: true });
+  const link = toast(page).getByRole("button", { name: "Go to Switch to Work" });
+
+  await send.click();
+  await page.keyboard.press("Control+Alt+Meta+Digit1");
+  await expect
+    .poll(() => spokenText(toast(page)))
+    .toContain("Snappy + 1 is already assigned to Switch to Work.");
+  await expect(toast(page).locator(".reference").last()).toHaveText("Switch to Work");
+  await expect(link).toHaveCount(0);
+
+  await page.keyboard.press("Control+Alt+Meta+Digit2");
+  await expect
+    .poll(() => spokenText(toast(page)))
+    .toContain("Snappy + 2 is already assigned to Switch to Work.");
+  await link.click();
+  const own = page.getByRole("button", { name: "Switch to this workspace", exact: true });
+  await expect(own).toBeFocused();
+  await expect(chordIn(own)).toHaveAttribute("aria-label", "Snappy + 2");
 });
 
 test("the per-workspace recorders are one width, as wide as the longest shortcut needs", async ({ page }) => {

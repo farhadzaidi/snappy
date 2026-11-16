@@ -1,5 +1,5 @@
 import type { Transport } from "../bridge/bridge";
-import type { AppState, Command, KeyChord, Refusal, Status, ToSettings } from "../core/model";
+import type { AppState, Command, KeyChord, NamedShortcut, Refusal, Status, ToSettings } from "../core/model";
 import { Observable } from "./observable";
 
 /** Non-error messages hide after this long. */
@@ -19,8 +19,8 @@ export interface Toast {
   isError: boolean;
   /** Set when the toast shows the daemon's status, so dismissing it can tell the daemon. */
   fromStatus: boolean;
-  /** The title of a setting the message names, which the toast links to. */
-  setting: string | null;
+  /** The shortcut the message names, which the toast links to. */
+  shortcut: NamedShortcut | null;
 }
 
 /**
@@ -64,9 +64,9 @@ export class DaemonClient {
     return result;
   }
 
-  /** Show a message that comes from the settings app itself, naming `setting` when given. */
-  announce(message: string, isError: boolean, setting: string | null = null): void {
-    this.showToast({ message, isError, fromStatus: false, setting });
+  /** Show a message that comes from the settings app itself, naming `shortcut` when given. */
+  announce(message: string, isError: boolean, shortcut: NamedShortcut | null = null): void {
+    this.showToast({ message, isError, fromStatus: false, shortcut });
   }
 
   dismissToast(): void {
@@ -103,7 +103,7 @@ export class DaemonClient {
     if (error !== null && pending?.inPlace) {
       this.refusalShownInPlace = error.message;
     } else if (error !== null) {
-      this.announce(error.message, true, error.setting);
+      this.announce(error.message, true, error.shortcut);
     }
     pending?.resolve(error);
   }
@@ -130,7 +130,7 @@ export class DaemonClient {
       }
       return;
     }
-    this.showToast({ message: status.message, isError: status.isError, fromStatus: true, setting: null });
+    this.showToast({ message: status.message, isError: status.isError, fromStatus: true, shortcut: null });
   }
 
   private showToast(toast: Omit<Toast, "key">): void {

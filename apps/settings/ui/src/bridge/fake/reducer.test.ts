@@ -390,7 +390,10 @@ describe("fake daemon", () => {
     expect(outcome.error).toBe(
       "Snappy + Space for Move to the nearest empty zone is already used by macOS or another app.",
     );
-    expect(outcome.setting).toBe("Move to the nearest empty zone");
+    expect(outcome.shortcut).toEqual({
+      id: { kind: "navigation", shortcut: "nearestEmpty" },
+      title: "Move to the nearest empty zone",
+    });
     expect(outcome.state.settings.snappyKey).toEqual(["ctrl", "alt", "meta"]);
   });
 

@@ -107,6 +107,7 @@ function ShortcutRow({ shortcut }: { shortcut: ListedShortcut }) {
       }
     >
       <ShortcutRecorder
+        shortcut={shortcut.id}
         title={shortcut.title}
         chord={shortcut.chord}
         conflictOf={(chord) => core.recordingConflict(settings, shortcut.id, chord, platform)}

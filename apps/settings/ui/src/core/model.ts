@@ -164,12 +164,18 @@ export interface AppState {
 }
 
 /**
- * Why a change was refused: the message, and the title of the setting it names, when it names
- * one, which the app points to.
+ * Why a change was refused: the message, and the shortcut it names, when it names one of
+ * Snappy's, which the app points to.
  */
 export interface Refusal {
   message: string;
-  setting: string | null;
+  shortcut: NamedShortcut | null;
+}
+
+/** A shortcut a message names: which one it is, to find it by, and its title as the message writes it. */
+export interface NamedShortcut {
+  id: ShortcutId;
+  title: string;
 }
 
 export type ToSettings =

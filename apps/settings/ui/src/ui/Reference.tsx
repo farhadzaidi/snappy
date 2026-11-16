@@ -1,5 +1,7 @@
 import { useLayoutEffect, useState, type ReactNode } from "react";
 
+import type { NamedShortcut } from "../core/model";
+import { shortcutKey } from "../core/shortcuts";
 import { useSession } from "../state/services";
 import { ArrowIcon } from "./icons";
 
@@ -12,42 +14,43 @@ export function Reference({ children }: { children: ReactNode }) {
 }
 
 /**
- * A setting a message names, as a reference with an arrow that goes to it while it is on the
- * page, or only its name when it isn't.
+ * A shortcut a message names, as a reference with an arrow that goes to its recorder while
+ * that is on the page, or only its title when it isn't.
  */
-export function SettingReference({ title }: { title: string }) {
+export function ShortcutReference({ shortcut }: { shortcut: NamedShortcut }) {
   const { page } = useSession();
+  const key = shortcutKey(shortcut.id);
   const [shown, setShown] = useState(false);
-  useLayoutEffect(() => setShown(findSetting(title) !== null), [title, page]);
+  useLayoutEffect(() => setShown(findRecorder(key) !== null), [key, page]);
 
   if (!shown) {
-    return <Reference>{title}</Reference>;
+    return <Reference>{shortcut.title}</Reference>;
   }
   return (
     <button
       type="button"
       className="reference reference-link"
-      aria-label={`Go to ${title}`}
-      title={`Go to ${title}`}
-      onClick={() => revealSetting(title)}
+      aria-label={`Go to ${shortcut.title}`}
+      title={`Go to ${shortcut.title}`}
+      onClick={() => revealRecorder(key)}
     >
-      {title}
+      {shortcut.title}
       <ArrowIcon direction="right" />
     </button>
   );
 }
 
-/** The control for the setting titled `title`, which carries it as `data-setting`. */
-function findSetting(title: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`[data-setting="${CSS.escape(title)}"]`);
+/** The recorder carrying `key`, its shortcut's `shortcutKey`, as `data-shortcut`. */
+function findRecorder(key: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-shortcut="${CSS.escape(key)}"]`);
 }
 
-/** Scroll the setting's row into view and focus its control. */
-function revealSetting(title: string): void {
-  const control = findSetting(title);
-  if (!control) {
+/** Scroll the recorder's row into view and focus it. */
+function revealRecorder(key: string): void {
+  const recorder = findRecorder(key);
+  if (!recorder) {
     return;
   }
-  (control.closest<HTMLElement>(".row") ?? control).scrollIntoView({ behavior: "smooth", block: "center" });
-  control.focus({ preventScroll: true });
+  (recorder.closest<HTMLElement>(".row") ?? recorder).scrollIntoView({ behavior: "smooth", block: "center" });
+  recorder.focus({ preventScroll: true });
 }

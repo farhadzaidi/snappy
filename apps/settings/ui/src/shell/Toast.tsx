@@ -21,7 +21,7 @@ export function Toast() {
       >
         <span className="toast-icon">{toast.isError ? <AlertIcon /> : <CheckCircleIcon />}</span>
         <span className="toast-message">
-          <MessageText text={toast.message} setting={toast.setting} />
+          <MessageText text={toast.message} shortcut={toast.shortcut} />
         </span>
         <IconButton label="Dismiss message" className="toast-dismiss" onClick={() => client.dismissToast()}>
           <CloseIcon />

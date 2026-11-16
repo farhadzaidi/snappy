@@ -1,16 +1,17 @@
 import { Fragment } from "react";
 
 import { splitAtShortcuts } from "../core/labels";
+import type { NamedShortcut } from "../core/model";
 import { ChordText } from "./Chord";
-import { Reference, SettingReference } from "./Reference";
+import { Reference, ShortcutReference } from "./Reference";
 
 /**
- * A message with each shortcut it names drawn as a reference, and the setting titled
- * `setting`, where the message names it, as a reference that goes to that setting.
+ * A message with each chord it names drawn as a reference, and `shortcut`, where the message
+ * writes its title, as a reference that goes to that shortcut.
  */
-export function MessageText({ text, setting = null }: { text: string; setting?: string | null }) {
-  const at = setting === null ? -1 : text.lastIndexOf(setting);
-  if (setting === null || at < 0) {
+export function MessageText({ text, shortcut = null }: { text: string; shortcut?: NamedShortcut | null }) {
+  const at = shortcut === null ? -1 : text.lastIndexOf(shortcut.title);
+  if (shortcut === null || at < 0) {
     return (
       <span>
         <WithShortcuts text={text} />
@@ -20,8 +21,8 @@ export function MessageText({ text, setting = null }: { text: string; setting?: 
   return (
     <span>
       <WithShortcuts text={text.slice(0, at)} />
-      <SettingReference title={setting} />
-      <WithShortcuts text={text.slice(at + setting.length)} />
+      <ShortcutReference shortcut={shortcut} />
+      <WithShortcuts text={text.slice(at + shortcut.title.length)} />
     </span>
   );
 }

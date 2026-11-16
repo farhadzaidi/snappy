@@ -203,6 +203,23 @@ pub struct Bound {
     pub chord: KeyChord,
 }
 
+/// A shortcut a message names: which one it is, for the settings app to find it by, and its
+/// title, as the message writes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NamedShortcut {
+    pub id: ShortcutId,
+    pub title: String,
+}
+
+impl From<&Bound> for NamedShortcut {
+    fn from(bound: &Bound) -> Self {
+        Self {
+            id: bound.id.clone(),
+            title: bound.title.clone(),
+        }
+    }
+}
+
 /// The global shortcuts that have a chord, in `ShortcutId::global` order.
 pub fn bound_global(settings: &Settings) -> Vec<Bound> {
     ShortcutId::global()

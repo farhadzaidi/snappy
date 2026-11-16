@@ -9,6 +9,7 @@ import type {
   KeyChord,
   Layout,
   Modifier,
+  NamedShortcut,
   Reset,
   Settings,
   Workspace,
@@ -19,8 +20,8 @@ import { core } from "../../core/snappyCore";
 export interface Outcome {
   state: AppState;
   error: string | null;
-  /** The title of the setting `error` names, for the app to point to. */
-  setting?: string | null;
+  /** The shortcut `error` names, for the app to point to. */
+  shortcut?: NamedShortcut | null;
   /** The availability answer to a `probeShortcut`. */
   probe?: boolean;
 }
@@ -163,7 +164,7 @@ function setSnappyKey(state: AppState, modifiers: Modifier[], system: FakeSystem
     .snappyKeyProbes(change.changed, state.platform)
     .find((probe) => !system.isAvailable(probe.chord));
   if (taken) {
-    return { state, error: taken.refusal.message, setting: taken.refusal.setting };
+    return { state, error: taken.refusal.message, shortcut: taken.refusal.shortcut };
   }
   const label = snappyKeyLabel(change.changed.snappyKey, state.platform);
   return withStatus(done({ ...state, settings: change.changed }), `The Snappy key is now ${label}.`);

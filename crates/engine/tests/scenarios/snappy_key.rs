@@ -2,7 +2,8 @@
 
 use snappy_core::bindings::Refusal;
 use snappy_core::keys::{KeyChord, Modifier, Mods, SnappyKey};
-use snappy_core::settings::HistoryStep;
+use snappy_core::settings::{HistoryStep, NavigationShortcut, WorkspaceShortcut};
+use snappy_core::shortcuts::{NamedShortcut, ShortcutId};
 use snappy_engine::Engine;
 use snappy_fake::FakePlatform;
 use snappy_ipc::Command;
@@ -178,7 +179,10 @@ fn a_snappy_key_change_onto_a_chord_the_os_holds_is_refused_naming_the_chord() {
             error,
             Some(Refusal {
                 message: refusal.to_owned(),
-                setting: Some("Move to the nearest empty zone".to_owned()),
+                shortcut: Some(NamedShortcut {
+                    id: NavigationShortcut::NearestEmptyZone.into(),
+                    title: "Move to the nearest empty zone".to_owned(),
+                }),
             }),
             "the reply names the shortcut, for the app to point to"
         );
@@ -200,6 +204,33 @@ fn a_snappy_key_change_onto_a_chord_the_os_holds_is_refused_naming_the_chord() {
         assert_eq!(other, None, "a key whose chords are free still works");
         let space = snappy("Space").combo(SnappyKey::new(option_command).unwrap());
         assert!(engine.with_platform(|p| p.registered.iter().any(|(_, combo)| *combo == space)));
+    });
+}
+
+#[test]
+fn a_refused_snappy_key_change_names_the_workspace_by_id_when_two_share_a_name() {
+    scenario(|| async {
+        let engine = live_engine("snappy-key-same-names", FakePlatform::default());
+        for mut workspace in engine.settings().workspaces.items {
+            workspace.name = "Work".to_owned();
+            command(&engine, Command::UpdateWorkspace { workspace });
+        }
+        let taken = snappy("Digit2").combo(SnappyKey::new(control_option()).unwrap());
+        engine.with_platform(|p| p.taken_elsewhere.insert(taken));
+
+        let error = reply_to(
+            &engine,
+            Command::SetSnappyKey {
+                modifiers: control_option(),
+            },
+        );
+        assert_eq!(
+            error.and_then(|refusal| refusal.shortcut),
+            Some(NamedShortcut {
+                id: ShortcutId::workspace("workspace-2", WorkspaceShortcut::Switch),
+                title: "Switch to Work".to_owned(),
+            })
+        );
     });
 }
 

@@ -10,12 +10,16 @@ import {
   snappyKeyLabel,
   splitAtShortcuts,
 } from "./labels";
-import type { KeyChord, Modifier } from "./model";
+import type { KeyChord, Modifier, NamedShortcut } from "./model";
 import { core } from "./snappyCore";
 
 const DEFAULT_KEY: Modifier[] = ["ctrl", "alt", "meta"];
 
 const zoneOne: KeyChord = { code: "Digit1", mods: ["snappy"] };
+const halvesZoneOne: NamedShortcut = {
+  id: { kind: "zone", layout: "halves", zone: "halves-0" },
+  title: "Zone 1 of Halves",
+};
 
 describe("labels", () => {
   it("the Snappy key is named as itself, whatever modifiers it stands for", () => {
@@ -50,7 +54,7 @@ describe("labels", () => {
   });
 
   it("messages split around each whole shortcut they name", () => {
-    const { message } = core.unavailableShortcut(zoneOne, "Zone 1 of Halves", "macos");
+    const { message } = core.unavailableShortcut(zoneOne, halvesZoneOne, "macos");
     expect(splitAtShortcuts(message)).toEqual([
       { long: "Snappy + 1", snappyKey: true, keys: "1" },
       " for Zone 1 of Halves is already used by macOS or another app.",
@@ -136,10 +140,10 @@ describe("labels", () => {
     );
   });
 
-  it("a recorder's refused probe names the chord and its shortcut, and links to it", () => {
-    expect(core.unavailableShortcut(zoneOne, "Zone 1 of Halves", "linux")).toEqual({
+  it("a recorder's refused probe names the chord and its shortcut, and links to it by ID", () => {
+    expect(core.unavailableShortcut(zoneOne, halvesZoneOne, "linux")).toEqual({
       message: "Snappy + 1 for Zone 1 of Halves is already used by Linux or another app.",
-      setting: "Zone 1 of Halves",
+      shortcut: halvesZoneOne,
     });
   });
 });
