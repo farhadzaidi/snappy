@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Snappy's Windows Installer package, built by tools/release/windows.ps1 with WiX 5:
+
+    wix build -arch <x64|arm64> -ext WixToolset.Util.wixext
+      -d Version=<version> -d BinDir=<folder with snappy.exe and snappy-app.exe> -d Root=<repository>
+
+  A per-user install, with no administrator rights, into %LOCALAPPDATA%\Programs\Snappy,
+  where the README's manual install puts Snappy too.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <?if $(sys.BUILDARCHITECTURE) = "arm64" ?>
+    <?define UtilCustomActions = "Wix4UtilCA_A64" ?>
+  <?else?>
+    <?define UtilCustomActions = "Wix4UtilCA_X64" ?>
+  <?endif?>
+
+  <!-- The upgrade code stays the same for every version and both architectures, so a new
+       package replaces whichever one is installed. -->
+  <Package Name="Snappy"
+           Manufacturer="Syed Zaidi"
+           Version="$(var.Version)"
+           UpgradeCode="6CED7E1A-9AB2-4F84-A6C2-C991C32746DD"
+           Scope="perUser"
+           Compressed="yes"
+           Language="1033">
+
+    <SummaryInformation Description="Snappy arranges windows into zones." />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Snappy is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="SnappyIcon" SourceFile="$(var.Root)\assets\icon\snappy.ico" />
+    <Property Id="ARPPRODUCTICON" Value="SnappyIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/farhadzaidi/snappy" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/farhadzaidi/snappy/issues" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="LocalProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Snappy" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- Files in the user's profile are tracked by a value under HKCU, as Windows Installer
+         asks of per-user components. -->
+    <Component Id="Programs" Directory="INSTALLFOLDER" Guid="C38BA52E-B70A-4B86-9402-9B3B6748E305">
+      <File Id="SnappyExe" Source="$(var.BinDir)\snappy.exe" KeyPath="no" />
+      <File Id="SnappyAppExe" Source="$(var.BinDir)\snappy-app.exe" KeyPath="no" />
+      <RegistryValue Root="HKCU" Key="Software\Snappy" Name="InstalledPrograms" Type="integer" Value="1"
+                     KeyPath="yes" />
+      <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
+      <RemoveRegistryKey Root="HKCU" Key="Software\Snappy" Action="removeOnUninstall" />
+    </Component>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="32B7F345-FDAC-46B1-8C7B-DC08F6FF0B70">
+      <Shortcut Id="SnappyShortcut" Name="Snappy" Description="Arrange windows into zones"
+                Target="[INSTALLFOLDER]snappy.exe" WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU" Key="Software\Snappy" Name="InstalledShortcut" Type="integer"
+                     Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Quit a running Snappy before its files are replaced or removed. A session-end
+         message makes Snappy quit as it does from its menu, bringing every hidden workspace
+         window back on screen, and answer only once it has. Ending the process is the last
+         resort, for a Snappy that hasn't quit after the timeout. -->
+    <util:CloseApplication Id="QuitSnappy" Target="snappy.exe" CloseMessage="yes" EndSessionMessage="yes"
+                           RebootPrompt="no" TerminateProcess="1" Timeout="30" />
+    <util:CloseApplication Id="CloseSnappyWindow" Target="snappy-app.exe" CloseMessage="yes"
+                           RebootPrompt="no" TerminateProcess="1" Timeout="30" />
+
+    <!-- Snappy's "Open at login" is the value Snappy under the user's Run key. Uninstalling
+         removes it when it starts this copy; an upgrade keeps it. -->
+    <Property Id="LOGINITEM">
+      <RegistrySearch Id="FindLoginItem" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                      Name="Snappy" Type="raw" />
+    </Property>
+    <SetProperty Id="RemoveLoginItem" Sequence="execute" Before="RemoveLoginItem"
+                 Value="&quot;[System64Folder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v Snappy /f" />
+    <CustomAction Id="RemoveLoginItem" BinaryRef="$(var.UtilCustomActions)" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="yes" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveLoginItem" After="InstallInitialize"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND LOGINITEM ~&gt;&lt; INSTALLFOLDER" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

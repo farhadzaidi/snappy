@@ -1,0 +1,18 @@
+Package: snappy-app
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: Syed Zaidi <70859631+farhadzaidi@users.noreply.github.com>
+Installed-Size: @INSTALLED_SIZE@
+Depends: libwebkit2gtk-4.1-0, libgtk-3-0
+Section: x11
+Priority: optional
+Homepage: https://github.com/farhadzaidi/snappy
+Description: Snappy arranges windows into zones
+ Pick a layout for each display, then drag a window with a key held, or press
+ a shortcut, and it snaps into place. Snappy also swaps windows, moves focus
+ between them, and keeps workspaces of windows to switch between. It never
+ uses the network, and never reads window titles, window contents, or what
+ you type.
+ .
+ Works on GNOME and KDE Plasma on Wayland, and on X11. The commands are
+ snappy, which runs in the background, and snappy-app, its window.

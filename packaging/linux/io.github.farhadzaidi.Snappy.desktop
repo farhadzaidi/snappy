@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Snappy
+Comment=Arrange windows into zones
+Exec=snappy
+Icon=io.github.farhadzaidi.Snappy
+Terminal=false
+StartupNotify=false
+Categories=Utility;
+Keywords=window;windows;zones;snap;tile;layout;workspace;
