@@ -77,6 +77,7 @@ export type ToApp =
   | ({ type: "state" } & AppState)
   | { type: "reply"; id: number; error: Refusal | null }
   | { type: "probeResult"; available: boolean }
+  | { type: "exportedSettings"; contents: string }
   | { type: "focus" };
 
 export type Command =
@@ -109,6 +110,6 @@ export type Command =
   | { kind: "openPermissionSettings" }
   | { kind: "applyRemedy"; remedy: Remedy }
   | { kind: "reset"; reset: Reset }
-  | { kind: "importSettings"; path: string }
-  | { kind: "exportSettings"; path: string }
+  | { kind: "importSettings"; contents: string }
+  | { kind: "exportSettings" }
   | { kind: "dismissStatus" };

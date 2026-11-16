@@ -433,4 +433,34 @@ describe("fake daemon", () => {
     expect(refused.error).toBe(refusal);
     expect(refused.state.settings.capsLockAsSnappyKey).toBe(false);
   });
+
+  it("an exported text imports back, turning workspaces off and keeping snapping as it is", () => {
+    const before = run(
+      initialState("macos"),
+      { kind: "saveLayout", layout: custom, options: noOptions, display: "display-1" },
+      { kind: "setWorkspacesEnabled", enabled: true },
+    ).state;
+    const exported = applyCommand(before, { kind: "exportSettings" }, freeSystem);
+    expect(exported.state.settings).toEqual(before.settings);
+    const contents = exported.exported ?? "";
+
+    const paused = run(
+      before,
+      { kind: "reset", reset: { scope: "everything" } },
+      { kind: "setSnapping", enabled: false },
+    ).state;
+    const imported = run(paused, { kind: "importSettings", contents });
+    expect(imported.error).toBeNull();
+    expect(imported.state.settings.layouts.custom.map((layout) => layout.name)).toEqual(["Coding"]);
+    expect(imported.state.settings.workspaces.enabled).toBe(false);
+    expect(imported.state.settings.snapping.enabled).toBe(false);
+    expect(imported.state.status?.message).toBe("Layouts and preferences imported.");
+  });
+
+  it("text that isn't settings is refused and changes nothing", () => {
+    const before = initialState("macos");
+    const refused = applyCommand(before, { kind: "importSettings", contents: "{ broken" }, freeSystem);
+    expect(refused.error).toBe("Import failed: The settings file contains invalid data.");
+    expect(refused.state.settings).toEqual(before.settings);
+  });
 });

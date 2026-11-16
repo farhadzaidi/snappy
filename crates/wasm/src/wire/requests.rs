@@ -169,6 +169,13 @@ pub struct SettingsRequest {
     pub platform: Os,
 }
 
+/// A settings file's text, as import reads it.
+#[derive(Deserialize)]
+pub struct SettingsFileRequest {
+    pub contents: String,
+    pub platform: Os,
+}
+
 #[derive(Deserialize)]
 pub struct RecordingRequest {
     pub settings: Settings,

@@ -43,6 +43,8 @@ export class DaemonClient {
   /** A refusal shown in place, whose status copy from the daemon is due next. */
   private refusalShownInPlace: string | null = null;
   private readonly probes: ((available: boolean) => void)[] = [];
+  /** Who takes each exported text, in the order the exports were sent. */
+  private exports: ((contents: string) => void)[] = [];
 
   constructor(private readonly transport: Transport) {}
 
@@ -63,6 +65,22 @@ export class DaemonClient {
     const result = new Promise<boolean>((resolve) => this.probes.push(resolve));
     void this.send({ kind: "probeShortcut", chord });
     return result;
+  }
+
+  /**
+   * The settings as a settings file's text, or null when the daemon refused, which shows as a
+   * toast. The text arrives just before the reply.
+   */
+  async exportSettings(): Promise<string | null> {
+    const received: { contents: string | null } = { contents: null };
+    const take = (contents: string) => {
+      received.contents = contents;
+    };
+    this.exports.push(take);
+    const refusal = await this.send({ kind: "exportSettings" });
+    // A refused export gets no text, so its taker mustn't wait for the next export's.
+    this.exports = this.exports.filter((waiting) => waiting !== take);
+    return refusal === null ? received.contents : null;
   }
 
   /** Show a message that comes from the app itself, naming `shortcut` when given. */
@@ -92,6 +110,9 @@ export class DaemonClient {
         break;
       case "probeResult":
         this.probes.shift()?.(message.available);
+        break;
+      case "exportedSettings":
+        this.exports.shift()?.(message.contents);
         break;
       default:
         break;

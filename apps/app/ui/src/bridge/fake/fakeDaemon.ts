@@ -4,13 +4,13 @@
 import type { KeyChord, Modifier, PlatformName } from "../../core/model";
 import { core } from "../../core/snappyCore";
 import type { Bridge, Transport } from "../bridge";
-import { EXPORT_FILE_NAME } from "../bridge";
 import type { AppState, Command, ToApp } from "../protocol";
+import type { FakeFiles } from "./fakeFiles";
 import { FAKE_DISPLAYS, initialState } from "./fixtures";
 import { applyCommand } from "./reducer";
 
 /** The daemon's protocol version; `snappy-ipc` checks this copy matches its own. */
-const PROTOCOL_VERSION = 7;
+const PROTOCOL_VERSION = 8;
 
 /**
  * The same key for every spelling of one shortcut, such as Snappy + K and its modifiers held
@@ -52,6 +52,10 @@ export class FakeDaemon implements Transport {
     const error =
       outcome.error === null ? null : { message: outcome.error, shortcut: outcome.shortcut ?? null };
     const messages: ToApp[] = [{ type: "reply", id, error }];
+    if (outcome.exported !== undefined) {
+      // Before the reply, as the daemon sends it.
+      messages.unshift({ type: "exportedSettings", contents: outcome.exported });
+    }
     if (outcome.probe !== undefined) {
       const answer: ToApp = { type: "probeResult", available: outcome.probe };
       (this.heldProbeAnswers ?? messages).push(answer);
@@ -104,13 +108,10 @@ export class FakeDaemon implements Transport {
   }
 }
 
-export function fakeBridge(daemon: FakeDaemon): Bridge {
+export function fakeBridge(daemon: FakeDaemon, files: FakeFiles): Bridge {
   return {
     transport: daemon,
-    files: {
-      chooseImportPath: () => Promise.resolve(`/Users/snappy/${EXPORT_FILE_NAME}`),
-      chooseExportPath: () => Promise.resolve(`/Users/snappy/${EXPORT_FILE_NAME}`),
-    },
+    files,
     windowDisplayFrame: () => Promise.resolve(FAKE_DISPLAYS[0]?.frame ?? null),
   };
 }

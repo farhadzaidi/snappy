@@ -382,15 +382,39 @@ test("platforms without a permission step hide the access controls", async ({ pa
   await expect(page.getByRole("button", { name: "Check access" })).toHaveCount(0);
 });
 
-test("export and import go through the file picker", async ({ page }) => {
+test("export writes the chosen file and import sends its text", async ({ page }) => {
   await page.getByRole("button", { name: "Export settings" }).click();
   await expect(toast(page)).toContainText("Layouts and preferences exported.");
-  expect(await lastCommandOf(page, "exportSettings")).toEqual({
-    kind: "exportSettings",
-    path: "/Users/snappy/Snappy-layouts.json",
-  });
+  expect(await lastCommandOf(page, "exportSettings")).toEqual({ kind: "exportSettings" });
+  const written = await page.evaluate(() => window.snappyFiles.textOf());
+  expect(written).toContain('"layouts"');
+
+  await page.getByRole("switch", { name: "Debug log" }).click();
   await page.getByRole("button", { name: "Import settings" }).click();
   await expect(toast(page)).toContainText("Layouts and preferences imported.");
+  expect(await lastCommandOf(page, "importSettings")).toEqual({ kind: "importSettings", contents: written });
+  await expect(page.getByRole("switch", { name: "Debug log" })).not.toBeChecked();
+});
+
+test("a file that can't be read or isn't settings says so and changes nothing", async ({ page }) => {
+  await page.getByRole("button", { name: "Import settings" }).click();
+  await expect(toast(page)).toContainText("Couldn't read that file.");
+  expect(await lastCommandOf(page, "importSettings")).toBeUndefined();
+
+  await page.evaluate(() => window.snappyFiles.put("not settings"));
+  await page.getByRole("button", { name: "Import settings" }).click();
+  await expect(toast(page)).toContainText("Import failed: The settings file contains invalid data.");
+
+  await page.evaluate(() => window.snappyFiles.fail("That file isn't Snappy settings."));
+  await page.getByRole("button", { name: "Import settings" }).click();
+  await expect(toast(page)).toContainText("That file isn't Snappy settings.");
+});
+
+test("an export that can't be written says so", async ({ page }) => {
+  await page.evaluate(() => window.snappyFiles.fail("Couldn't read that file."));
+  await page.getByRole("button", { name: "Export settings" }).click();
+  await expect(toast(page)).toContainText("Couldn't save to that file.");
+  expect(await page.evaluate(() => window.snappyFiles.textOf())).toBeUndefined();
 });
 
 test("the snapping button follows live control and toggles it", async ({ page }) => {

@@ -5,6 +5,7 @@ import { useAppState, useSend, useServices } from "../state/services";
 import { Button } from "../ui/Button";
 import { Group, Row } from "../ui/Group";
 import { Toggle } from "../ui/Toggle";
+import { exportSettings, importSettings } from "./settingsBackup";
 import { StatusBadge } from "./StatusBadge";
 
 /** The login item, and Accessibility where the platform has a permission step. */
@@ -44,21 +45,7 @@ export function StartupGroup() {
 
 /** Import and export through the system file pickers. */
 export function BackupGroup() {
-  const { bridge } = useServices();
-  const send = useSend();
-
-  const importSettings = async () => {
-    const path = await bridge.files.chooseImportPath();
-    if (path) {
-      void send({ kind: "importSettings", path });
-    }
-  };
-  const exportSettings = async () => {
-    const path = await bridge.files.chooseExportPath();
-    if (path) {
-      void send({ kind: "exportSettings", path });
-    }
-  };
+  const { bridge, client } = useServices();
 
   return (
     <Group
@@ -67,8 +54,8 @@ export function BackupGroup() {
       info="Importing replaces your settings and turns workspaces off."
     >
       <div className="button-row">
-        <Button onClick={() => void importSettings()}>Import settings</Button>
-        <Button onClick={() => void exportSettings()}>Export settings</Button>
+        <Button onClick={() => void importSettings(bridge.files, client)}>Import settings</Button>
+        <Button onClick={() => void exportSettings(bridge.files, client)}>Export settings</Button>
       </div>
     </Group>
   );

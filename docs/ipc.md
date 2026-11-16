@@ -16,10 +16,15 @@ From then on:
 - **The daemon answers every command with a `Reply`** with the same ID. When the daemon said no, the reply carries a `Refusal`: a message for the user, and, when the message names one of Snappy's shortcuts, that shortcut's `ShortcutId`, so the UI can link to the right recorder.
 - **The daemon then sends a fresh `State`**, the whole `AppState`. It's all the UI ever renders, so there's no partial update to get wrong.
 
-Two more messages go from the daemon to the app:
+Three more messages go from the daemon to the app:
 
 - **`ProbeResult`** answers `ProbeShortcut`, a command that asks whether a chord is free to use as a shortcut.
+- **`ExportedSettings`** answers `ExportSettings` with the settings as a settings file's text, which the app writes to the file the user chose.
 - **`Focus`** asks the app to bring its window forward.
+
+## Import and export
+
+The daemon never opens a file the user picks. The app shows the picker, so it reads the chosen file and sends its text in `ImportSettings`, and writes the text `ExportedSettings` brings. In the Mac App Store's sandbox, a picked file is granted only to the process that showed the picker. The daemon still does everything else: it reads and checks the text, and refuses what isn't valid settings.
 
 ## Adding a command
 

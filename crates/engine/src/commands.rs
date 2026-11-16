@@ -1,7 +1,6 @@
 //! Commands from the app: layouts, shortcuts and recording, workspaces, and
 //! preferences.
 
-use std::path::Path;
 use std::rc::Rc;
 
 use snappy_core::keys::Mods;
@@ -16,13 +15,12 @@ use crate::caps_lock;
 use crate::log_event::LogEvent;
 use crate::ops::{Shared, history_scope};
 use crate::state::EngineState;
-use crate::store::SettingsStore;
 use crate::workspaces;
 
 pub(crate) fn handle<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u64, command: Command) {
     shared.core.borrow_mut().trace(
         LogEvent::Command,
-        || serde_json::json!({ "command": format!("{command:?}") }),
+        || serde_json::json!({ "command": described(&command) }),
     );
     let result = run(shared, command);
     let mut core = shared.core.borrow_mut();
@@ -38,6 +36,15 @@ pub(crate) fn handle<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u64, com
         error: result.err(),
     });
     core.publish_state();
+}
+
+/// The command as the debug log records it. An imported file's text, up to megabytes of it,
+/// is logged by its size only.
+fn described(command: &Command) -> String {
+    match command {
+        Command::ImportSettings { contents } => format!("ImportSettings {{ {} bytes }}", contents.len()),
+        other => format!("{other:?}"),
+    }
 }
 
 fn run<P: Platform + 'static>(shared: &Rc<Shared<P>>, command: Command) -> Result<(), Refusal> {
@@ -69,7 +76,7 @@ fn run<P: Platform + 'static>(shared: &Rc<Shared<P>>, command: Command) -> Resul
                     | Command::OpenPermissionSettings
                     | Command::ApplyRemedy { .. }
                     | Command::DismissStatus
-                    | Command::ExportSettings { .. }
+                    | Command::ExportSettings
             );
             if changes_settings {
                 shared.cancel_current();
@@ -141,12 +148,8 @@ fn apply<P: Platform>(core: &mut EngineState<P>, command: Command) -> Result<(),
         }
         Command::ApplyRemedy { .. } => Ok(()),
         Command::Reset { reset } => reset_settings(core, &reset),
-        Command::ImportSettings { path } => import(core, Path::new(&path)),
-        Command::ExportSettings { path } => {
-            SettingsStore::write_file(Path::new(&path), &core.settings).map_err(|e| e.to_string())?;
-            core.announce("Layouts and preferences exported.");
-            Ok(())
-        }
+        Command::ImportSettings { contents } => import(core, &contents),
+        Command::ExportSettings => export(core),
         Command::DismissStatus => {
             core.dismiss_status();
             Ok(())
@@ -427,9 +430,9 @@ fn reset_settings<P: Platform>(core: &mut EngineState<P>, reset: &Reset) -> Resu
     Ok(())
 }
 
-/// Replace settings with a file's. Never turns snapping on.
-fn import<P: Platform>(core: &mut EngineState<P>, path: &Path) -> Result<(), String> {
-    let mut imported = SettingsStore::read_file(path, core.platform_name())
+/// Replace settings with a settings file's text. Never turns snapping on.
+fn import<P: Platform>(core: &mut EngineState<P>, contents: &str) -> Result<(), String> {
+    let mut imported = Settings::from_json(contents.as_bytes(), core.platform_name())
         .map_err(|error| format!("Import failed: {error}"))?;
     workspaces::stop(core).map_err(
         |_| "A hidden window couldn't be brought back yet, so nothing was imported. Try again in a moment.",
@@ -438,5 +441,17 @@ fn import<P: Platform>(core: &mut EngineState<P>, path: &Path) -> Result<(), Str
     imported.snapping.enabled = core.settings.snapping.enabled;
     change(core, |s| *s = imported).map_err(|error| format!("Import failed: {error}"))?;
     core.announce("Layouts and preferences imported.");
+    Ok(())
+}
+
+/// Send the settings as a settings file's text, for the app to write where the user chose.
+/// The app says when the file is written, so nothing is announced here.
+fn export<P: Platform>(core: &mut EngineState<P>) -> Result<(), String> {
+    let bytes = core
+        .settings
+        .to_json()
+        .map_err(|error| format!("Couldn't export settings: {error}"))?;
+    let contents = String::from_utf8(bytes).map_err(|_| "Couldn't export settings.".to_owned())?;
+    core.send_to_app(ToApp::ExportedSettings { contents });
     Ok(())
 }

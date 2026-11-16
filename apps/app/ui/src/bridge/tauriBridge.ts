@@ -12,6 +12,8 @@ const MESSAGE_EVENT = "snappy://message";
 const UI_READY = "ui_ready";
 const SEND_COMMAND = "send_command";
 const WINDOW_DISPLAY_FRAME = "window_display_frame";
+const READ_SETTINGS_FILE = "read_settings_file";
+const WRITE_SETTINGS_FILE = "write_settings_file";
 const SETTINGS_FILES = [{ name: "Snappy settings", extensions: ["json"] }];
 
 const transport: Transport = {
@@ -43,6 +45,11 @@ export const tauriBridge: Bridge = {
   files: {
     chooseImportPath: () => open({ multiple: false, directory: false, filters: SETTINGS_FILES }),
     chooseExportPath: () => save({ defaultPath: EXPORT_FILE_NAME, filters: SETTINGS_FILES }),
+    // The shell rejects with the error's message for the user.
+    read: (path) => invoke<string>(READ_SETTINGS_FILE, { path }),
+    write: async (path, contents) => {
+      await invoke(WRITE_SETTINGS_FILE, { path, contents });
+    },
   },
   windowDisplayFrame: () => invoke<Rect | null>(WINDOW_DISPLAY_FRAME),
 };

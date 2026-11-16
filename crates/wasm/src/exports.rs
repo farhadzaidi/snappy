@@ -61,6 +61,7 @@ exports! {
     isValidLayout => is_valid_layout,
     defaultSettings => default_settings,
     validateSettings => validate_settings,
+    readSettings => read_settings,
     recordingConflict => recording_conflict_of,
     layoutConflict => layout_conflict,
     layoutForDisplay => layout_for_display,
@@ -517,6 +518,20 @@ mod tests {
         ));
         let expected = settings.validate(Os::MacOs).unwrap();
         assert_eq!(validation["valid"], to_value(&expected));
+    }
+
+    #[test]
+    fn a_settings_files_text_reads_as_the_daemon_reads_an_import() {
+        let settings = Settings::defaults(Os::MacOs);
+        let contents = String::from_utf8(settings.to_json().unwrap()).unwrap();
+        let read = answer(read_settings(
+            &json!({ "contents": contents, "platform": "macos" }).to_string(),
+        ));
+        assert_eq!(read["valid"], to_value(&settings.validate(Os::MacOs).unwrap()));
+        let broken = answer(read_settings(
+            &json!({ "contents": "{ broken", "platform": "macos" }).to_string(),
+        ));
+        assert_eq!(broken["invalid"], "The settings file contains invalid data.");
     }
 
     #[test]

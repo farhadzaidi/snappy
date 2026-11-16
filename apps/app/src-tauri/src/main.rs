@@ -4,12 +4,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod daemon;
+mod settings_file;
 mod window;
+
+use std::path::PathBuf;
 
 use snappy_ipc::Command;
 use tauri::{AppHandle, State};
 
 use crate::daemon::{Inbox, Outbox};
+use crate::settings_file::SettingsFileError;
 
 /// The web UI is listening; deliver the messages that arrived before it was.
 #[tauri::command]
@@ -28,6 +32,18 @@ fn send_command(id: u64, command: Command, outbox: State<'_, Outbox>) {
     outbox.send_command(id, command);
 }
 
+/// The text of the file the user chose to import. Async, so the file is read off the main thread.
+#[tauri::command]
+async fn read_settings_file(path: PathBuf) -> Result<String, SettingsFileError> {
+    settings_file::read(&path)
+}
+
+/// Write exported settings to the file the user chose. Async, so it's written off the main thread.
+#[tauri::command]
+async fn write_settings_file(path: PathBuf, contents: String) -> Result<(), SettingsFileError> {
+    settings_file::write(&path, &contents)
+}
+
 fn main() {
     let (outbox, link) = daemon::open();
 
@@ -44,7 +60,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ui_ready,
             send_command,
-            window_display_frame
+            window_display_frame,
+            read_settings_file,
+            write_settings_file
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -77,9 +95,25 @@ mod tests {
     #[test]
     fn the_ui_names_the_shells_event_and_commands_alike() {
         let bridge = include_str!("../../ui/src/bridge/tauriBridge.ts");
-        let commands = ["ui_ready", "send_command", "window_display_frame"];
+        let commands = [
+            "ui_ready",
+            "send_command",
+            "window_display_frame",
+            "read_settings_file",
+            "write_settings_file",
+        ];
         for name in std::iter::once(crate::daemon::MESSAGE_EVENT).chain(commands) {
             assert!(bridge.contains(&format!("\"{name}\"")), "{name}");
+        }
+    }
+
+    /// The UI shows the same messages when a file fails without one.
+    #[test]
+    fn the_ui_words_file_failures_as_the_shell_does() {
+        use crate::settings_file::SettingsFileError;
+        let bridge = include_str!("../../ui/src/bridge/bridge.ts");
+        for error in [SettingsFileError::Unreadable, SettingsFileError::Unwritable] {
+            assert!(bridge.contains(&format!("\"{error}\"")), "{error}");
         }
     }
 }

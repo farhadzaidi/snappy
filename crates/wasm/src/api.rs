@@ -282,6 +282,14 @@ pub fn validate_settings(request: SettingsRequest) -> Validation {
     }
 }
 
+/// A settings file's text read as the daemon reads an imported one.
+pub fn read_settings(request: SettingsFileRequest) -> Validation {
+    match Settings::from_json(request.contents.as_bytes(), request.platform) {
+        Ok(settings) => Validation::Valid(Box::new(settings)),
+        Err(error) => Validation::Invalid(error.to_string()),
+    }
+}
+
 /// A recorder's conflict, naming the shortcut holding the chord when it is Snappy's.
 pub fn recording_conflict_of(request: RecordingRequest) -> Option<Refusal> {
     recording_conflict(

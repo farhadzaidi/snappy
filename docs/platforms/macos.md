@@ -83,6 +83,7 @@ The `mac-app-store` feature builds the adapter for the App Sandbox. `tools/macos
 - **Open at login** registers the app itself (`SMAppService.mainApp`) instead of the launch agent, which the bundle leaves out. macOS then opens Snappy at login without `--background`, so the daemon starts without the window, and the delegate asks for it when the launch's Apple event isn't a login (`src/login_launch.rs`).
 - **The app** is signed to inherit the daemon's sandbox, so the pipes between them work as they are.
 - **Files** live in the app's container, where a sandboxed process's home points.
+- **Import and export.** The file picker grants the chosen file to the process that showed it, the app, which reads or writes it on every platform ([Talking to the app](../ipc.md#import-and-export)). The app needs `com.apple.security.files.user-selected.read-write` to show the picker, and it's on the daemon (`AppStore.entitlements`), not the app: a helper signed with `com.apple.security.inherit` may have only that and `app-sandbox`, or it won't start, and it runs with the daemon's entitlements. So `AppStoreApp.entitlements` stays as it is.
 
 ## Limitations
 

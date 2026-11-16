@@ -110,12 +110,15 @@ pub enum Command {
     Reset {
         reset: Reset,
     },
+    /// Replace the settings with a settings file's text, which the app read from the file
+    /// the user chose. The daemon never opens that file: in the Mac App Store build only the
+    /// app, which showed the file picker, may.
     ImportSettings {
-        path: String,
+        contents: String,
     },
-    ExportSettings {
-        path: String,
-    },
+    /// Ask for the settings as a settings file's text, answered by `ToApp::ExportedSettings`
+    /// before the reply. The app writes it to the file the user chose.
+    ExportSettings,
     DismissStatus,
 }
 
@@ -185,5 +188,19 @@ mod tests {
         let command: Command =
             serde_json::from_str(r#"{"kind":"setCapsLockAsSnappyKey","enabled":true}"#).unwrap();
         assert_eq!(command, Command::SetCapsLockAsSnappyKey { enabled: true });
+    }
+
+    #[test]
+    fn import_carries_the_files_text_and_export_carries_nothing() {
+        let import: Command =
+            serde_json::from_str(r#"{"kind":"importSettings","contents":"{\"version\":4}"}"#).unwrap();
+        assert_eq!(
+            import,
+            Command::ImportSettings {
+                contents: r#"{"version":4}"#.into()
+            }
+        );
+        let export: Command = serde_json::from_str(r#"{"kind":"exportSettings"}"#).unwrap();
+        assert_eq!(export, Command::ExportSettings);
     }
 }

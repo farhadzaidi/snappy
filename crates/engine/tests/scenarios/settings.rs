@@ -6,14 +6,14 @@ use snappy_core::placement::navigate::Direction;
 use snappy_core::settings::Reset;
 use snappy_core::settings::{HistoryStep, NavigationShortcut, Settings};
 use snappy_core::shortcuts::ShortcutSection;
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent};
 use snappy_fake::FakePlatform;
-use snappy_ipc::Command;
+use snappy_ipc::{Command, ToApp};
 use snappy_platform::PlatformEvent;
 
 use crate::support::{
-    FLOATING, command, enable_workspaces, event, frame_of, frozen, is_parked, live_engine, paths, paths_kept,
-    scenario, send_to, settle, snappy, status_text, with_window,
+    FLOATING, command, enable_workspaces, event, frame_of, frozen, is_parked, live_engine, logged, paths,
+    paths_kept, scenario, send_to, settle, snappy, status_text, with_window,
 };
 
 #[test]
@@ -73,22 +73,39 @@ fn only_valid_changes_are_saved() {
 }
 
 #[test]
+fn export_sends_the_settings_as_a_files_text_and_writes_nothing() {
+    scenario(|| async {
+        let name = "export";
+        let engine = live_engine(name, FakePlatform::default());
+        let folder = paths_kept(name).settings.parent().unwrap().to_owned();
+        let before: Vec<_> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        let status = engine.status();
+
+        let contents = export(&engine);
+        assert_eq!(
+            Settings::from_json(contents.as_bytes(), Os::MacOs).unwrap(),
+            engine.settings()
+        );
+        let after: Vec<_> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(before, after, "the app writes the file, not the daemon");
+        assert_eq!(engine.status(), status, "the app says when the file is written");
+    });
+}
+
+#[test]
 fn import_returns_parked_windows_turns_workspaces_off_and_keeps_snapping() {
     scenario(|| async {
         let name = "import";
         let engine = live_engine(name, with_window(FLOATING));
-        let folder = paths_kept(name).settings.parent().unwrap().to_owned();
-        let exported = folder.join("exported.json").display().to_string();
-        let broken = folder.join("broken.json");
-        std::fs::write(&broken, b"{ broken").unwrap();
 
         enable_workspaces(&engine);
-        command(
-            &engine,
-            Command::ExportSettings {
-                path: exported.clone(),
-            },
-        );
+        let exported = export(&engine);
         command(&engine, Command::SetSnapping { enabled: false });
         event(&engine, PlatformEvent::HotKey(send_to(&engine, 2)));
         settle(&engine).await;
@@ -98,7 +115,7 @@ fn import_returns_parked_windows_turns_workspaces_off_and_keeps_snapping() {
         command(
             &engine,
             Command::ImportSettings {
-                path: broken.display().to_string(),
+                contents: "{ broken".into(),
             },
         );
         let status = engine.status().unwrap();
@@ -110,7 +127,7 @@ fn import_returns_parked_windows_turns_workspaces_off_and_keeps_snapping() {
         command(
             &engine,
             Command::ImportSettings {
-                path: exported.clone(),
+                contents: exported.clone(),
             },
         );
         assert_eq!(
@@ -121,13 +138,59 @@ fn import_returns_parked_windows_turns_workspaces_off_and_keeps_snapping() {
         assert!(is_parked(&engine, 1));
 
         frozen(&engine, 1, false);
-        command(&engine, Command::ImportSettings { path: exported });
+        command(&engine, Command::ImportSettings { contents: exported });
         assert_eq!(frame_of(&engine, 1), FLOATING, "parked windows return first");
         let settings = engine.settings();
         assert!(!settings.workspaces.enabled);
         assert!(!settings.snapping.enabled, "importing never turns snapping on");
         assert_eq!(status_text(&engine), "Layouts and preferences imported.");
     });
+}
+
+#[test]
+fn imported_settings_are_saved_and_the_debug_log_records_only_their_size() {
+    scenario(|| async {
+        let name = "import-saved";
+        let engine = live_engine(name, FakePlatform::default());
+        engine.force_debug_log();
+        let mut changed = engine.settings();
+        changed.snapping.shortcuts_enabled = !changed.snapping.shortcuts_enabled;
+        let contents = String::from_utf8(changed.to_json().unwrap()).unwrap();
+        let size = contents.len();
+
+        command(&engine, Command::ImportSettings { contents });
+        assert_eq!(
+            engine.settings().snapping.shortcuts_enabled,
+            changed.snapping.shortcuts_enabled
+        );
+        let saved = std::fs::read(paths_kept(name).settings).unwrap();
+        assert_eq!(Settings::from_json(&saved, Os::MacOs).unwrap(), engine.settings());
+
+        let commands = logged(name, LogEvent::Command);
+        let import = commands
+            .iter()
+            .find_map(|record| {
+                record["command"]
+                    .as_str()
+                    .filter(|c| c.starts_with("ImportSettings"))
+            })
+            .unwrap();
+        assert_eq!(import, format!("ImportSettings {{ {size} bytes }}"));
+    });
+}
+
+/// Export the settings, as the app does before writing the file the user chose.
+fn export(engine: &Engine<FakePlatform>) -> String {
+    engine.take_outbox();
+    command(engine, Command::ExportSettings);
+    engine
+        .take_outbox()
+        .into_iter()
+        .find_map(|message| match message {
+            ToApp::ExportedSettings { contents } => Some(contents),
+            _ => None,
+        })
+        .unwrap()
 }
 
 #[test]
@@ -209,14 +272,12 @@ fn every_save_path_refuses_a_conflict_with_its_message() {
             "Snappy + ↓ is already assigned to Move window down.",
         );
 
-        let file = paths_kept(name).settings.with_file_name("conflicting.json");
         let mut conflicting = serde_json::to_value(engine.settings()).unwrap();
         conflicting["navigation"]["left"] =
             serde_json::to_value(KeyChord::new("Digit1", [Modifier::Ctrl])).unwrap();
-        std::fs::write(&file, serde_json::to_vec(&conflicting).unwrap()).unwrap();
         refused(
             Command::ImportSettings {
-                path: file.display().to_string(),
+                contents: conflicting.to_string(),
             },
             "Control ⌃ + 1 is already assigned to Move window left.",
         );

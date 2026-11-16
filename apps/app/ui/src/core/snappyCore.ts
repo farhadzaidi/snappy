@@ -271,6 +271,9 @@ export const core = {
   defaultSettings: (platform: PlatformName) => call<Settings>(wasm.defaultSettings, { platform }),
   validateSettings: (settings: Settings, platform: PlatformName) =>
     call<Validation>(wasm.validateSettings, { settings, platform }),
+  /** A settings file's text, read as the daemon reads an imported one. */
+  readSettings: (contents: string, platform: PlatformName) =>
+    call<Validation>(wasm.readSettings, { contents, platform }),
   /** The conflict recording `chord` for `shortcut` would create, named from that shortcut's side. */
   recordingConflict: (settings: Settings, shortcut: ShortcutId, chord: KeyChord, platform: PlatformName) =>
     call<Refusal | null>(wasm.recordingConflict, { settings, shortcut, chord, platform }),

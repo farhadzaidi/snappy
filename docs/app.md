@@ -8,9 +8,10 @@ The app (`apps/app`) is the window where people pick layouts, edit them, manage 
 
 - relays frames between the pipes to the daemon and the web UI ([Talking to the app](ipc.md));
 - adds the Edit menu that text fields need for the standard editing shortcuts on macOS;
-- reports which display its window is on.
+- reports which display its window is on;
+- reads and writes the file the user picks to import or export settings (`src/settings_file.rs`), so the daemon only ever sees the text ([Talking to the app](ipc.md#import-and-export)).
 
-Its content security policy (`tauri.conf.json`) allows only bundled assets. Its one plugin is the file dialog, for importing and exporting settings.
+Its content security policy (`tauri.conf.json`) allows only bundled assets. Its one plugin is the file dialog, for choosing the file to import or export.
 
 ## The React UI
 

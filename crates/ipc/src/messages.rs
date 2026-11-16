@@ -6,7 +6,7 @@ use snappy_core::shortcuts::Refusal;
 use crate::app_state::AppState;
 use crate::command::Command;
 
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Daemon to app.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +24,10 @@ pub enum ToApp {
     },
     ProbeResult {
         available: bool,
+    },
+    /// The answer to `ExportSettings`: the settings as a settings file's text.
+    ExportedSettings {
+        contents: String,
     },
     Focus,
 }
@@ -80,6 +84,17 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&done).unwrap(),
             r#"{"type":"reply","id":4,"error":null}"#
+        );
+    }
+
+    #[test]
+    fn exported_settings_carry_the_files_text() {
+        let exported = ToApp::ExportedSettings {
+            contents: "{}".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&exported).unwrap(),
+            r#"{"type":"exportedSettings","contents":"{}"}"#
         );
     }
 }

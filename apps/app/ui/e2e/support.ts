@@ -1,12 +1,14 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 import type { FakeDaemon } from "../src/bridge/fake/fakeDaemon";
+import type { FakeFiles } from "../src/bridge/fake/fakeFiles";
 import type { Command } from "../src/bridge/protocol";
 import type { KeyChord } from "../src/core/model";
 
 declare global {
   interface Window {
     snappyFake: FakeDaemon;
+    snappyFiles: FakeFiles;
   }
 }
 

@@ -38,10 +38,12 @@ import "./settings/settings.css";
 /** `pnpm dev` and the end-to-end tests run against the in-browser fake daemon. */
 async function fakeDaemonBridge(): Promise<Bridge> {
   const { FakeDaemon, fakeBridge } = await import("./bridge/fake/fakeDaemon");
+  const { FakeFiles } = await import("./bridge/fake/fakeFiles");
   const platform = (new URLSearchParams(window.location.search).get("platform") ?? "macos") as PlatformName;
   const daemon = new FakeDaemon(platform);
-  Object.assign(window, { snappyFake: daemon });
-  return fakeBridge(daemon);
+  const files = new FakeFiles();
+  Object.assign(window, { snappyFake: daemon, snappyFiles: files });
+  return fakeBridge(daemon, files);
 }
 
 async function start(): Promise<void> {

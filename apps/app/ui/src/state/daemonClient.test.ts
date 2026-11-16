@@ -133,4 +133,19 @@ describe("daemon client", () => {
     transport.deliver({ type: "probeResult", available: false });
     await expect(answer).resolves.toBe(false);
   });
+
+  it("an export resolves with its text, and a refused one with null without taking the next's", async () => {
+    const refused = client.exportSettings();
+    const exported = client.exportSettings();
+    const [first, second] = transport.sent.map((sent) => sent.id);
+    expect(transport.sent.map((sent) => sent.command)).toEqual([
+      { kind: "exportSettings" },
+      { kind: "exportSettings" },
+    ]);
+    transport.deliver({ type: "reply", id: first, error: { message: "No.", shortcut: null } });
+    await expect(refused).resolves.toBeNull();
+    transport.deliver({ type: "exportedSettings", contents: "{}" });
+    transport.deliver({ type: "reply", id: second, error: null });
+    await expect(exported).resolves.toBe("{}");
+  });
 });

@@ -16,8 +16,10 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+snappy-core = { path = "../../../crates/core" }
 snappy-ipc = { path = "../../../crates/ipc" }
 serde.workspace = true
+thiserror.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 

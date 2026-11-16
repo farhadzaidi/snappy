@@ -14,6 +14,8 @@ export interface Outcome {
   shortcut?: NamedShortcut | null;
   /** The availability answer to a `probeShortcut`. */
   probe?: boolean;
+  /** The settings file's text an `exportSettings` asked for. */
+  exported?: string;
 }
 
 /** An outcome that may have changed nothing, which posts no message. */
@@ -104,12 +106,9 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
     case "reset":
       return reset(state, command.reset);
     case "importSettings":
-      return withStatus(
-        save(state, { ...settings, workspaces: { ...settings.workspaces, enabled: false } }),
-        "Layouts and preferences imported.",
-      );
+      return importSettings(state, command.contents);
     case "exportSettings":
-      return withStatus(done(state), "Layouts and preferences exported.");
+      return { ...done(state), exported: JSON.stringify(settings, null, 2) };
     case "dismissStatus":
       return done({ ...state, status: null });
     case "beginRecording":
@@ -118,6 +117,27 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
     case "applyRemedy":
       return done(state);
   }
+}
+
+/**
+ * Replace the settings with a settings file's text, read as the daemon reads it. Like the
+ * daemon, import turns workspaces off and never changes whether snapping is on.
+ */
+function importSettings(state: AppState, contents: string): Outcome {
+  const read = core.readSettings(contents, state.platform);
+  if ("invalid" in read) {
+    return { state, error: `Import failed: ${read.invalid}` };
+  }
+  const imported = read.valid;
+  const outcome = save(state, {
+    ...imported,
+    snapping: { ...imported.snapping, enabled: state.settings.snapping.enabled },
+    workspaces: { ...imported.workspaces, enabled: false },
+  });
+  if (outcome.error !== null) {
+    return { ...outcome, error: `Import failed: ${outcome.error}` };
+  }
+  return withStatus(outcome, "Layouts and preferences imported.");
 }
 
 /** Resetting everything turns workspaces off, as the daemon does after bringing windows back. */

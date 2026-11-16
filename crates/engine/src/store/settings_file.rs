@@ -1,7 +1,7 @@
 //! The settings file, which a failed load protects from being overwritten.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use snappy_core::keys::Os;
 use snappy_core::settings::{Settings, SettingsError};
@@ -50,17 +50,6 @@ impl SettingsStore {
         }
         let bytes = settings.to_json()?;
         write_atomic(&self.path, &bytes, false).map_err(|_| SettingsError::Unwritable)
-    }
-
-    /// Read another settings file, for import.
-    pub fn read_file(path: &Path, platform: Os) -> Result<Settings, SettingsError> {
-        let bytes = fs::read(path).map_err(|_| SettingsError::Unreadable)?;
-        Settings::from_json(&bytes, platform)
-    }
-
-    /// Write the settings to another file, for export.
-    pub fn write_file(path: &Path, settings: &Settings) -> Result<(), SettingsError> {
-        write_atomic(path, &settings.to_json()?, false).map_err(|_| SettingsError::Unwritable)
     }
 }
 

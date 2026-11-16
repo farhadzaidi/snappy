@@ -30,8 +30,8 @@ The store listing is called **Snappy - Window Zones**, because "Snappy" is taken
 | Caps Lock: reading System Settings' Modifier Keys (`ByHost` global preferences) | Left out | Only Caps Lock needs it. |
 | Open at login through the bundled launch agent (`SMAppService.agent`) | Not allowed | App Store apps may not install launchd jobs (App Review Guidelines 2.4.5). The store build registers the app itself, `SMAppService.mainApp` (macOS 13 and later; Snappy needs 14), and the bundle has no `Library/LaunchAgents`. |
 | Starting the app's window (the daemon runs `Snappy App.app`'s binary with pipes) | Works | A sandboxed app may run executables inside its own bundle. The helper is signed with `com.apple.security.inherit`, so it runs in the daemon's sandbox. Pipes need no entitlement, so there's no socket and no App Group. |
-| The app's Import and Export file pickers | Works in the app | `com.apple.security.files.user-selected.read-write`, which the helper inherits. |
-| Reading and writing the file the user picked, which the daemon does | Probably not | The picker grants the file to the process that showed it, the app, not the daemon. See [Known gaps](#known-gaps). |
+| The app's Import and Export file pickers | Works in the app | `com.apple.security.files.user-selected.read-write`, on the daemon. A helper that inherits the sandbox may hold no entitlement but `app-sandbox` and `inherit`, and gets the daemon's. |
+| Reading and writing the file the user picked | Works in the app | The picker grants the file to the process that showed it, the app, and the app reads or writes it. The daemon gets and sends only the text, over the pipe. |
 | Settings, state, and logs under `~/Library` | Works, in the container | A sandboxed process's home is its container, so the same paths land in `~/Library/Containers/io.github.farhadzaidi.Snappy/Data/Library/Application Support/Snappy/` and `…/Data/Library/Logs/Snappy/`. The app inherits the same container. |
 | The single-instance lock and signals (`SIGTERM`, `SIGUSR2`) | Works | The lock lives in the container. Signals need nothing. |
 | Private API | None in Snappy's code; a few in Tauri's | See [Private API](#private-api). |
@@ -40,12 +40,7 @@ The store listing is called **Snappy - Window Zones**, because "Snappy" is taken
 
 - **Caps Lock as the Snappy key.** Turning it on is refused with "Apps from the App Store can't remap Caps Lock, so it can't be the Snappy key." The Snappy key itself works as everywhere else.
 - **Changed system shortcuts**, if the sandbox hides them: Snappy may offer a chord the user has moved one of macOS's own shortcuts onto. macOS's default shortcuts are still known.
-- **Settings import and export**, until the gap below is closed.
-- **Settings shared with a GitHub build.** The store build keeps its files in its container, so the two builds don't see each other's settings.
-
-### Known gaps
-
-The app shows the file picker, but the daemon reads and writes the file (`Command::ImportSettings` and `ExportSettings` carry a path). In the sandbox, only the app holds access to the picked file, so the daemon will most likely be refused. The fix is for the app to read or write the file and send its text over the pipe instead of the path, which changes `crates/ipc`, the engine, and the app on every platform. It's left for its own change.
+- **Settings shared with a GitHub build.** The store build keeps its files in its container, so the two builds don't see each other's settings. Export from one and import into the other to move them.
 
 ### Private API
 
@@ -125,7 +120,7 @@ Nothing here has run on macOS yet: the code is linted for macOS from Linux (`too
 6. Turning on Caps Lock as the Snappy key shows the App Store message and changes nothing; `hidutil property --get UserKeyMapping` stays as it was.
 7. Shortcuts work. Then move Mission Control's shortcut to Control-Option-Command-M in System Settings → Keyboard → Keyboard Shortcuts and record that chord in Snappy. A GitHub build refuses it. If the store build takes it, the sandbox hides `com.apple.symbolichotkeys`, as the table expects.
 8. Turning on Open at login lists Snappy under System Settings → General → Login Items. After logging out and in, Snappy starts without opening its window. Opening it from Launchpad or Finder, the first time and while it runs, opens the window.
-9. Export and Import settings: if they fail, as expected, the [known gap](#known-gaps) is confirmed.
+9. Export settings to a file in Documents, change a setting, and import the file: the setting comes back.
 10. Quitting from the menu brings parked workspace windows back.
 11. `tools/macos/app-store.sh signed` with the real identities, then `pkgutil --check-signature` passes, and `upload` is accepted. If `altool --upload-app` has been retired by then, upload the package with the Transporter app instead and update the script.
 12. The first TestFlight build (macOS TestFlight takes the same package) installs and passes items 2 to 10.
