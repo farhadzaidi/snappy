@@ -11,7 +11,7 @@ Getting a release into package managers, the Microsoft Store, and the Mac App St
 ## The short version
 
 ```sh
-tools/release/bump.sh 0.1.1               # set the version everywhere it's written
+tools/release/bump.sh patch               # 0.1.0 → 0.1.1, set everywhere it's written
 tools/check.sh                            # the version tests are part of it
 git commit -am "Release 0.1.1"
 git tag -a v0.1.1 -m "Snappy 0.1.1"
@@ -22,7 +22,7 @@ Then wait for the **Release** workflow under the repository's Actions tab. It en
 
 ## Setting the version
 
-`tools/release/bump.sh <version>` writes the version into every file that holds it:
+`tools/release/bump.sh` takes `patch`, `minor`, or `major` to go up one step from the current version, or a version such as `0.3.0`. It refuses a version older than the current one, and a working tree with uncommitted changes. It writes the version into every file that holds it:
 
 - `version` in `[workspace.package]` in `Cargo.toml`, which every crate inherits, and the workspace crates' entries in `Cargo.lock`;
 - `CFBundleShortVersionString` and `CFBundleVersion` in both property lists in `packaging/macos`;
@@ -79,7 +79,7 @@ When `main` already holds work that isn't ready to ship, make the fix on a relea
 ```sh
 git switch -c release/0.1 v0.1.0          # once per minor version; reuse it for 0.1.2
 git cherry-pick <the fix's commit>        # land the fix on main first, then bring it over
-tools/release/bump.sh 0.1.1
+tools/release/bump.sh patch
 git commit -am "Release 0.1.1"
 git tag -a v0.1.1 -m "Snappy 0.1.1"
 git push origin release/0.1 v0.1.1

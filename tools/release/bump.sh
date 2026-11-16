@@ -1,7 +1,10 @@
 #!/bin/bash
 # Set Snappy's version everywhere it's written down, ready for a release:
 #
-#   tools/release/bump.sh 0.1.1
+#   tools/release/bump.sh patch     # 0.1.0 → 0.1.1
+#   tools/release/bump.sh minor     # 0.1.0 → 0.2.0
+#   tools/release/bump.sh major     # 0.1.0 → 1.0.0
+#   tools/release/bump.sh 0.3.0     # or any newer version
 #
 # The workspace's Cargo.toml and the workspace crates in Cargo.lock, the macOS property lists,
 # the GNOME extension's metadata, and the app's package.json. Tests check they all match.
@@ -14,18 +17,26 @@ set -euo pipefail
 source "$(dirname "$0")/common.sh"
 cd "$release_root"
 
-[[ $# -eq 1 ]] || die "usage: tools/release/bump.sh <version>, such as 0.1.1"
-version="${1#v}"
-# Plain MAJOR.MINOR.PATCH: Windows Installer and macOS bundle versions are numbers only, so
-# pre-release suffixes can't be carried everywhere.
-number='(0|[1-9][0-9]*)'
-[[ "$version" =~ ^$number\.$number\.$number$ ]] ||
-    die "'$1' isn't a version like 1.2.3 (major.minor.patch, no pre-release or build suffix)"
+usage="usage: tools/release/bump.sh patch|minor|major|<version>, such as 0.1.1"
+[[ $# -eq 1 ]] || die "$usage"
 
 [[ -z "$(git status --porcelain)" ]] || die "the working tree has changes; commit or set them aside first"
 
 current="$(snappy_version)"
 [[ -n "$current" ]] || die "can't find the version in Cargo.toml"
+IFS=. read -r major minor patch <<<"$current"
+
+case "$1" in
+    patch) version="$major.$minor.$((patch + 1))" ;;
+    minor) version="$major.$((minor + 1)).0" ;;
+    major) version="$((major + 1)).0.0" ;;
+    *) version="${1#v}" ;;
+esac
+# Plain MAJOR.MINOR.PATCH: Windows Installer and macOS bundle versions are numbers only, so
+# pre-release suffixes can't be carried everywhere.
+number='(0|[1-9][0-9]*)'
+[[ "$version" =~ ^$number\.$number\.$number$ ]] ||
+    die "'$1' isn't patch, minor, major, or a version like 1.2.3 (no pre-release or build suffix)"
 [[ "$version" != "$current" ]] || die "the version is already $current"
 IFS=. read -r -a old <<<"$current"
 IFS=. read -r -a new <<<"$version"

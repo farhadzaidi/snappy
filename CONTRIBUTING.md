@@ -288,6 +288,6 @@ The tray glyph on Linux and Windows is also drawn in code (`crates/platform/src/
 
 ## Releasing
 
-The maintainer releases from `main` once CI passes, or from a release branch for a hotfix. `tools/release/bump.sh <version>` sets the version everywhere it's written. Pushing the tag `v<version>` runs the release workflow, which builds every package and drafts a GitHub release to check and publish.
+The maintainer releases from `main` once CI passes, or from a release branch for a hotfix. `tools/release/bump.sh patch` (or `minor`, `major`, or a version) sets the version everywhere it's written. Pushing the tag `v<version>` runs the release workflow, which builds every package and drafts a GitHub release to check and publish.
 
 [docs/releasing/](docs/releasing/README.md) covers the whole process, the packages, hotfixes, and the signing secrets.
