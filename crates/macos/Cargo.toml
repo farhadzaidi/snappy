@@ -19,6 +19,8 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std",
     "block2",
+    "NSAppleEventDescriptor",
+    "NSAppleEventManager",
     "NSArray",
     "NSData",
     "NSDate",
@@ -113,6 +115,9 @@ objc2-service-management = { version = "0.3", default-features = false, features
 [features]
 # The `reference` module, for tests and the live harness only.
 reference = []
+# The Mac App Store build, which runs in the App Sandbox: Caps Lock can't be the Snappy key,
+# and open at login registers the app itself instead of the bundled launch agent.
+mac-app-store = []
 
 [lints]
 workspace = true

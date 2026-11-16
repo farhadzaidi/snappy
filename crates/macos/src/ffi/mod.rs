@@ -4,6 +4,7 @@
 pub mod ax;
 pub mod carbon;
 mod colorsync;
+#[cfg(not(feature = "mac-app-store"))]
 pub mod hid;
 mod types;
 

@@ -28,5 +28,9 @@ snappy-x11 = { path = "../../crates/x11" }
 [target.'cfg(windows)'.dependencies]
 snappy-windows = { path = "../../crates/windows" }
 
+[features]
+# The Mac App Store build (`tools/macos/app-store.sh`). See snappy-macos.
+mac-app-store = ["snappy-macos/mac-app-store"]
+
 [lints]
 workspace = true

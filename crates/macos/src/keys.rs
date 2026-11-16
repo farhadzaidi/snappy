@@ -166,6 +166,7 @@ impl CarbonChord {
 }
 
 /// The NSEvent and CGEvent modifier flags for `mods`; both use the same bits.
+#[cfg(not(feature = "mac-app-store"))]
 pub fn event_flags(mods: Mods) -> u64 {
     [
         (Modifier::Shift, EVENT_SHIFT),
@@ -277,6 +278,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "mac-app-store"))]
     fn mods_become_event_flags_and_back() {
         let snappy_key = Mods::from_iter([Modifier::Ctrl, Modifier::Alt, Modifier::Meta]);
         let flags = event_flags(snappy_key);

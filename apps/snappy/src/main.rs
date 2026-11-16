@@ -77,6 +77,9 @@ mod platform {
         let Claim::Primary(_instance) = snappy_macos::claim(&paths.state_dir)? else {
             return Ok(());
         };
+        // macOS opens the Mac App Store build at login without `--background`, so the adapter
+        // reports the user opening it from the launch event instead.
+        let open_app = open_app && !cfg!(feature = "mac-app-store");
         let (events, platform_events) = std::sync::mpsc::channel();
         let app = snappy_macos::App::new(events).map_err(std::io::Error::other)?;
         let platform = app.platform();

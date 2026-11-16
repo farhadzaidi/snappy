@@ -1,13 +1,17 @@
-//! Snappy's Objective-C delegate: the app's reopen handler, the menu bar menu's
+//! Snappy's Objective-C delegate: the app's launch and reopen handlers, the menu bar menu's
 //! delegate, and its items' action target. Every method only forwards.
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationDelegate, NSMenu, NSMenuDelegate, NSMenuItem};
+#[cfg(feature = "mac-app-store")]
+use objc2_foundation::NSNotification;
 use snappy_platform::PlatformEvent;
 
 use crate::events::emit;
+#[cfg(feature = "mac-app-store")]
+use crate::login_launch;
 use crate::tray;
 
 define_class!(
@@ -25,6 +29,16 @@ define_class!(
         fn should_handle_reopen(&self, _app: &NSApplication, _visible: bool) -> bool {
             emit(PlatformEvent::OpenAppRequested);
             false
+        }
+
+        /// The Mac App Store build has no launch agent to start it with `--background`, so
+        /// opening it is reported here, unless macOS opened it at login.
+        #[cfg(feature = "mac-app-store")]
+        #[unsafe(method(applicationDidFinishLaunching:))]
+        fn did_finish_launching(&self, _notification: &NSNotification) {
+            if !login_launch::launched_at_login() {
+                emit(PlatformEvent::OpenAppRequested);
+            }
         }
     }
 

@@ -16,6 +16,9 @@ crates=(-p snappy -p snappy-live)
 if [[ "$which" == all || "$which" == macos ]]; then
     echo "macOS…"
     cargo clippy --target aarch64-apple-darwin -p snappy-macos "${crates[@]}" --all-targets -- -D warnings
+    echo "macOS, the Mac App Store build…"
+    cargo clippy --target aarch64-apple-darwin -p snappy-macos -p snappy --features snappy/mac-app-store \
+        --all-targets -- -D warnings
 fi
 if [[ "$which" == all || "$which" == windows ]]; then
     echo "Windows…"

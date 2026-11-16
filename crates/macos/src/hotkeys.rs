@@ -14,20 +14,23 @@ use std::ptr;
 use snappy_core::keys::Combo;
 use snappy_platform::PlatformEvent;
 
+#[cfg(not(feature = "mac-app-store"))]
 use crate::caps_lock;
 use crate::events::emit;
+#[cfg(not(feature = "mac-app-store"))]
+use crate::ffi::carbon::{CMD_KEY, CONTROL_KEY, OPTION_KEY, SHIFT_KEY};
 use crate::ffi::carbon::{
-    CMD_KEY, CONTROL_KEY, EVENT_CLASS_KEYBOARD, EVENT_HOT_KEY_PRESSED, EVENT_HOT_KEY_RELEASED,
-    EVENT_NOT_HANDLED_ERR, EVENT_PARAM_DIRECT_OBJECT, EventHandlerCallRef, EventHandlerRef, EventHotKeyID,
-    EventHotKeyRef, EventRef, EventTypeSpec, GetApplicationEventTarget, GetEventKind, GetEventParameter,
-    InstallEventHandler, NO_ERR, OPTION_KEY, OSStatus, RegisterEventHotKey, SHIFT_KEY, TYPE_EVENT_HOT_KEY_ID,
-    UnregisterEventHotKey,
+    EVENT_CLASS_KEYBOARD, EVENT_HOT_KEY_PRESSED, EVENT_HOT_KEY_RELEASED, EVENT_NOT_HANDLED_ERR,
+    EVENT_PARAM_DIRECT_OBJECT, EventHandlerCallRef, EventHandlerRef, EventHotKeyID, EventHotKeyRef, EventRef,
+    EventTypeSpec, GetApplicationEventTarget, GetEventKind, GetEventParameter, InstallEventHandler, NO_ERR,
+    OSStatus, RegisterEventHotKey, TYPE_EVENT_HOT_KEY_ID, UnregisterEventHotKey,
 };
 use crate::keys::CarbonChord;
 use crate::system_shortcuts;
 
 const SIGNATURE: u32 = u32::from_be_bytes(*b"SNAP");
 const PROBE_SIGNATURE: u32 = u32::from_be_bytes(*b"SNPR");
+#[cfg(not(feature = "mac-app-store"))]
 const CAPS_LOCK_SIGNATURE: u32 = u32::from_be_bytes(*b"SNCL");
 
 #[derive(Default)]
@@ -37,6 +40,7 @@ struct HotKeys {
     /// Chord-derived Carbon ID to the engine's shortcut ID.
     engine_ids: HashMap<u32, u32>,
     /// The key Caps Lock arrives as, under every combination of modifiers.
+    #[cfg(not(feature = "mac-app-store"))]
     caps_lock: Vec<EventHotKeyRef>,
 }
 
@@ -112,6 +116,7 @@ pub fn unregister_all() {
 
 /// Watch `key_code`, the key Caps Lock arrives as, with or without any other modifier held,
 /// so Caps Lock stands for the Snappy key whatever else is down. False when Carbon refused.
+#[cfg(not(feature = "mac-app-store"))]
 pub fn register_caps_lock_key(key_code: u32) -> bool {
     HOT_KEYS.with(|hot_keys| {
         let mut hot_keys = hot_keys.borrow_mut();
@@ -139,6 +144,7 @@ pub fn register_caps_lock_key(key_code: u32) -> bool {
     })
 }
 
+#[cfg(not(feature = "mac-app-store"))]
 pub fn unregister_caps_lock_key() {
     HOT_KEYS.with(|hot_keys| {
         for hot_key in hot_keys.borrow_mut().caps_lock.drain(..) {
@@ -202,6 +208,7 @@ unsafe extern "C" fn on_hot_key(_call: EventHandlerCallRef, event: EventRef, _da
     }
     // SAFETY: Carbon passes a valid event.
     let pressed = unsafe { GetEventKind(event) } == EVENT_HOT_KEY_PRESSED;
+    #[cfg(not(feature = "mac-app-store"))]
     if id.signature == CAPS_LOCK_SIGNATURE {
         caps_lock::key_changed(pressed);
         return NO_ERR;

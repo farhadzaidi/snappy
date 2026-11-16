@@ -22,6 +22,8 @@ mod input;
 mod instance;
 mod keys;
 mod login_item;
+#[cfg(feature = "mac-app-store")]
+mod login_launch;
 mod main_thread;
 mod messages;
 mod observers;
