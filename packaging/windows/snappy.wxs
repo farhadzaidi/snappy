@@ -20,7 +20,7 @@
   <!-- The upgrade code stays the same for every version and both architectures, so a new
        package replaces whichever one is installed. -->
   <Package Name="Snappy"
-           Manufacturer="Syed Zaidi"
+           Manufacturer="Syed F Zaidi"
            Version="$(var.Version)"
            UpgradeCode="6CED7E1A-9AB2-4F84-A6C2-C991C32746DD"
            Scope="perUser"

@@ -16,7 +16,7 @@ SetCompressor /SOLID lzma
 !include "WinMessages.nsh"
 
 !define PRODUCT "Snappy"
-!define PUBLISHER "Syed Zaidi"
+!define PUBLISHER "Syed F Zaidi"
 !define HOMEPAGE "https://github.com/farhadzaidi/snappy"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snappy"
 ; Snappy's "Open at login": the value Snappy under this key.

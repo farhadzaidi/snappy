@@ -1,7 +1,7 @@
 Package: snappy-app
 Version: @VERSION@
 Architecture: @ARCH@
-Maintainer: Syed Zaidi <70859631+farhadzaidi@users.noreply.github.com>
+Maintainer: Syed F Zaidi <70859631+farhadzaidi@users.noreply.github.com>
 Installed-Size: @INSTALLED_SIZE@
 Depends: libwebkit2gtk-4.1-0, libgtk-3-0
 Section: x11

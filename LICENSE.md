@@ -6,7 +6,7 @@ FSL-1.1-ALv2
 
 ## Notice
 
-Copyright 2026 Syed Zaidi
+Copyright 2026 Syed F Zaidi
 
 ## Terms and Conditions
 

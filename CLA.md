@@ -1,6 +1,6 @@
 # Contributor License Agreement
 
-Thank you for contributing to Snappy. This agreement makes clear what rights you give Syed Zaidi ("the Maintainer") over your contributions, so Snappy can keep being offered under its license, and under other terms such as through app stores. You keep the copyright in what you contribute.
+Thank you for contributing to Snappy. This agreement makes clear what rights you give Syed F Zaidi ("the Maintainer") over your contributions, so Snappy can keep being offered under its license, and under other terms such as through app stores. You keep the copyright in what you contribute.
 
 You accept this agreement by commenting on your pull request as the CLA bot asks. It covers every contribution you submit to Snappy, then and later.
 

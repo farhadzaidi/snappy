@@ -3,10 +3,10 @@
 PackageIdentifier: FarhadZaidi.Snappy
 PackageVersion: @VERSION@
 PackageLocale: en-US
-Publisher: Syed Zaidi
+Publisher: Syed F Zaidi
 PublisherUrl: https://github.com/farhadzaidi
 PublisherSupportUrl: https://github.com/farhadzaidi/snappy/issues
-Author: Syed Zaidi
+Author: Syed F Zaidi
 PackageName: Snappy
 PackageUrl: https://github.com/farhadzaidi/snappy
 License: FSL-1.1-ALv2
