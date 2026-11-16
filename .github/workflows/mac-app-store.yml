@@ -11,8 +11,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "The release tag to build, such as v0.1.0"
-        required: true
+        description: "The release tag to build, such as v0.1.0; leave empty for a dry run of this branch"
+        required: false
       dry-run:
         description: "Build and sign, but don't upload"
         type: boolean
@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mac-app-store-${{ github.event.release.tag_name || inputs.tag }}
+  group: mac-app-store-${{ github.event.release.tag_name || inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -39,13 +39,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || github.ref }}
 
+      # A dry run may build a branch; anything that uploads builds a tag naming the version.
       - name: The tag names Snappy's version
         run: |
           version="$(cargo metadata --no-deps --format-version 1 |
             python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "snappy"))')"
-          if [[ "${TAG#v}" != "$version" ]]; then
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+          if [[ -z "$TAG" && "$DRY_RUN" != true ]]; then
+            echo "::error::Only a dry run can build without a tag."
+            exit 1
+          fi
+          if [[ -n "$TAG" && "${TAG#v}" != "$version" ]]; then
             echo "::error::The tag $TAG doesn't match Snappy's version, $version."
             exit 1
           fi
@@ -122,7 +128,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mac-app-store-${{ env.TAG }}
+          name: mac-app-store-${{ env.VERSION }}
           path: dist/app-store/*.pkg
           if-no-files-found: error
 
@@ -136,7 +142,7 @@ jobs:
           keys="$HOME/.appstoreconnect/private_keys"
           mkdir -p "$keys"
           (umask 077 && base64 --decode <<<"$APP_STORE_CONNECT_KEY_P8" >"$keys/AuthKey_$APP_STORE_CONNECT_KEY_ID.p8")
-          tools/macos/app-store.sh upload dist/app-store/Snappy-"${TAG#v}".pkg
+          tools/macos/app-store.sh upload dist/app-store/Snappy-"$VERSION".pkg
 
       - name: Remove the keys
         if: always()

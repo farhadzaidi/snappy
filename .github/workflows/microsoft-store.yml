@@ -12,8 +12,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build, such as v0.1.0
-        required: true
+        description: Release tag to build, such as v0.1.0; leave empty for a dry run of this branch
+        required: false
         type: string
       dry-run:
         description: Build the bundle without submitting it
@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: microsoft-store-${{ github.event.release.tag_name || inputs.tag }}
+  group: microsoft-store-${{ github.event.release.tag_name || inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -53,12 +53,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || github.ref }}
+      # A dry run may build a branch; anything that submits builds a tag naming the version.
       - name: The tag matches the version
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
         run: |
           $version = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
             Where-Object name -EQ 'snappy').version
-          if ($env:TAG.TrimStart('v') -ne $version) {
+          if (-not $env:TAG -and $env:DRY_RUN -ne 'true') {
+            throw 'Only a dry run can build without a tag.'
+          }
+          if ($env:TAG -and $env:TAG.TrimStart('v') -ne $version) {
             throw "Tag $env:TAG doesn't match the Cargo version $version."
           }
       - uses: dtolnay/rust-toolchain@stable
@@ -98,7 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           pattern: msix-*
