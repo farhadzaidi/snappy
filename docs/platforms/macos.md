@@ -75,6 +75,15 @@ So Snappy learns tabs as they're focused. A tracked window that has dropped out 
 - Both programs use the accessory activation policy: no Dock icon and no Command-Tab entry.
 - The login item registers the launch agent bundled in the app (`packaging/macos`), which runs the daemon with `--background`.
 
+## The Mac App Store build
+
+The `mac-app-store` feature builds the adapter for the App Sandbox. `tools/macos/app-store.sh` builds it, and [The Mac App Store](../releasing/mac-app-store.md) goes through what the sandbox allows, the signing, and the release.
+
+- **Caps Lock** can't be the Snappy key. `src/caps_lock/unavailable.rs` stands in for the module and refuses with a message of its own, and none of the HID, event tap, or F18 hotkey code is compiled.
+- **Open at login** registers the app itself (`SMAppService.mainApp`) instead of the launch agent, which the bundle leaves out. macOS then opens Snappy at login without `--background`, so the daemon starts without the window, and the delegate asks for it when the launch's Apple event isn't a login (`src/login_launch.rs`).
+- **The app** is signed to inherit the daemon's sandbox, so the pipes between them work as they are.
+- **Files** live in the app's container, where a sandboxed process's home points.
+
 ## Limitations
 
 - Chrome blocks frame changes while its enhanced accessibility is on. Snappy turns it off for one change, unless VoiceOver or Switch Control needs it, and turns it back on.
