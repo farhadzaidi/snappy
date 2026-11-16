@@ -1,6 +1,6 @@
 name: Publish packages
 
-# Updates Homebrew, winget, and the AUR when a release is published. Each channel is its own
+# Updates Homebrew and winget when a release is published. Each channel is its own
 # job and publishes only when its secret is set; docs/releasing/package-managers.md covers the
 # one-time setup. A dry run renders and checks everything, and pushes nothing.
 
@@ -211,37 +211,3 @@ jobs:
           else
             komac "${args[@]}" --submit
           fi
-
-  aur:
-    needs: prepare
-    if: needs.prepare.outputs.publish == 'true'
-    runs-on: ubuntu-24.04
-    env:
-      HAS_SECRET: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
-      DRY_RUN: ${{ needs.prepare.outputs.dry_run }}
-      VERSION: ${{ needs.prepare.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: packages
-          path: target/packages
-      - name: Show the PKGBUILD
-        run: cat target/packages/aur/snappy-app-bin/PKGBUILD
-      - name: Check the package in Arch Linux
-        run: |
-          docker run --rm -v "$PWD:/work" -w /work archlinux:base \
-            tools/release/check-aur-package.sh target/packages/aur/snappy-app-bin --download
-      - name: No key
-        if: env.HAS_SECRET != 'true'
-        run: echo "::notice title=AUR skipped::Add the AUR_SSH_PRIVATE_KEY secret to publish to the AUR. See $DOCS."
-      - name: Push to the AUR
-        if: env.HAS_SECRET == 'true' && env.DRY_RUN != 'true'
-        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
-        with:
-          pkgname: snappy-app-bin
-          pkgbuild: target/packages/aur/snappy-app-bin/PKGBUILD
-          commit_username: Syed Zaidi
-          commit_email: 70859631+farhadzaidi@users.noreply.github.com
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: Update to ${{ needs.prepare.outputs.version }}

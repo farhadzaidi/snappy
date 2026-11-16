@@ -1,12 +1,11 @@
 # Package managers
 
-When you publish a release on GitHub, the **Publish packages** workflow (`.github/workflows/publish-packages.yml`) brings three package managers up to date:
+When you publish a release on GitHub, the **Publish packages** workflow (`.github/workflows/publish-packages.yml`) brings two package managers up to date:
 
 | Channel | For | Package | Secret |
 |---|---|---|---|
 | Homebrew | macOS | cask `snappy` in `farhadzaidi/homebrew-tap` | `HOMEBREW_TAP_TOKEN` |
 | winget | Windows | `FarhadZaidi.Snappy` in `microsoft/winget-pkgs` | `WINGET_TOKEN` |
-| AUR | Arch Linux | `snappy-app-bin` | `AUR_SSH_PRIVATE_KEY` |
 
 Each channel is a job of its own. A job whose secret isn't set still renders and checks its package, then skips publishing with a notice that names the missing secret. So you can turn the channels on one at a time, in any order.
 
@@ -20,7 +19,7 @@ Each channel is a job of its own. A job whose secret isn't set still renders and
   gh workflow run publish-packages.yml --repo farhadzaidi/snappy -f tag=v0.1.0 -f dry_run=true
   ```
 
-  A dry run renders every package, checks it, and prints it in the log, but pushes nothing. Running again with `dry_run=false` publishes, which is how you retry a channel that failed or catch one up after adding its secret. Channels that already have the version are left as they are: the tap and the AUR see nothing to change, and Komac looks for an existing pull request first.
+  A dry run renders every package, checks it, and prints it in the log, but pushes nothing. Running again with `dry_run=false` publishes, which is how you retry a channel that failed or catch one up after adding its secret. Channels that already have the version are left as they are: the tap sees nothing to change, and Komac looks for an existing pull request first.
 
 The release has to be published for the workflow to see it. To look at the packages while the release is still a draft, render them yourself.
 
@@ -39,14 +38,6 @@ That writes:
 
 - `target/packages/homebrew/Casks/snappy.rb`
 - `target/packages/winget/manifests/f/FarhadZaidi/Snappy/0.1.0/`, three manifests
-- `target/packages/aur/snappy-app-bin/PKGBUILD`
-
-To check the AUR package the way the workflow does, and write its `.SRCINFO`, run the check in an Arch container. Add `--download` once the release is published, to check the tarball's checksum too:
-
-```sh
-docker run --rm -v "$PWD:/work" -w /work archlinux:base \
-    tools/release/check-aur-package.sh target/packages/aur/snappy-app-bin
-```
 
 ## Homebrew
 
@@ -143,53 +134,9 @@ winget install FarhadZaidi.Snappy
 
 `winget upgrade FarhadZaidi.Snappy` picks up new versions.
 
-## AUR
-
-The Arch User Repository holds build scripts that Arch users build and install with `makepkg` or an AUR helper. `snappy-app-bin` installs the prebuilt release tarball rather than building from source, which is what `-bin` means. The name `snappy` was taken by Arch's compression library, so the package is named after `snappy-app`; it provides and conflicts with `snappy-app`, in case a from-source package appears.
-
-The workflow checks the PKGBUILD in an Arch container (namcap, the `.SRCINFO`, and the tarball's checksum), then pushes it with [github-actions-deploy-aur](https://github.com/KSXGitHub/github-actions-deploy-aur), pinned to a commit. That action writes the `.SRCINFO` again and commits both files.
-
-### Setup
-
-1. Make an account at [aur.archlinux.org](https://aur.archlinux.org/register).
-
-2. Make an SSH key just for publishing. It has no passphrase, because the workflow can't type one:
-
-   ```sh
-   ssh-keygen -t ed25519 -C "snappy AUR publishing" -N "" -f ~/.ssh/aur_snappy
-   ```
-
-3. On the AUR, open My Account and paste the public key, `~/.ssh/aur_snappy.pub`, into **SSH Public Key**. Save with your password.
-
-4. Save the private key as a secret of the Snappy repository:
-
-   ```sh
-   gh secret set AUR_SSH_PRIVATE_KEY --repo farhadzaidi/snappy < ~/.ssh/aur_snappy
-   ```
-
-There's nothing to create by hand: the first push makes the `snappy-app-bin` package, owned by your account. Make sure the name is still free at <https://aur.archlinux.org/packages/snappy-app-bin> before the first release.
-
-Every release ships with `pkgrel=1`. To fix the packaging without a new release, clone `ssh://aur@aur.archlinux.org/snappy-app-bin.git`, raise `pkgrel`, run `makepkg --printsrcinfo > .SRCINFO`, and push. Change `packaging/aur/PKGBUILD.template` too, so the next release keeps the fix.
-
-### Installing
-
-With an AUR helper:
-
-```sh
-yay -S snappy-app-bin
-```
-
-Or by hand:
-
-```sh
-git clone https://aur.archlinux.org/snappy-app-bin.git
-cd snappy-app-bin
-makepkg -si
-```
-
 ## When something fails
 
 - **A token or key expired.** Make a new one the same way, set the secret again, and run the workflow by hand for the release with `dry_run=false`.
-- **The cask or PKGBUILD needs a change.** Edit the template in `packaging/` and check it with a local render or a dry run. The next release carries it. To fix the current release, run the workflow by hand for the cask; for the AUR, raise `pkgrel` by hand as above.
+- **The cask needs a change.** Edit the template in `packaging/` and check it with a local render or a dry run. The next release carries it. To fix the current release, run the workflow by hand.
 - **winget's metadata needs a change.** After the first version, winget's description, tags, and the like come from the previous version in winget-pkgs, not from `packaging/winget/`. Change them in a pull request to winget-pkgs, and in `packaging/winget/` to keep the two alike.
 - **winget's pull request needs a fix.** Komac's branch is in your fork; push to it, or close the pull request and run the workflow again.
