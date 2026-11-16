@@ -51,10 +51,6 @@ impl WindowsPlatform {
         self.dispatcher
             .post(move |main| main.set_input_hooks(monitoring.drag));
     }
-
-    fn executable() -> Result<std::path::PathBuf, String> {
-        std::env::current_exe().map_err(|error| format!("Snappy couldn't find its own program: {error}"))
-    }
 }
 
 impl WindowSystem for WindowsPlatform {
@@ -271,11 +267,11 @@ impl Tray for WindowsPlatform {
 
 impl LoginItem for WindowsPlatform {
     fn is_enabled(&mut self) -> bool {
-        Self::executable().is_ok_and(|executable| login_item::is_enabled(&executable))
+        login_item::is_enabled()
     }
 
     fn set_enabled(&mut self, on: bool) -> Result<(), String> {
-        login_item::set_enabled(&Self::executable()?, on)
+        login_item::set_enabled(on)
     }
 }
 

@@ -1,5 +1,5 @@
-//! Open at login: the value `Snappy` under the current user's Run key, holding the
-//! daemon's quoted path and `--background`.
+//! Open at login without a package: the value `Snappy` under the current user's Run key,
+//! holding the daemon's quoted path and `--background`.
 
 use std::path::Path;
 
@@ -9,6 +9,7 @@ use windows::Win32::System::Registry::{
 };
 use windows::core::{PCWSTR, w};
 
+use crate::messages;
 use crate::wide::{from_wide, wide};
 
 const RUN_KEY: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Run");
@@ -76,10 +77,7 @@ pub fn set_enabled(executable: &Path, on: bool) -> Result<(), String> {
     if result == ERROR_SUCCESS {
         Ok(())
     } else {
-        Err(format!(
-            "Snappy couldn't change its startup setting (error {}).",
-            result.0
-        ))
+        Err(messages::LOGIN_ITEM_NOT_CHANGED.to_owned())
     }
 }
 

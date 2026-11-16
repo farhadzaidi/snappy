@@ -12,7 +12,7 @@ The engine is the only writer of Snappy's files. This page covers where they liv
 | State | the settings folder | `%LOCALAPPDATA%\Snappy\data\` | `~/.local/state/snappy/` |
 | Logs | `~/Library/Logs/Snappy/` | `%LOCALAPPDATA%\Snappy\data\Logs\` | `~/.local/state/snappy/logs/` |
 
-With `SNAPPY_HOME` set, the files go in that folder instead: `settings.json`, `state/`, and `logs/`. The tests use this to run the daemon against scratch settings.
+With `SNAPPY_HOME` set, the files go in that folder instead: `settings.json`, `state/`, and `logs/`. The tests use this to run the daemon against scratch settings. A Snappy installed from the Microsoft Store lays its files out the same way, in its package's `LocalState` folder ([Windows](platforms/windows.md#the-msix-package)).
 
 ## What's in them
 

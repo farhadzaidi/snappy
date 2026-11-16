@@ -25,6 +25,7 @@ mod main_state;
 mod managed;
 mod messages;
 mod overlay;
+mod package;
 mod platform;
 /// Snappy's own view of the desktop, for the tests to check against; built only for them.
 #[cfg(feature = "reference")]
@@ -36,4 +37,5 @@ mod wide;
 pub use app::{App, Stopper};
 pub use error::WindowsError;
 pub use instance::{Claim, Instance, RestartRequest, claim, request_restart};
+pub use package::{package_data_folder, started_at_login};
 pub use platform::WindowsPlatform;

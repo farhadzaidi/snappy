@@ -13,11 +13,16 @@ thiserror.workspace = true
 snappy-core = { path = "../core" }
 snappy-platform = { path = "../platform" }
 windows = { version = "0.62", features = [
+    "ApplicationModel",
+    "ApplicationModel_Activation",
+    "Storage",
+    "Storage_Search",
     "Win32_Devices_Display",
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Security",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_Console",
     "Win32_System_LibraryLoader",

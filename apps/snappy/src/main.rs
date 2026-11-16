@@ -19,7 +19,7 @@ fn main() -> ExitCode {
     if std::env::args().any(|arg| arg == launch::STOP_FOR_RESTART) {
         return stop_for_restart();
     }
-    let background = std::env::args().any(|arg| arg == launch::BACKGROUND);
+    let background = std::env::args().any(|arg| arg == launch::BACKGROUND) || started_at_login();
     let Some(paths) = paths::snappy_paths() else {
         eprintln!("snappy: no home folder");
         return ExitCode::FAILURE;
@@ -31,6 +31,18 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Whether the OS started the daemon at login without passing `--background`, as a packaged
+/// app's startup task on Windows does.
+#[cfg(windows)]
+fn started_at_login() -> bool {
+    snappy_windows::started_at_login()
+}
+
+#[cfg(not(windows))]
+fn started_at_login() -> bool {
+    false
 }
 
 /// Stop the running daemon so a new one can take over with every window where it is, the

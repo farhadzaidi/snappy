@@ -76,7 +76,17 @@ None.
 - Windows has no `SIGUSR2`, so `snappy.exe --stop-for-restart` sets another named event and waits for the daemon to exit.
 - A close request to the hidden window, the session ending, and a console's Ctrl+C or close all quit like the tray's Quit.
 - `taskkill` without `/F` can't close the daemon, since it only closes visible windows.
-- The login item is a `Run` value under the current user's registry key, holding the daemon's path and `--background`.
+- The login item is a `Run` value under the current user's registry key, holding the daemon's path and `--background`. Installed from the MSIX package, Snappy uses the package's startup task instead (below).
+
+## The MSIX package
+
+`src/package.rs`, `src/login_item/`. The Microsoft Store installs Snappy as an MSIX package ([releasing](../releasing/microsoft-store.md)). Run from it, the daemon and the app have the package's identity, which `GetCurrentPackageFullName` reveals, and three things change:
+
+- **Open at login** is the package's startup task, `SnappyStartup`, which the manifest declares off. Snappy turns it on and off through `Windows.ApplicationModel.StartupTask`, and it shows under Settings → Apps → Startup, where the user, or policy, can hold it off or on. Snappy can't override that, so the switch says where to change it. A startup task can't pass `--background`, so the daemon asks how it was activated instead, and a startup-task activation starts it quietly.
+- **Files.** Windows redirects a package's writes to `%APPDATA%` and `%LOCALAPPDATA%` into a private folder that Explorer doesn't show at those paths, so the debug log's path in Settings would lead nowhere. A packaged Snappy keeps every file in the package's own `LocalState` folder instead, laid out as with `SNAPPY_HOME`. Uninstalling removes it.
+- **Registry writes** to the current user's hive go to the package's private copy, which is why the `Run` value isn't used.
+
+The named mutex and events are the same, so a packaged and an unpackaged Snappy never run at once. The app starts from beside the daemon, inside the package's install folder, as anywhere else.
 
 ## Limitations
 
