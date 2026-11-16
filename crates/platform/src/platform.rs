@@ -35,7 +35,7 @@ pub trait Platform:
         Err("Snappy can't do that on this system.".to_owned())
     }
     /// Short notes about the desktop that affect Snappy, such as another tool that also
-    /// snaps windows. Read at start and on `NotesChanged`, and shown in the settings window.
+    /// snaps windows. Read at start and on `NotesChanged`, and shown in the app's window.
     fn notes(&mut self) -> Vec<String> {
         Vec::new()
     }

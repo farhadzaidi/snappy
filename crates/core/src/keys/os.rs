@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The operating system, for display names, defaults, and reserved shortcuts. Written
-/// `"macos"`, `"windows"`, or `"linux"`, as the daemon tells the settings app.
+/// `"macos"`, `"windows"`, or `"linux"`, as the daemon tells the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Os {
@@ -28,7 +28,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn platforms_are_written_by_the_names_the_settings_app_uses() {
+    fn platforms_are_written_by_the_names_the_app_uses() {
         for (platform, name) in [
             (Os::MacOs, "\"macos\""),
             (Os::Windows, "\"windows\""),

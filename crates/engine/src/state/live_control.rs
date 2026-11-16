@@ -38,7 +38,7 @@ impl<P: Platform> EngineState<P> {
                 let reason = self.live_control.reason().map(str::to_owned);
                 match (should_run, reason) {
                     (true, _) => self.announce("Snapping is on."),
-                    // The settings window already shows the reason where it stays.
+                    // The app's window already shows the reason where it stays.
                     (false, Some(reason)) => self.announce_quietly(&reason),
                     (false, None) => self.announce("Accessibility access is off. Snapping is paused."),
                 }

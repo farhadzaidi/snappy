@@ -14,8 +14,8 @@ How Snappy's tests are layered, what each layer covers, and how the ones that ne
 | GNOME adapter against a fake GNOME Shell | `crates/gnome/tests/fake_shell/` | Linux with `dbus-daemon` |
 | Adapter integration tests | `crates/x11/tests/x11/`, `crates/gnome/tests/gnome/`, `crates/kwin/tests/kwin/`, `crates/windows/tests/windows.rs` | the adapter's sandbox |
 | Live suite | `crates/live` | a sandbox for each desktop |
-| Settings UI unit tests | `apps/settings/ui/src/**/*.test.ts` (Vitest) | Node |
-| Settings UI end to end | `apps/settings/ui/e2e/` (Playwright) | Chromium and WebKit |
+| App unit tests | `apps/app/ui/src/**/*.test.ts` (Vitest) | Node |
+| App end to end | `apps/app/ui/e2e/` (Playwright) | Chromium and WebKit |
 
 Everything that needs nothing runs in `cargo test` on any machine, and `tools/check.sh` runs it along with formatting, lints, and the UI's checks. The rule of thumb for where a test goes: a rule is unit-tested in core; behavior across events, files, and time is an engine scenario; what an OS actually does is an adapter integration test or a live scenario.
 
@@ -30,7 +30,7 @@ Every rule in `crates/core` is tested next to its code, with no OS and no real t
 
 ### Engine scenarios
 
-`crates/engine/tests/scenarios/` drives a real `Engine` over the fake platform, end to end: platform events and settings-app commands in; window frames, overlays, outlines, registered shortcuts, files, debug log records, and status messages out. It is one test program with a module per feature (dragging, swaps, history, shortcuts, the nearest empty zone, layouts, focus, the selection, workspaces, containment, sending, restarts, desktop parking, tabs, the Snappy key, Caps Lock, live control, and settings), and `support.rs` holds what they share:
+`crates/engine/tests/scenarios/` drives a real `Engine` over the fake platform, end to end: platform events and app commands in; window frames, overlays, outlines, registered shortcuts, files, debug log records, and status messages out. It is one test program with a module per feature (dragging, swaps, history, shortcuts, the nearest empty zone, layouts, focus, the selection, workspaces, containment, sending, restarts, desktop parking, tabs, the Snappy key, Caps Lock, live control, and settings), and `support.rs` holds what they share:
 
 - Each scenario runs on a single-threaded runtime with paused time, so settle waits, the focus flash, and display settling take no real time.
 - Helpers start an engine in a known state (snapping live on the halves layout, or workspaces on with every default shortcut), and act like the user: drag, release, press a shortcut, focus a window, switch, send.
@@ -65,9 +65,9 @@ A scenario that can't apply to a desktop skips with the reason, which counts as 
 
 Posted input doesn't pass every point a real keyboard's does. On macOS it joins the event stream after the HID remap and after the window server drops Control-Option-Command-Delete, so the Caps Lock scenario presses F18 there, and a passing scenario doesn't prove a chord reaches apps ([platforms.md](platforms.md#macos)).
 
-### Settings UI
+### The app
 
-Unit tests run in Node with the WebAssembly core loaded from disk, so the UI's logic is tested against the real rules. End-to-end tests run the UI in headless Chromium and WebKit against the fake daemon, which applies commands with the same core rules: a test picks the platform, then checks what the UI sent or changes the daemon's state. Every spec runs in both browsers because the settings window is WebKit on macOS and Linux and WebView2, which is Chromium, on Windows. WebKit differs in ways the tests account for: it doesn't focus a clicked button, it moves the mouse only by whole pixels, and Backspace outside a text field goes back a page.
+Unit tests run in Node with the WebAssembly core loaded from disk, so the UI's logic is tested against the real rules. End-to-end tests run the UI in headless Chromium and WebKit against the fake daemon, which applies commands with the same core rules: a test picks the platform, then checks what the UI sent or changes the daemon's state. Every spec runs in both browsers because the app is WebKit on macOS and Linux and WebView2, which is Chromium, on Windows. WebKit differs in ways the tests account for: it doesn't focus a clicked button, it moves the mouse only by whole pixels, and Backspace outside a text field goes back a page.
 
 ## Sandboxes
 

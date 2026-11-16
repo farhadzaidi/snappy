@@ -1,5 +1,5 @@
 //! The engine: the single owner of Snappy's runtime state. It turns platform events and
-//! settings-app commands into decisions and window operations.
+//! app commands into decisions and window operations.
 //!
 //! The engine runs on one thread inside a Tokio `LocalSet`. Window operations are tasks on
 //! that set and run one at a time; a new operation cancels the one in flight.

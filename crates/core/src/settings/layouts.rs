@@ -54,7 +54,7 @@ pub enum LayoutShortcut {
 }
 
 impl LayoutShortcut {
-    /// The name the settings app and conflict messages use for the layout named `layout`.
+    /// The name the app and conflict messages use for the layout named `layout`.
     pub fn title(self, layout: &str) -> String {
         match self {
             LayoutShortcut::Select => format!("Select {layout}"),

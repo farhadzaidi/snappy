@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use snappy_core::error::WindowError;
 use snappy_core::workspace::Session;
-use snappy_ipc::ToSettings;
+use snappy_ipc::ToApp;
 use snappy_platform::{Platform, WindowId, WindowInfo};
 
 use crate::diagnostics::{PhaseClock, SwitchTiming};
@@ -24,8 +24,8 @@ use super::recovery::save_membership;
 pub(crate) enum SwitchFocus {
     /// The window taken along or used last on the workspace, or Snappy when there is none.
     Workspace,
-    /// The settings window, which the switch was made to reveal.
-    Settings,
+    /// The app's window, which the switch was made to reveal.
+    App,
 }
 
 /// A switch asked for while displays were changing, to run once they settle.
@@ -130,8 +130,8 @@ fn switch_now<P: Platform>(core: &mut EngineState<P>, target: &str, focus: Switc
 
     match result {
         Ok(focused_any) => {
-            if focus == SwitchFocus::Settings {
-                core.send_to_settings(ToSettings::Focus);
+            if focus == SwitchFocus::App {
+                core.send_to_app(ToApp::Focus);
             } else if !focused_any {
                 core.platform.activate_self();
             }

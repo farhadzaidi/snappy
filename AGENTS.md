@@ -23,7 +23,7 @@ Snappy moves other apps' windows, registers global shortcuts, and changes keyboa
 - `crates/engine` owns all runtime state and is the only writer of settings, state, and log files. Every window move goes through its window-operation queue.
 - Adapters (`crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome`, `crates/kwin`) translate between the engine and the OS. They make no policy decisions: if an adapter is choosing between behaviors, that choice belongs in core or the engine. What more than one Linux adapter needs goes in `crates/linux`. A new capability every adapter must provide is a trait in `crates/platform`, implemented by each adapter and by `crates/fake`.
 - The GNOME extension (`apps/gnome-extension`) and the KWin script (`apps/kwin-script`) stay thin: they carry out requests and report events.
-- The settings UI computes no rules itself; it asks core through `crates/wasm`.
+- The app computes no rules itself; it asks core through `crates/wasm`.
 - Shipped code has no test-only branches. Tests use `crates/fake` or their own fakes; read-only helpers for tests live in each adapter's `reference` module, built only with its `reference` feature.
 - No blocking OS call on a UI thread, and nothing polls or wakes up while Snappy is idle. Keyboard events are observed only during a drag or a window operation, and, with Caps Lock as the Snappy key, Caps Lock itself.
 
@@ -77,6 +77,6 @@ Ask the owner before adding a dependency. Prefer the standard library and what t
 
 ## Before committing
 
-- `tools/check.sh` and `pnpm -C apps/settings/ui e2e` pass. A change to an adapter is also linted for its OS (`tools/cross-check.sh`) and run in its sandbox ([CONTRIBUTING.md](CONTRIBUTING.md#testing)).
+- `tools/check.sh` and `pnpm -C apps/app/ui e2e` pass. A change to an adapter is also linted for its OS (`tools/cross-check.sh`) and run in its sandbox ([CONTRIBUTING.md](CONTRIBUTING.md#testing)).
 - One logical change per commit, with a message that says what changed and why. No co-author or attribution lines.
 - The repository is `github.com/farhadzaidi/snappy`. Commit locally; push, tag, or release only when the owner asks. Never rewrite pushed history.

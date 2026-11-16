@@ -1,4 +1,4 @@
-//! The zone overlay: prepared scenes, showing and hiding it, and the settings app's preview.
+//! The zone overlay: prepared scenes, showing and hiding it, and the app's preview.
 
 use snappy_core::layout::Layout;
 use snappy_platform::{Caption, Display, OverlayScene, OverlayZone, Platform};

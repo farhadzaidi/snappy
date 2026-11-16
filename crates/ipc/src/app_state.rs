@@ -1,4 +1,4 @@
-//! What the settings app shows: the settings and the daemon's state.
+//! What the app shows: the settings and the daemon's state.
 
 use std::collections::BTreeMap;
 
@@ -7,7 +7,7 @@ use snappy_core::keys::Os;
 use snappy_core::settings::Settings;
 use snappy_platform::{Display, Remedy};
 
-/// What the settings app renders.
+/// What the app renders.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppState {

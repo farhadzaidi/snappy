@@ -45,7 +45,7 @@ impl WorkspaceStep {
         WorkspaceStep::SendNext,
     ];
 
-    /// The name the settings app and conflict messages use.
+    /// The name the app and conflict messages use.
     pub fn title(self) -> &'static str {
         match self {
             WorkspaceStep::Previous => "Previous workspace",
@@ -158,7 +158,7 @@ impl WorkspaceShortcut {
         WorkspaceShortcut::SendAndSwitch,
     ];
 
-    /// The name the settings app and conflict messages use for the workspace named
+    /// The name the app and conflict messages use for the workspace named
     /// `workspace`.
     pub fn title(self, workspace: &str) -> String {
         match self {

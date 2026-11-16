@@ -3,9 +3,9 @@ node_modules/
 dist/
 .DS_Store
 *.log
-/apps/settings/src-tauri/target/
-/apps/settings/src-tauri/gen/
-/apps/settings/ui/src/wasm/
-/apps/settings/ui/test-results/
-/apps/settings/ui/playwright-report/
+/apps/app/src-tauri/target/
+/apps/app/src-tauri/gen/
+/apps/app/ui/src/wasm/
+/apps/app/ui/test-results/
+/apps/app/ui/playwright-report/
 .claude/

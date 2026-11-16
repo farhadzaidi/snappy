@@ -7,10 +7,10 @@ use snappy_engine::{Engine, Input, Paths};
 use snappy_platform::{Platform, PlatformEvent, launch};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::settings_app::SettingsApp;
+use crate::app_process::AppProcess;
 
-/// Start the engine on a thread of its own, fed by the adapter's `events`. `open_settings`
-/// opens the settings window at launch.
+/// Start the engine on a thread of its own, fed by the adapter's `events`. `open_app`
+/// opens the app's window at launch.
 ///
 /// `stop_adapter` ends the adapter's loop once the engine is done, however it ends. After a
 /// panic no engine is left to put anything back, so the daemon exits and its next start picks
@@ -20,7 +20,7 @@ pub fn spawn_engine<P: Platform + Send + 'static>(
     platform: P,
     paths: Paths,
     events: Receiver<PlatformEvent>,
-    open_settings: bool,
+    open_app: bool,
     stop_adapter: impl FnOnce() + Send + 'static,
 ) -> std::io::Result<JoinHandle<std::io::Result<()>>> {
     let (inputs, incoming) = tokio::sync::mpsc::unbounded_channel();
@@ -29,7 +29,7 @@ pub fn spawn_engine<P: Platform + Send + 'static>(
         .name("snappy-engine".into())
         .spawn(move || {
             let _stop_adapter = OnDrop::new(stop_adapter);
-            run_engine(platform, paths, inputs, incoming, open_settings)
+            run_engine(platform, paths, inputs, incoming, open_app)
         })
 }
 
@@ -63,21 +63,21 @@ fn run_engine<P: Platform + 'static>(
     paths: Paths,
     inputs: UnboundedSender<Input>,
     mut incoming: UnboundedReceiver<Input>,
-    open_settings: bool,
+    open_app: bool,
 ) -> std::io::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async move {
-        let mut settings_app = SettingsApp::new(inputs.clone());
+        let mut app_process = AppProcess::new(inputs.clone());
         let engine = Engine::new(platform, paths);
         if std::env::var_os(launch::DEBUG_ENV).is_some_and(|value| value == "1") {
             engine.force_debug_log();
         }
         engine.start();
-        if open_settings {
-            let _ = inputs.send(Input::Platform(PlatformEvent::OpenSettingsRequested));
+        if open_app {
+            let _ = inputs.send(Input::Platform(PlatformEvent::OpenAppRequested));
         }
 
         let outbox_ready = engine.outbox_ready();
@@ -92,20 +92,20 @@ fn run_engine<P: Platform + 'static>(
                 () = outbox_ready.notified() => None,
             };
             let Some(input) = input else {
-                settings_app.send(engine.take_outbox());
+                app_process.send(engine.take_outbox());
                 continue;
             };
             let quit = matches!(
                 input,
                 Input::Platform(PlatformEvent::QuitRequested | PlatformEvent::RestartRequested)
             );
-            if input == Input::Platform(PlatformEvent::OpenSettingsRequested)
-                && let Err(error) = settings_app.open()
+            if input == Input::Platform(PlatformEvent::OpenAppRequested)
+                && let Err(error) = app_process.open()
             {
-                eprintln!("snappy: couldn't open settings: {error}");
+                eprintln!("snappy: couldn't open the app: {error}");
             }
             engine.handle(input);
-            settings_app.send(engine.take_outbox());
+            app_process.send(engine.take_outbox());
             if quit {
                 engine.idle().await;
                 break;

@@ -7,7 +7,7 @@ use snappy_core::geometry::Rect;
 use snappy_core::keys::{KeyChord, Modifier};
 use snappy_engine::{Engine, Input, file_names};
 use snappy_fake::{FakePlatform, FakeWindow, OverlayCall};
-use snappy_ipc::{Command, ToSettings};
+use snappy_ipc::{Command, ToApp};
 use snappy_platform::{LiveControl, PlatformEvent, WindowId};
 
 use crate::support::{
@@ -15,15 +15,15 @@ use crate::support::{
     enable_workspaces, event, focus, frame_of, frozen, hotkey_id, is_parked, live_engine, on_parking_desktop,
     paths_kept, place, press_default, remembered_workspaces, saved_windows, scenario, send_to, settle,
     side_display, snappy, status_text, switch_to, two_zoned_windows, window_counts,
-    window_one_on_the_parking_desktop, with_settings_window, with_window, writes_to,
+    window_one_on_the_parking_desktop, with_app_window, with_window, writes_to,
 };
 
 #[test]
-fn the_settings_window_parks_like_any_window() {
+fn the_app_window_parks_like_any_window() {
     scenario(|| async {
-        let (fake, settings_frame) = with_settings_window();
+        let (fake, app_frame) = with_app_window();
         let engine = live_engine("settings-parks", fake);
-        engine.handle(Input::SettingsAppStarted { pid: 4242 });
+        engine.handle(Input::AppStarted { pid: 4242 });
         enable_workspaces(&engine);
 
         let switch_two = hotkey_id(&engine, &KeyChord::new("Digit2", [Modifier::Ctrl]));
@@ -37,27 +37,27 @@ fn the_settings_window_parks_like_any_window() {
         let switch_one = hotkey_id(&engine, &KeyChord::new("Digit1", [Modifier::Ctrl]));
         event(&engine, PlatformEvent::HotKey(switch_one));
         settle(&engine).await;
-        assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(9))), settings_frame);
+        assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(9))), app_frame);
     });
 }
 
 #[test]
 fn opening_settings_switches_to_its_workspace_then_focuses_it() {
     scenario(|| async {
-        let (fake, settings_frame) = with_settings_window();
+        let (fake, app_frame) = with_app_window();
         let engine = live_engine("settings-reveal", fake);
-        engine.handle(Input::SettingsAppStarted { pid: 4242 });
+        engine.handle(Input::AppStarted { pid: 4242 });
         enable_workspaces(&engine);
         let switch_two = hotkey_id(&engine, &KeyChord::new("Digit2", [Modifier::Ctrl]));
         event(&engine, PlatformEvent::HotKey(switch_two));
         settle(&engine).await;
         engine.take_outbox();
 
-        event(&engine, PlatformEvent::OpenSettingsRequested);
+        event(&engine, PlatformEvent::OpenAppRequested);
         settle(&engine).await;
         assert_eq!(engine.settings().workspaces.active_id, "workspace-1");
-        assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(9))), settings_frame);
-        assert!(engine.take_outbox().contains(&ToSettings::Focus));
+        assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(9))), app_frame);
+        assert!(engine.take_outbox().contains(&ToApp::Focus));
     });
 }
 

@@ -70,7 +70,7 @@ fn the_extensions_events_arrive_in_order_as_engine_events() {
         PlatformEvent::AppTerminated { pid: 200 },
         PlatformEvent::NativeDesktopChanged,
         PlatformEvent::DisplaysChanged,
-        PlatformEvent::OpenSettingsRequested,
+        PlatformEvent::OpenAppRequested,
     ];
     let seen: Vec<PlatformEvent> = (0..expected.len()).map(|_| adapter.next()).collect();
     assert_eq!(seen, expected);
@@ -97,5 +97,5 @@ fn a_choice_from_a_replaced_menu_is_ignored() {
         "the old menu's choice does nothing"
     );
     fake.emit(json!({"type": "menu", "item": 0, "generation": second}));
-    assert_eq!(adapter.settle(fake), vec![PlatformEvent::OpenSettingsRequested]);
+    assert_eq!(adapter.settle(fake), vec![PlatformEvent::OpenAppRequested]);
 }

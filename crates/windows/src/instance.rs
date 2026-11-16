@@ -1,6 +1,6 @@
 //! One daemon per session: the first launch holds the named mutex
 //! `Local\Snappy.Daemon`; a second launch signals the named event
-//! `Local\Snappy.OpenSettings`, which carries no other command, and exits. Setting the
+//! `Local\Snappy.OpenApp`, which carries no other command, and exits. Setting the
 //! named event `Local\Snappy.Restart`, as `snappy --stop-for-restart` does, stops the
 //! daemon for a restart: windows stay where they are, and the next launch puts them back
 //! in their workspaces.
@@ -22,19 +22,19 @@ use windows::core::{PCWSTR, w};
 use crate::handle::OwnedHandle;
 
 const DAEMON_MUTEX: PCWSTR = w!(r"Local\Snappy.Daemon");
-const OPEN_SETTINGS_EVENT: PCWSTR = w!(r"Local\Snappy.OpenSettings");
+const OPEN_APP_EVENT: PCWSTR = w!(r"Local\Snappy.OpenApp");
 const RESTART_EVENT: PCWSTR = w!(r"Local\Snappy.Restart");
 
 pub enum Claim {
     Primary(Instance),
-    /// Another daemon runs and has been asked to open the settings window.
+    /// Another daemon runs and has been asked to open the app's window.
     Secondary,
 }
 
 /// The running daemon's claim. Dropping it stops listening and releases the mutex.
 pub struct Instance {
     _mutex: OwnedHandle,
-    open_settings: OwnedHandle,
+    open_app: OwnedHandle,
     restart: OwnedHandle,
     stop: OwnedHandle,
     listener: Option<JoinHandle<()>>,
@@ -49,19 +49,19 @@ pub fn claim() -> std::io::Result<Claim> {
     let mutex = OwnedHandle(unsafe { CreateMutexW(None, true, DAEMON_MUTEX) }.map_err(io_error)?);
     // SAFETY: reads the status of the call just made.
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        set_named_event(OPEN_SETTINGS_EVENT);
+        set_named_event(OPEN_APP_EVENT);
         return Ok(Claim::Secondary);
     }
     // SAFETY: creates the auto-reset event a second launch signals.
-    let open_settings =
-        OwnedHandle(unsafe { CreateEventW(None, false, false, OPEN_SETTINGS_EVENT) }.map_err(io_error)?);
+    let open_app =
+        OwnedHandle(unsafe { CreateEventW(None, false, false, OPEN_APP_EVENT) }.map_err(io_error)?);
     // SAFETY: creates the auto-reset event a restart request signals.
     let restart = OwnedHandle(unsafe { CreateEventW(None, false, false, RESTART_EVENT) }.map_err(io_error)?);
     // SAFETY: an unnamed manual-reset event that stops the listener.
     let stop = OwnedHandle(unsafe { CreateEventW(None, true, false, PCWSTR::null()) }.map_err(io_error)?);
     Ok(Claim::Primary(Instance {
         _mutex: mutex,
-        open_settings,
+        open_app,
         restart,
         stop,
         listener: None,
@@ -116,12 +116,12 @@ pub fn request_restart(wait: Duration) -> RestartRequest {
 }
 
 impl Instance {
-    /// Reports second launches to `events` as `OpenSettingsRequested`, and restart requests
+    /// Reports second launches to `events` as `OpenAppRequested`, and restart requests
     /// as `RestartRequested`. The listener thread sleeps in the kernel until one arrives, so
     /// it never wakes while idle.
     pub fn publish(&mut self, events: Sender<PlatformEvent>) -> std::io::Result<()> {
         let handles = [
-            self.open_settings.0.0 as isize,
+            self.open_app.0.0 as isize,
             self.restart.0.0 as isize,
             self.stop.0.0 as isize,
         ];
@@ -148,7 +148,7 @@ impl Instance {
 /// The event a wake of the listener stands for, in the order of its handles; `None` stops it.
 fn woken_event(woke: WAIT_EVENT) -> Option<PlatformEvent> {
     match woke.0.checked_sub(WAIT_OBJECT_0.0) {
-        Some(0) => Some(PlatformEvent::OpenSettingsRequested),
+        Some(0) => Some(PlatformEvent::OpenAppRequested),
         Some(1) => Some(PlatformEvent::RestartRequested),
         _ => None,
     }
@@ -170,10 +170,7 @@ mod tests {
 
     #[test]
     fn the_listener_reports_second_launches_and_restart_requests_and_stops_otherwise() {
-        assert_eq!(
-            woken_event(WAIT_OBJECT_0),
-            Some(PlatformEvent::OpenSettingsRequested)
-        );
+        assert_eq!(woken_event(WAIT_OBJECT_0), Some(PlatformEvent::OpenAppRequested));
         assert_eq!(
             woken_event(WAIT_EVENT(WAIT_OBJECT_0.0 + 1)),
             Some(PlatformEvent::RestartRequested)

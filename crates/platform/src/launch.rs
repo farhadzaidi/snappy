@@ -1,7 +1,7 @@
 //! How the daemon is started: its command-line flags, and the environment it reads. Login
-//! items, the settings app, and the test harnesses start it with these.
+//! items, the app, and the test harnesses start it with these.
 
-/// Start without opening the settings window, as at login.
+/// Start without opening the app's window, as at login.
 pub const BACKGROUND: &str = "--background";
 /// Stop the running daemon the way installing a new build does, leaving every window where
 /// it is, and wait for it to exit.

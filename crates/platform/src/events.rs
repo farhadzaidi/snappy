@@ -72,7 +72,7 @@ pub enum PlatformEvent {
     NotesChanged,
     WillSleep,
     /// A second launch, a reopen, or the menu's "Open Snappy…".
-    OpenSettingsRequested,
+    OpenAppRequested,
     Tray(TrayCommand),
     /// The menu's Quit, a termination signal, or the session ending: parked windows come
     /// back before the daemon exits.

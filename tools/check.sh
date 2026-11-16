@@ -15,6 +15,6 @@ done
 for file in apps/kwin-script/*.js; do
     sed 's/^\.\(import\|pragma\) .*//' "$file" | node --check || { echo "in $file" >&2; exit 1; }
 done
-if [[ -f apps/settings/ui/package.json ]]; then
-    pnpm -C apps/settings/ui check
+if [[ -f apps/app/ui/package.json ]]; then
+    pnpm -C apps/app/ui check
 fi

@@ -17,13 +17,13 @@ env:
   WASM_BINDGEN_VERSION: 0.2.130
 
 jobs:
-  # Formatting, lints, every Rust test that runs without a desktop, the settings UI's checks,
+  # Formatting, lints, every Rust test that runs without a desktop, the app's checks,
   # and its end-to-end tests in Chromium and WebKit.
   linux:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: System libraries for the settings app
+      - name: System libraries for the app
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -38,18 +38,18 @@ jobs:
         run: cargo install --locked wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
       - uses: pnpm/action-setup@v4
         with:
-          package_json_file: apps/settings/ui/package.json
+          package_json_file: apps/app/ui/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/settings/ui/pnpm-lock.yaml
-      - run: pnpm -C apps/settings/ui install --frozen-lockfile
+          cache-dependency-path: apps/app/ui/pnpm-lock.yaml
+      - run: pnpm -C apps/app/ui install --frozen-lockfile
       - run: tools/check.sh
-      - name: Settings UI end to end
+      - name: App end to end
         run: |
-          pnpm -C apps/settings/ui exec playwright install --with-deps chromium webkit
-          pnpm -C apps/settings/ui e2e
+          pnpm -C apps/app/ui exec playwright install --with-deps chromium webkit
+          pnpm -C apps/app/ui e2e
 
   # The macOS and Windows adapters compile only on their own systems. Their integration
   # tests drive a real desktop, so here they are linted and unit-tested.

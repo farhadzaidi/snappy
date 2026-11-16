@@ -6,7 +6,7 @@ use super::ShortcutId;
 use crate::placement::navigate::Direction;
 use crate::settings::{HistoryStep, NavigationShortcut, WorkspaceStep};
 
-/// The settings app's sections of global shortcuts, each reset on its own.
+/// The app's sections of global shortcuts, each reset on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ShortcutSection {
@@ -19,7 +19,7 @@ pub enum ShortcutSection {
 }
 
 impl ShortcutSection {
-    /// Every section, in the order the settings app shows them.
+    /// Every section, in the order the app shows them.
     pub const ALL: [ShortcutSection; 4] = [
         ShortcutSection::MoveBetweenZones,
         ShortcutSection::FocusAndSelection,
@@ -27,7 +27,7 @@ impl ShortcutSection {
         ShortcutSection::WindowHistory,
     ];
 
-    /// The section's name, as the settings app titles it.
+    /// The section's name, as the app titles it.
     pub fn title(self) -> &'static str {
         match self {
             ShortcutSection::MoveBetweenZones => "Move between zones",
@@ -37,7 +37,7 @@ impl ShortcutSection {
         }
     }
 
-    /// The section's shortcuts, in the order the settings app lists them.
+    /// The section's shortcuts, in the order the app lists them.
     pub fn shortcuts(self) -> Vec<ShortcutId> {
         let navigation = |shortcuts: &[NavigationShortcut]| shortcuts.iter().map(|&s| s.into()).collect();
         match self {

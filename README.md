@@ -1,6 +1,6 @@
 # Snappy
 
-Snappy arranges your windows into zones. Pick a layout for each display, then drag a window with a key held, or press a shortcut, and it snaps into place. It runs quietly in the background on macOS, Windows, and Linux, with a menu bar or tray icon and a settings window you open when you need it.
+Snappy arranges your windows into zones. Pick a layout for each display, then drag a window with a key held, or press a shortcut, and it snaps into place. It runs quietly in the background on macOS, Windows, and Linux, with a menu bar or tray icon and a window you open when you need it.
 
 Snappy never uses the network, and never reads window titles, window contents, or what you type.
 
@@ -41,7 +41,7 @@ Other Wayland desktops aren't supported yet.
 
 ## Install
 
-There are no prebuilt releases yet, so Snappy is built from source. You need [Rust](https://rustup.rs), [Node.js](https://nodejs.org) with pnpm 9, and the WebAssembly tools for the settings window:
+There are no prebuilt releases yet, so Snappy is built from source. You need [Rust](https://rustup.rs), [Node.js](https://nodejs.org) with pnpm 9, and the WebAssembly tools for its window:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -50,7 +50,7 @@ npm install -g pnpm@9
 
 git clone https://github.com/farhadzaidi/snappy.git
 cd snappy
-pnpm -C apps/settings/ui install
+pnpm -C apps/app/ui install
 ```
 
 ### macOS
@@ -66,7 +66,7 @@ Allow Snappy in System Settings → Privacy & Security → Accessibility when it
 
 ### Linux
 
-First install the settings window's libraries. On Debian or Ubuntu:
+First install the libraries Snappy's window needs. On Debian or Ubuntu:
 
 ```sh
 sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev
@@ -75,9 +75,9 @@ sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev l
 On other distributions, install the equivalents listed in the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux). Then:
 
 ```sh
-pnpm -C apps/settings/ui build
-cargo build --release -p snappy -p snappy-settings
-install -Dm755 target/release/snappy target/release/snappy-settings -t ~/.local/bin/
+pnpm -C apps/app/ui build
+cargo build --release -p snappy -p snappy-app
+install -Dm755 target/release/snappy target/release/snappy-app -t ~/.local/bin/
 ~/.local/bin/snappy
 ```
 
@@ -89,11 +89,11 @@ install -Dm755 target/release/snappy target/release/snappy-settings -t ~/.local/
 Install the Visual Studio Build Tools with the "Desktop development with C++" workload. Then, in PowerShell:
 
 ```powershell
-pnpm -C apps/settings/ui build
-cargo build --release -p snappy -p snappy-settings
+pnpm -C apps/app/ui build
+cargo build --release -p snappy -p snappy-app
 $dest = "$env:LOCALAPPDATA\Programs\Snappy"
 New-Item -ItemType Directory -Force $dest | Out-Null
-Copy-Item target\release\snappy.exe, target\release\snappy-settings.exe $dest
+Copy-Item target\release\snappy.exe, target\release\snappy-app.exe $dest
 & "$dest\snappy.exe"
 ```
 

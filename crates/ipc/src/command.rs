@@ -1,4 +1,4 @@
-//! What the settings app asks the daemon to do.
+//! What the app asks the daemon to do.
 
 use serde::{Deserialize, Serialize};
 use snappy_core::keys::{KeyChord, Mods};

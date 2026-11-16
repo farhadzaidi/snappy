@@ -9,7 +9,7 @@ use snappy_platform::{PlatformEvent, WindowId};
 use crate::support::{
     FLOATING, LEFT_ZONE, active, default_workspaces, enable_workspaces, event, focus, focused, four_windows,
     frame_of, hotkey_id, is_parked, live_engine, place, press_default, scenario, send_to, settle,
-    two_zoned_windows, window_counts, with_settings_window, with_window, writes_to,
+    two_zoned_windows, window_counts, with_app_window, with_window, writes_to,
 };
 
 #[test]
@@ -76,19 +76,16 @@ fn sending_the_last_window_away_leaves_focus_alone() {
 #[test]
 fn send_moves_the_focused_window_only_from_the_active_workspace() {
     scenario(|| async {
-        let (mut fake, settings_frame) = with_settings_window();
+        let (mut fake, app_frame) = with_app_window();
         fake.open(1, FakeWindow::new("com.example.editor", 100, FLOATING));
         fake.focused = Some(WindowId(9));
         let engine = live_engine("send-focused", fake);
-        engine.handle(Input::SettingsAppStarted { pid: 4242 });
+        engine.handle(Input::AppStarted { pid: 4242 });
         enable_workspaces(&engine);
 
         event(&engine, PlatformEvent::HotKey(send_to(&engine, 2)));
         settle(&engine).await;
-        assert!(
-            is_parked(&engine, 9),
-            "the settings window is sent like any other"
-        );
+        assert!(is_parked(&engine, 9), "the app's window is sent like any other");
         assert!(!is_parked(&engine, 1));
         assert_eq!(
             engine.with_platform(|p| p.focused),
@@ -96,7 +93,7 @@ fn send_moves_the_focused_window_only_from_the_active_workspace() {
             "focus stays on this workspace"
         );
 
-        place(&engine, 9, settings_frame);
+        place(&engine, 9, app_frame);
         engine.with_platform(|p| p.focused = Some(WindowId(9)));
         let written = writes_to(&engine, 9);
         event(&engine, PlatformEvent::HotKey(send_to(&engine, 3)));

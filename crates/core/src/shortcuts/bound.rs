@@ -17,7 +17,7 @@ pub struct Bound {
     pub chord: KeyChord,
 }
 
-/// A shortcut a message names: which one it is, for the settings app to find it by, and its
+/// A shortcut a message names: which one it is, for the app to find it by, and its
 /// title, as the message writes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NamedShortcut {

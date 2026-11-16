@@ -93,7 +93,7 @@ pub fn choose(tag: isize) {
         tray.as_ref()?.actions.get(index).cloned()
     });
     let event = match action {
-        Some(MenuAction::OpenSettings) => PlatformEvent::OpenSettingsRequested,
+        Some(MenuAction::OpenApp) => PlatformEvent::OpenAppRequested,
         Some(MenuAction::Quit) => PlatformEvent::QuitRequested,
         Some(MenuAction::Tray(command)) => PlatformEvent::Tray(command),
         None => return,

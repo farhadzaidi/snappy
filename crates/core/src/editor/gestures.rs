@@ -1,4 +1,4 @@
-//! Canvas gestures composed from the editor operations, so the settings app never computes
+//! Canvas gestures composed from the editor operations, so the app never computes
 //! zone geometry itself. Positions and tolerances are canvas fractions.
 
 use super::{

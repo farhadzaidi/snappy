@@ -20,10 +20,10 @@ define_class!(
     unsafe impl NSObjectProtocol for Delegate {}
 
     unsafe impl NSApplicationDelegate for Delegate {
-        /// Opening Snappy.app while it runs opens the settings window.
+        /// Opening Snappy.app while it runs opens the app's window.
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn should_handle_reopen(&self, _app: &NSApplication, _visible: bool) -> bool {
-            emit(PlatformEvent::OpenSettingsRequested);
+            emit(PlatformEvent::OpenAppRequested);
             false
         }
     }

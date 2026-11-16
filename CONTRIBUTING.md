@@ -11,16 +11,16 @@ You need:
 | Tool | For |
 |---|---|
 | [Rust](https://rustup.rs), stable | everything |
-| The `wasm32-unknown-unknown` target and `wasm-bindgen-cli` 0.2.130 | the settings window's WebAssembly core |
-| Node.js 22 and pnpm 9 | the settings window's UI |
-| On Linux, WebKitGTK and GTK development packages | the settings window ([Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux)) |
+| The `wasm32-unknown-unknown` target and `wasm-bindgen-cli` 0.2.130 | the app's WebAssembly core |
+| Node.js 22 and pnpm 9 | the app's UI |
+| On Linux, WebKitGTK and GTK development packages | the app ([Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux)) |
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.130
 npm install -g pnpm@9
-pnpm -C apps/settings/ui install
-pnpm -C apps/settings/ui exec playwright install chromium webkit   # for the UI's end-to-end tests
+pnpm -C apps/app/ui install
+pnpm -C apps/app/ui exec playwright install chromium webkit   # for the UI's end-to-end tests
 ```
 
 Optional, depending on what you work on:
@@ -43,9 +43,9 @@ Optional, depending on what you work on:
 | `crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome`, `crates/kwin` | One adapter per desktop. `crates/linux` holds what the Linux ones share. |
 | `apps/gnome-extension`, `apps/kwin-script` | The parts that run inside GNOME Shell and KWin on Wayland. |
 | `apps/snappy` | The daemon: the program that runs in the background. |
-| `apps/settings` | The settings window: a Tauri shell (`src-tauri`) around a React UI (`ui`). |
-| `crates/ipc` | Messages between the daemon and the settings window. |
-| `crates/wasm` | Core's rules compiled to WebAssembly for the settings UI. |
+| `apps/app` | The app: a Tauri shell (`src-tauri`) around a React UI (`ui`). |
+| `crates/ipc` | Messages between the daemon and the app. |
+| `crates/wasm` | Core's rules compiled to WebAssembly for the app. |
 | `crates/fake`, `crates/live` | Test support: an in-memory desktop, and the live test runner and fixture app. |
 | `tools`, `packaging` | Scripts for checks, bundling, and the test sandboxes; files that ship inside the macOS app. |
 | `assets` | The app icon and its sources. |
@@ -53,8 +53,8 @@ Optional, depending on what you work on:
 ## Building
 
 ```sh
-pnpm -C apps/settings/ui build        # the WebAssembly core, then the UI
-cargo build -p snappy -p snappy-settings
+pnpm -C apps/app/ui build   # the WebAssembly core, then the UI
+cargo build -p snappy -p snappy-app
 ```
 
 On macOS, `tools/macos/bundle.sh` builds and signs `dist/Snappy.app`. macOS ties the Accessibility grant to the app's signature, so run `tools/macos/signing-identity.sh` once first: it creates a local signing identity that every build reuses, so the grant survives rebuilds. Without it, builds are signed ad hoc and macOS asks for Accessibility again each time.
@@ -65,7 +65,7 @@ For Windows from another system, `cargo xwin build --release --target aarch64-pc
 
 Snappy moves other apps' windows, registers global shortcuts, and can change keyboard settings, so **don't run a development build of the daemon on the desktop you're working at.** A broken build does all of that badly, and on GNOME or KDE it can replace the extension or script your installed copy uses. Instead:
 
-- **Work on the settings UI in a browser.** `pnpm -C apps/settings/ui dev` serves it at http://localhost:5179 against a fake, in-memory daemon. Add `?platform=windows` or `?platform=linux` to see another platform's controls. In the browser console, `window.snappyFake` is the fake daemon.
+- **Work on the app in a browser.** `pnpm -C apps/app/ui dev` serves it at http://localhost:5179 against a fake, in-memory daemon. Add `?platform=windows` or `?platform=linux` to see another platform's controls. In the browser console, `window.snappyFake` is the fake daemon.
 - **Run the daemon in a sandbox** ([Testing](#testing)): containers for X11 and GNOME, a sealed-off KWin for KDE, VMs for macOS and Windows. Each can also run any command you give it in its session.
 
 Installing a build to use day to day is fine; that's what it's for.
@@ -89,8 +89,8 @@ open -g /Applications/Snappy.app --args --background
 Before sending a change:
 
 ```sh
-tools/check.sh                    # formatting, lints, every Rust test, and the settings UI's checks
-pnpm -C apps/settings/ui e2e      # the settings UI end to end, in Chromium and WebKit
+tools/check.sh                    # formatting, lints, every Rust test, and the app's checks
+pnpm -C apps/app/ui e2e           # the app end to end, in Chromium and WebKit
 ```
 
 If you changed an adapter, also lint it for its own system and run it in its sandbox:
@@ -130,6 +130,6 @@ Results land in `target/live/<desktop>/`. [docs/testing.md](docs/testing.md) exp
 
 Releases are made by the maintainer from `main`, once CI passes:
 
-1. Set the new version in `[workspace.package]` in `Cargo.toml`, the macOS property lists in `packaging/macos`, the GNOME extension's `metadata.json`, and the settings UI's `package.json`. Tests check they all match.
+1. Set the new version in `[workspace.package]` in `Cargo.toml`, the macOS property lists in `packaging/macos`, the GNOME extension's `metadata.json`, and the app's `package.json`. Tests check they all match.
 2. Commit, tag the commit `v<version>`, and push the tag.
 3. Publish a GitHub release for the tag, with notes on what changed since the last one.

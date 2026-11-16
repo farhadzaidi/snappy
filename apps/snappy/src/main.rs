@@ -1,10 +1,10 @@
-//! The Snappy daemon: menu bar presence, window management, and the settings app's host.
+//! The Snappy daemon: menu bar presence, window management, and the app's host.
 // No console window on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod app_process;
 mod paths;
 mod runtime;
-mod settings_app;
 
 use std::process::ExitCode;
 
@@ -61,7 +61,7 @@ mod platform {
 
     /// AppKit owns the main thread; the engine runs on its own. A second launch exits;
     /// opening the app bundle reaches the running daemon as a reopen event.
-    pub fn run(paths: Paths, open_settings: bool) -> std::io::Result<()> {
+    pub fn run(paths: Paths, open_app: bool) -> std::io::Result<()> {
         let Claim::Primary(_instance) = snappy_macos::claim(&paths.state_dir)? else {
             return Ok(());
         };
@@ -72,7 +72,7 @@ mod platform {
             platform,
             paths,
             platform_events,
-            open_settings,
+            open_app,
             snappy_macos::request_termination,
         )?;
         app.run();
@@ -95,8 +95,8 @@ mod platform {
     /// GNOME on Wayland goes through GNOME Shell's extension, KDE Plasma on Wayland through
     /// KWin's script; every other session through the X server, which in other Wayland
     /// sessions reports that it can't control windows.
-    /// A second launch signals the running daemon to open the settings window, then exits.
-    pub fn run(paths: Paths, open_settings: bool) -> std::io::Result<()> {
+    /// A second launch signals the running daemon to open the app's window, then exits.
+    pub fn run(paths: Paths, open_app: bool) -> std::io::Result<()> {
         let Claim::Primary(mut instance) = snappy_linux::claim(&snappy_linux::lock_path(&paths.state_dir))?
         else {
             return Ok(());
@@ -104,12 +104,10 @@ mod platform {
         let (events, platform_events) = std::sync::mpsc::channel();
         instance.publish(events.clone())?;
         match snappy_linux::session::current() {
-            Session::GnomeWayland => {
-                drive::<snappy_gnome::App>(paths, open_settings, events, platform_events)
-            }
-            Session::KdeWayland => drive::<snappy_kwin::App>(paths, open_settings, events, platform_events),
+            Session::GnomeWayland => drive::<snappy_gnome::App>(paths, open_app, events, platform_events),
+            Session::KdeWayland => drive::<snappy_kwin::App>(paths, open_app, events, platform_events),
             Session::X11 | Session::OtherWayland => {
-                drive::<snappy_x11::App>(paths, open_settings, events, platform_events)
+                drive::<snappy_x11::App>(paths, open_app, events, platform_events)
             }
         }
     }
@@ -119,13 +117,13 @@ mod platform {
     /// windows come back before the daemon exits.
     fn drive<A: Adapter>(
         paths: Paths,
-        open_settings: bool,
+        open_app: bool,
         events: Sender<PlatformEvent>,
         platform_events: Receiver<PlatformEvent>,
     ) -> std::io::Result<()> {
         let app = A::start(events.clone()).map_err(std::io::Error::other)?;
         let (platform, stop_adapter) = (app.platform(), app.stop_handle());
-        let engine = spawn_engine(platform, paths, platform_events, open_settings, stop_adapter)?;
+        let engine = spawn_engine(platform, paths, platform_events, open_app, stop_adapter)?;
         let ran = app.run().map_err(std::io::Error::other);
         if ran.is_err() {
             let _ = events.send(PlatformEvent::QuitRequested);
@@ -143,8 +141,8 @@ mod platform {
     use crate::runtime::{join_engine, spawn_engine};
 
     /// The Win32 message loop runs on this thread and the engine on its own. A second
-    /// launch signals the running daemon to open the settings window, then exits.
-    pub fn run(paths: Paths, open_settings: bool) -> std::io::Result<()> {
+    /// launch signals the running daemon to open the app's window, then exits.
+    pub fn run(paths: Paths, open_app: bool) -> std::io::Result<()> {
         let Claim::Primary(mut instance) = snappy_windows::claim()? else {
             return Ok(());
         };
@@ -153,7 +151,7 @@ mod platform {
         let app = snappy_windows::App::new(events).map_err(std::io::Error::other)?;
         let platform = app.platform();
         let stopper = app.stopper();
-        let engine = spawn_engine(platform, paths, platform_events, open_settings, move || {
+        let engine = spawn_engine(platform, paths, platform_events, open_app, move || {
             stopper.stop();
         })?;
         app.run();
@@ -165,7 +163,7 @@ mod platform {
 mod platform {
     use snappy_engine::Paths;
 
-    pub fn run(_paths: Paths, _open_settings: bool) -> std::io::Result<()> {
+    pub fn run(_paths: Paths, _open_app: bool) -> std::io::Result<()> {
         Err(std::io::Error::other("this platform's adapter isn't built yet"))
     }
 }

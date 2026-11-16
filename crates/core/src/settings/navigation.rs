@@ -33,7 +33,7 @@ pub struct Navigation {
     pub clear_selection: Option<KeyChord>,
 }
 
-/// The name the settings app and conflict messages give the nearest-empty-zone shortcut.
+/// The name the app and conflict messages give the nearest-empty-zone shortcut.
 pub const NEAREST_EMPTY_ZONE_TITLE: &str = "Move to the nearest empty zone";
 
 /// Every shortcut in the navigation section, so each is listed once: for validation,
@@ -70,7 +70,7 @@ impl NavigationShortcut {
         NavigationShortcut::ClearSelection,
     ];
 
-    /// The name the settings app and conflict messages use.
+    /// The name the app and conflict messages use.
     pub fn title(self) -> String {
         match self {
             NavigationShortcut::Move(direction) => format!("Move window {}", direction.name()),

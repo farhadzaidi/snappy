@@ -27,7 +27,7 @@ fn the_menu_appears_in_the_top_bar_and_its_choices_come_back() {
         true
     );
     shell.wait_for("the menu choice", |event| {
-        *event == PlatformEvent::OpenSettingsRequested
+        *event == PlatformEvent::OpenAppRequested
     });
 }
 

@@ -12,7 +12,7 @@ use snappy_core::shortcuts::Refusal;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_engine::{Engine, Input, LogEvent, Paths, file_names};
 use snappy_fake::{FakePlatform, FakeWindow};
-use snappy_ipc::{AppState, Command, ToSettings};
+use snappy_ipc::{AppState, Command, ToApp};
 use snappy_platform::{MarkStyle, PlatformEvent, WindowId};
 
 pub const LEFT_ZONE: Rect = Rect::new(12.0, 37.0, 702.0, 851.0);
@@ -86,7 +86,7 @@ pub fn reply_to(engine: &Engine<FakePlatform>, sent: Command) -> Option<Refusal>
         .take_outbox()
         .into_iter()
         .find_map(|message| match message {
-            ToSettings::Reply { error, .. } => Some(error),
+            ToApp::Reply { error, .. } => Some(error),
             _ => None,
         })
         .unwrap()
@@ -173,15 +173,15 @@ pub fn started(name: &str, fake: FakePlatform) -> Engine<FakePlatform> {
     engine
 }
 
-/// The settings window, open on its own and enrolled in workspace 1.
-pub fn with_settings_window() -> (FakePlatform, Rect) {
-    let settings_frame = Rect::new(200.0, 100.0, 1080.0, 760.0);
+/// The app's window, open on its own and enrolled in workspace 1.
+pub fn with_app_window() -> (FakePlatform, Rect) {
+    let app_frame = Rect::new(200.0, 100.0, 1080.0, 760.0);
     let mut fake = FakePlatform::default();
     fake.open(
         9,
-        FakeWindow::new("io.github.farhadzaidi.Snappy.Settings", 4242, settings_frame),
+        FakeWindow::new("io.github.farhadzaidi.Snappy.App", 4242, app_frame),
     );
-    (fake, settings_frame)
+    (fake, app_frame)
 }
 
 pub fn status_text(engine: &Engine<FakePlatform>) -> String {
@@ -325,15 +325,15 @@ pub async fn inactive_window_in_the_right_zone(name: &str) -> Engine<FakePlatfor
     engine
 }
 
-/// What the settings app would see now.
+/// What the app would see now.
 pub fn app_state(engine: &Engine<FakePlatform>) -> AppState {
-    engine.handle(Input::SettingsAppStarted { pid: 9999 });
+    engine.handle(Input::AppStarted { pid: 9999 });
     engine
         .take_outbox()
         .into_iter()
         .rev()
         .find_map(|message| match message {
-            ToSettings::State(state) => Some(*state),
+            ToApp::State(state) => Some(*state),
             _ => None,
         })
         .unwrap()

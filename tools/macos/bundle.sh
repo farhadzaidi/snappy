@@ -9,11 +9,11 @@ here="$root/tools/macos"
 # The bundles' property lists and the launch agent.
 packaging="$root/packaging/macos"
 app="$root/dist/Snappy.app"
-helper="$app/Contents/Helpers/Snappy Settings.app"
+helper="$app/Contents/Helpers/Snappy App.app"
 
 cd "$root"
-pnpm -C apps/settings/ui build
-cargo build --release -p snappy -p snappy-settings
+pnpm -C apps/app/ui build
+cargo build --release -p snappy -p snappy-app
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchAgents" \
@@ -22,9 +22,9 @@ cp "$packaging/Snappy.plist" "$app/Contents/Info.plist"
 cp assets/icon/snappy.icns "$app/Contents/Resources/Snappy.icns"
 cp "$packaging/io.github.farhadzaidi.Snappy.Agent.plist" "$app/Contents/Library/LaunchAgents/"
 cp target/release/snappy "$app/Contents/MacOS/snappy"
-cp "$packaging/SnappySettings.plist" "$helper/Contents/Info.plist"
+cp "$packaging/SnappyApp.plist" "$helper/Contents/Info.plist"
 cp assets/icon/snappy.icns "$helper/Contents/Resources/Snappy.icns"
-cp target/release/snappy-settings "$helper/Contents/MacOS/snappy-settings"
+cp target/release/snappy-app "$helper/Contents/MacOS/snappy-app"
 
 source "$here/signing-env.sh"
 identity="${SNAPPY_SIGN_IDENTITY:-$(snappy_signing_identity)}"

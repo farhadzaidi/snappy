@@ -23,7 +23,7 @@ pub fn snappy_key_conflict(settings: &Settings, platform: Os) -> Option<String> 
     find_conflict(settings, platform).map(|conflict| conflict.after_key_change(platform))
 }
 
-/// Why a change was refused, as the settings app shows it: the message, and the shortcut the
+/// Why a change was refused, as the app shows it: the message, and the shortcut the
 /// message names, when it names one of Snappy's, so the app can point to that shortcut.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

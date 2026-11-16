@@ -3957,6 +3957,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "snappy-app"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "snappy-ipc",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+]
+
+[[package]]
 name = "snappy-core"
 version = "0.1.0"
 dependencies = [
@@ -4091,18 +4103,6 @@ dependencies = [
  "serde",
  "serde_json",
  "snappy-core",
-]
-
-[[package]]
-name = "snappy-settings"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "snappy-ipc",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
 ]
 
 [[package]]

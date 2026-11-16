@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use snappy_core::settings::Settings;
-use snappy_ipc::{Command, ToSettings};
+use snappy_ipc::{Command, ToApp};
 use snappy_platform::{Platform, PlatformEvent};
 
 use crate::diagnostics::SwitchTiming;
@@ -17,8 +17,8 @@ use crate::{caps_lock, commands, workspaces};
 pub enum Input {
     Platform(PlatformEvent),
     Command { id: u64, command: Command },
-    SettingsAppStarted { pid: u32 },
-    SettingsAppExited,
+    AppStarted { pid: u32 },
+    AppExited,
 }
 
 pub struct Engine<P: Platform + 'static> {
@@ -64,14 +64,14 @@ impl<P: Platform + 'static> Engine<P> {
         match input {
             Input::Platform(event) => self.handle_event(event),
             Input::Command { id, command } => commands::handle(&self.shared, id, command),
-            Input::SettingsAppStarted { pid } => {
+            Input::AppStarted { pid } => {
                 let mut core = self.shared.core.borrow_mut();
-                core.settings_app_pid = Some(pid);
+                core.app_pid = Some(pid);
                 core.publish_state();
             }
-            Input::SettingsAppExited => {
+            Input::AppExited => {
                 let mut core = self.shared.core.borrow_mut();
-                core.settings_app_pid = None;
+                core.app_pid = None;
                 core.set_preview(None);
             }
         }
@@ -106,12 +106,12 @@ impl<P: Platform + 'static> Engine<P> {
         core.hide_overlay();
     }
 
-    /// Messages for the settings app produced since the last call.
-    pub fn take_outbox(&self) -> Vec<ToSettings> {
+    /// Messages for the app produced since the last call.
+    pub fn take_outbox(&self) -> Vec<ToApp> {
         self.shared.core.borrow_mut().take_outbox()
     }
 
-    /// Signalled whenever a message for the settings app is queued, including by work that
+    /// Signalled whenever a message for the app is queued, including by work that
     /// finishes between inputs.
     pub fn outbox_ready(&self) -> std::rc::Rc<tokio::sync::Notify> {
         self.shared.core.borrow().outbox_ready()

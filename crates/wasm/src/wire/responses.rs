@@ -67,7 +67,7 @@ pub struct ModifierNames {
     pub label: String,
 }
 
-/// The most of each thing the settings app counts that core allows.
+/// The most of each thing the app counts that core allows.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Limits {

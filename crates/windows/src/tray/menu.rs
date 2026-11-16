@@ -30,7 +30,7 @@ pub fn build(menu: &TrayMenu) -> Vec<Entry> {
     let mut entries = vec![
         Entry::Label(heading.to_owned()),
         Entry::Separator,
-        command("Open Snappy…", PlatformEvent::OpenSettingsRequested),
+        command("Open Snappy…", PlatformEvent::OpenAppRequested),
         Entry::Separator,
         Entry::Label("Layouts".to_owned()),
     ];

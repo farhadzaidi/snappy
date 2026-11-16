@@ -5,7 +5,7 @@ publish.workspace = true
 version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Snappy's rules compiled to WebAssembly for the settings app."
+description = "Snappy's rules compiled to WebAssembly for the app."
 
 [lib]
 crate-type = ["cdylib", "rlib"]

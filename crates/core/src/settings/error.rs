@@ -25,7 +25,7 @@ pub enum SettingsError {
     Protected,
 }
 
-/// Why a layout edit from the settings app is refused, as the user is told.
+/// Why a layout edit from the app is refused, as the user is told.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum LayoutEditError {
     #[error("Unknown layout.")]

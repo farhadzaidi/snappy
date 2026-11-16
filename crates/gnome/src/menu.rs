@@ -79,7 +79,7 @@ mod tests {
                 title: "Snappy · Live".into()
             }
         );
-        assert!(actions.contains(&PlatformEvent::OpenSettingsRequested));
+        assert!(actions.contains(&PlatformEvent::OpenAppRequested));
         assert!(actions.contains(&PlatformEvent::QuitRequested));
         assert!(actions.contains(&PlatformEvent::Tray(TrayCommand::SelectLayout {
             display: "DP-1".into(),

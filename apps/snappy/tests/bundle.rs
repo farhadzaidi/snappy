@@ -42,8 +42,8 @@ fn rust_sources(folder: &Path, found: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn snappy_and_its_settings_app_have_no_dock_icon() {
-    for plist in ["Snappy.plist", "SnappySettings.plist"] {
+fn snappy_and_its_app_have_no_dock_icon() {
+    for plist in ["Snappy.plist", "SnappyApp.plist"] {
         assert_eq!(
             plist_value(&bundle_file(plist), "LSUIElement"),
             "<true/>",
@@ -52,12 +52,12 @@ fn snappy_and_its_settings_app_have_no_dock_icon() {
     }
     let script = bundle_script();
     assert!(script.contains(r#"cp "$packaging/Snappy.plist" "$app/Contents/Info.plist""#));
-    assert!(script.contains(r#"cp "$packaging/SnappySettings.plist" "$helper/Contents/Info.plist""#));
+    assert!(script.contains(r#"cp "$packaging/SnappyApp.plist" "$helper/Contents/Info.plist""#));
 }
 
 #[test]
-fn snappy_and_its_settings_app_show_the_icon_their_bundles_carry() {
-    for plist in ["Snappy.plist", "SnappySettings.plist"] {
+fn snappy_and_its_app_show_the_icon_their_bundles_carry() {
+    for plist in ["Snappy.plist", "SnappyApp.plist"] {
         assert!(
             bundle_file(plist).contains("<key>CFBundleIconFile</key>\n\t<string>Snappy</string>"),
             "{plist}"
@@ -67,6 +67,17 @@ fn snappy_and_its_settings_app_show_the_icon_their_bundles_carry() {
     assert!(script.contains(r#"cp assets/icon/snappy.icns "$app/Contents/Resources/Snappy.icns""#));
     assert!(script.contains(r#"cp assets/icon/snappy.icns "$helper/Contents/Resources/Snappy.icns""#));
     assert!(workspace_root().join("assets/icon/snappy.icns").is_file());
+}
+
+#[test]
+fn snappy_and_its_app_are_both_called_snappy() {
+    for plist in ["Snappy.plist", "SnappyApp.plist"] {
+        let plist_text = bundle_file(plist);
+        for key in ["CFBundleName", "CFBundleDisplayName"] {
+            let entry = format!("<key>{key}</key>\n\t<string>Snappy</string>");
+            assert!(plist_text.contains(&entry), "{plist} {key}");
+        }
+    }
 }
 
 #[test]
@@ -94,7 +105,7 @@ const OTHER_PERMISSION_APIS: &[&str] = &[
 
 #[test]
 fn snappy_asks_for_accessibility_only() {
-    for plist in ["Snappy.plist", "SnappySettings.plist"] {
+    for plist in ["Snappy.plist", "SnappyApp.plist"] {
         assert!(
             !bundle_file(plist).contains("UsageDescription"),
             "{plist} declares a privacy usage"
@@ -102,11 +113,7 @@ fn snappy_asks_for_accessibility_only() {
     }
 
     let mut sources = Vec::new();
-    for folder in [
-        "apps/snappy/src",
-        "crates/macos/src",
-        "apps/settings/src-tauri/src",
-    ] {
+    for folder in ["apps/snappy/src", "crates/macos/src", "apps/app/src-tauri/src"] {
         rust_sources(&workspace_root().join(folder), &mut sources);
     }
     assert!(!sources.is_empty());
@@ -121,7 +128,7 @@ fn snappy_asks_for_accessibility_only() {
 #[test]
 fn the_bundles_carry_snappys_version() {
     let version = env!("CARGO_PKG_VERSION");
-    for plist in ["Snappy.plist", "SnappySettings.plist"] {
+    for plist in ["Snappy.plist", "SnappyApp.plist"] {
         let plist_text = bundle_file(plist);
         for key in ["CFBundleShortVersionString", "CFBundleVersion"] {
             let entry = format!("<key>{key}</key>\n\t<string>{version}</string>");

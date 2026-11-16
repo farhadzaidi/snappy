@@ -8,14 +8,14 @@ use crate::command::Command;
 
 pub const PROTOCOL_VERSION: u32 = 7;
 
-/// Daemon to settings app.
+/// Daemon to app.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum ToSettings {
+pub enum ToApp {
     Hello {
         protocol_version: u32,
     },
-    /// Everything the settings app shows. Sent after every change.
+    /// Everything the app shows. Sent after every change.
     State(Box<AppState>),
     /// The answer to a command: why it was refused, if it was.
     Reply {
@@ -28,7 +28,7 @@ pub enum ToSettings {
     Focus,
 }
 
-/// Settings app to daemon.
+/// App to daemon.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ToDaemon {
@@ -42,16 +42,16 @@ mod tests {
     use snappy_core::settings::WorkspaceShortcut;
     use snappy_core::shortcuts::{NamedShortcut, ShortcutId};
 
-    /// The settings UI's stand-in daemon, for development and its tests, speaks this version.
+    /// The app's stand-in daemon, for development and its tests, speaks this version.
     #[test]
     fn the_fake_daemon_speaks_this_protocol_version() {
-        let fake = include_str!("../../../apps/settings/ui/src/bridge/fake/fakeDaemon.ts");
+        let fake = include_str!("../../../apps/app/ui/src/bridge/fake/fakeDaemon.ts");
         assert!(fake.contains(&format!("const PROTOCOL_VERSION = {PROTOCOL_VERSION};")));
     }
 
     #[test]
     fn a_refusal_reply_carries_its_message_and_the_shortcut_it_names_by_id() {
-        let reply = ToSettings::Reply {
+        let reply = ToApp::Reply {
             id: 3,
             error: Some(Refusal {
                 message: "Snappy + 3 for Switch to Workspace 3 is already used by macOS or another app."
@@ -76,7 +76,7 @@ mod tests {
                 },
             })
         );
-        let done = ToSettings::Reply { id: 4, error: None };
+        let done = ToApp::Reply { id: 4, error: None };
         assert_eq!(
             serde_json::to_string(&done).unwrap(),
             r#"{"type":"reply","id":4,"error":null}"#

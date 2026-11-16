@@ -236,7 +236,7 @@ pub struct EditRequest {
     pub platform: Os,
 }
 
-/// A change the settings app asks the daemon for, by the `snappy-core` rule that makes it.
+/// A change the app asks the daemon for, by the `snappy-core` rule that makes it.
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum SettingsEdit {

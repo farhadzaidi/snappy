@@ -1,4 +1,4 @@
-//! The settings file: its model, defaults, validation, and the edits the settings app asks for.
+//! The settings file: its model, defaults, validation, and the edits the app asks for.
 
 mod edits;
 mod error;

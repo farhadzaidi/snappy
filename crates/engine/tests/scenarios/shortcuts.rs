@@ -5,7 +5,7 @@ use snappy_core::keys::{KeyChord, SnappyKey};
 use snappy_core::settings::DragModifier;
 use snappy_engine::{Engine, LogEvent};
 use snappy_fake::{FakePlatform, FakeWindow};
-use snappy_ipc::{Command, ToSettings};
+use snappy_ipc::{Command, ToApp};
 use snappy_platform::{PlatformEvent, WindowId};
 
 use crate::support::{
@@ -99,7 +99,7 @@ fn probe(engine: &Engine<FakePlatform>, chord: &KeyChord) -> bool {
         .take_outbox()
         .into_iter()
         .find_map(|message| match message {
-            ToSettings::ProbeResult { available } => Some(available),
+            ToApp::ProbeResult { available } => Some(available),
             _ => None,
         })
         .unwrap()

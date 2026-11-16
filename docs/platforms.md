@@ -38,7 +38,7 @@ Callbacks on the main thread only forward events. They never call into other app
 
 **Permissions** (`src/permissions.rs`). Accessibility. While snapping is on and access is missing, Snappy checks once a second for a grant, and only then; a revocation is noticed without polling, from the system's accessibility notification and from Accessibility calls failing.
 
-**Single instance and quitting** (`src/instance.rs`). A lock on `daemon.lock` in the state folder; a second launch exits, and opening Snappy.app again reaches the running daemon as a reopen, which opens the settings window. `SIGTERM`, `SIGINT`, and `SIGHUP` quit like the menu's Quit, so parked windows return first; `SIGUSR2` stops for a restart. Both programs use the accessory activation policy: no Dock icon and no Command-Tab entry. The login item (`src/login_item.rs`) registers the launch agent bundled in the app (`packaging/macos`), which runs the daemon with `--background`.
+**Single instance and quitting** (`src/instance.rs`). A lock on `daemon.lock` in the state folder; a second launch exits, and opening Snappy.app again reaches the running daemon as a reopen, which opens the app's window. `SIGTERM`, `SIGINT`, and `SIGHUP` quit like the menu's Quit, so parked windows return first; `SIGUSR2` stops for a restart. Both programs use the accessory activation policy: no Dock icon and no Command-Tab entry. The login item (`src/login_item.rs`) registers the launch agent bundled in the app (`packaging/macos`), which runs the daemon with `--background`.
 
 **Limitations.**
 
@@ -69,7 +69,7 @@ Callbacks on the main thread only forward events. They never call into other app
 
 **Permissions.** None.
 
-**Single instance and quitting** (`src/instance.rs`). A named mutex; a second launch signals a named event that opens the settings window, and exits. Windows has no `SIGUSR2`, so `snappy.exe --stop-for-restart` sets another named event and waits for the daemon to exit. A close request to the hidden window, the session ending, and a console's Ctrl+C or close all quit like the tray's Quit. `taskkill` without `/F` can't close the daemon, since it only closes visible windows. The login item (`src/login_item.rs`) is a `Run` value under the current user's registry key, holding the daemon's path and `--background`.
+**Single instance and quitting** (`src/instance.rs`). A named mutex; a second launch signals a named event that opens the app's window, and exits. Windows has no `SIGUSR2`, so `snappy.exe --stop-for-restart` sets another named event and waits for the daemon to exit. A close request to the hidden window, the session ending, and a console's Ctrl+C or close all quit like the tray's Quit. `taskkill` without `/F` can't close the daemon, since it only closes visible windows. The login item (`src/login_item.rs`) is a `Run` value under the current user's registry key, holding the daemon's path and `--background`.
 
 **Limitations.**
 
@@ -81,11 +81,11 @@ Callbacks on the main thread only forward events. They never call into other app
 
 ## Linux
 
-Snappy picks one of three Linux adapters at launch from the session (`crates/linux/src/session.rs`): GNOME on Wayland and KDE Plasma on Wayland get adapters of their own, and X11 sessions get the X11 adapter. Any other Wayland session also gets the X11 adapter, through Xwayland, but X11 clients can't see other apps' windows there, so live control stays off and the settings window says why.
+Snappy picks one of three Linux adapters at launch from the session (`crates/linux/src/session.rs`): GNOME on Wayland and KDE Plasma on Wayland get adapters of their own, and X11 sessions get the X11 adapter. Any other Wayland session also gets the X11 adapter, through Xwayland, but X11 clients can't see other apps' windows there, so live control stays off and the app's window says why.
 
 What doesn't depend on the display server is shared in `crates/linux`:
 
-- **One daemon per session** (`instance.rs`). An exclusive lock on `snappy.lock` in `$XDG_RUNTIME_DIR`, holding the daemon's process ID. A second launch sends that process `SIGUSR1`, which opens the settings window, and exits. `SIGTERM`, `SIGINT`, and `SIGHUP` quit like the menu's Quit, so parked windows return first; `SIGUSR2` stops for a restart.
+- **One daemon per session** (`instance.rs`). An exclusive lock on `snappy.lock` in `$XDG_RUNTIME_DIR`, holding the daemon's process ID. A second launch sends that process `SIGUSR1`, which opens the app's window, and exits. `SIGTERM`, `SIGINT`, and `SIGHUP` quit like the menu's Quit, so parked windows return first; `SIGUSR2` stops for a restart.
 - **The login item** (`login_item.rs`) is `snappy.desktop` in `~/.config/autostart`, running the daemon with `--background`. It names the app icon, `io.github.farhadzaidi.Snappy`, which Snappy installs into the user's icon theme first (`app_icon.rs`), so nothing points at a path that moves with the program.
 - **Recovery keys** combine the window's process ID, the process's start time from `/proc`, and the display server's or shell's ID for the window.
 - **Overlays** share one renderer (`overlay_image/`), drawn with `tiny-skia` and a built-in stroke font for numbers and captions, so no font files are needed. X11 and KDE draw with it; for GNOME the same shapes are sent as data (`scene.rs`) and drawn in GNOME Shell.
@@ -125,9 +125,9 @@ Apps draw their tabs inside one window on Linux, so every Linux adapter reports 
 
 `crates/gnome` and the GNOME Shell extension in `apps/gnome-extension`, for GNOME 46 to 49. Wayland lets no ordinary program move other apps' windows, watch global input, or own global shortcuts; on GNOME only GNOME Shell can. So the extension does those things when the daemon asks and reports what happens, and makes no decisions of its own. Calls that differ between GNOME versions go through `compat.js`.
 
-**Installing the extension** (`src/extension.rs`). The extension's files are built into the daemon, which writes any that are missing or differ into the user's extensions folder at every start. GNOME Shell on Wayland loads a new extension only at the next login, so a fresh install turns itself on in GNOME's settings and the settings window asks the user to log out and back in once, with a **Log out now** button. After that, turning it on or off is the user's choice.
+**Installing the extension** (`src/extension.rs`). The extension's files are built into the daemon, which writes any that are missing or differ into the user's extensions folder at every start. GNOME Shell on Wayland loads a new extension only at the next login, so a fresh install turns itself on in GNOME's settings and the app's window asks the user to log out and back in once, with a **Log out now** button. After that, turning it on or off is the user's choice.
 
-**The protocol** (`src/protocol.rs`, `src/bus.rs`, `service.js`). The extension exports an interface on GNOME Shell's own bus name with one method, `Call`, which takes a JSON request and returns `{"ok": …}` or `{"error": …}`, and one signal, `Event`, which carries every event as JSON in the order it happened. A `Version` property holds the protocol version; a daemon and an extension from different builds notice the mismatch, and the settings window says to log out and back in. The daemon's requests run on a bus thread of their own, since the engine thread drives an async runtime in which `zbus` can't block, and further threads forward the extension's events, its state changes, GNOME Shell starting over, and Mutter's display changes.
+**The protocol** (`src/protocol.rs`, `src/bus.rs`, `service.js`). The extension exports an interface on GNOME Shell's own bus name with one method, `Call`, which takes a JSON request and returns `{"ok": …}` or `{"error": …}`, and one signal, `Event`, which carries every event as JSON in the order it happened. A `Version` property holds the protocol version; a daemon and an extension from different builds notice the mismatch, and the app's window says to log out and back in. The daemon's requests run on a bus thread of their own, since the engine thread drives an async runtime in which `zbus` can't block, and further threads forward the extension's events, its state changes, GNOME Shell starting over, and Mutter's display changes.
 
 **Live control** (`src/extension.rs`, `src/messages.rs`). Live control is available while the extension answers in this protocol version; otherwise GNOME's extension state says why, worded for the user and naming the desktop. When GNOME Shell starts over, a fresh extension holds none of Snappy's shortcuts, monitoring, outlines, menu, or Caps Lock hold, so the adapter sends them all again and compares the window list with the one it had. Workspaces are suspended while the extension is away and resume when it's back.
 
@@ -153,7 +153,7 @@ Apps draw their tabs inside one window on Linux, so every Linux adapter reports 
 
 **Limitations and conflicting settings.**
 
-- Ubuntu's Enhanced Tiling, and the Tiling Assistant it comes from, also snap windows dragged to screen edges and act on Ctrl during drags. While one runs, the settings window says where to turn it off.
+- Ubuntu's Enhanced Tiling, and the Tiling Assistant it comes from, also snap windows dragged to screen edges and act on Ctrl during drags. While one runs, the app says where to turn it off.
 - With "Workspaces on primary display only" on (Settings → Multitasking), GNOME shows windows on other displays on every workspace, so Snappy can't hide them and refuses switches that would need to.
 - GNOME binds Super with Ctrl and a digit, and Ctrl+Alt with an F-key; the default Snappy key avoids both. A Snappy key of fewer modifiers can't: GNOME switches workspaces with Ctrl+Alt and the arrows and with Super+Alt and Left or Right, and moves windows between displays with Super+Shift and the arrows.
 - Wayland has no way for an app to ask to be sized in steps, so only Xwayland apps, such as some terminals, snap to a cell grid.

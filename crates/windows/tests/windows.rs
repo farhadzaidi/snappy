@@ -928,7 +928,7 @@ fn open_at_login_writes_and_removes_the_run_value() {
 }
 
 #[test]
-fn a_second_launch_asks_the_first_to_open_settings() {
+fn a_second_launch_asks_the_first_to_open_the_app() {
     require_desktop!();
     let Claim::Primary(mut first) = snappy_windows::claim().unwrap() else {
         panic!("another daemon is running");
@@ -938,7 +938,7 @@ fn a_second_launch_asks_the_first_to_open_settings() {
     assert!(matches!(snappy_windows::claim().unwrap(), Claim::Secondary));
     assert_eq!(
         received.recv_timeout(EVENT_TIMEOUT).unwrap(),
-        PlatformEvent::OpenSettingsRequested
+        PlatformEvent::OpenAppRequested
     );
     drop(first);
     assert!(matches!(snappy_windows::claim().unwrap(), Claim::Primary(_)));

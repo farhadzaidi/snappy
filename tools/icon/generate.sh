@@ -23,7 +23,7 @@ for size in 16 32 128 256 512; do
 done
 iconutil --convert icns --output "$icon/snappy.icns" "$iconset"
 
-# Windows: the settings app's .ico, and the same images as the resource the daemon links.
+# Windows: the app's .ico, and the same images as the resource the daemon links.
 windows=()
 for size in 16 24 32 48 64 256; do
     render "$size" "$work/windows-$size.png"
@@ -31,7 +31,7 @@ for size in 16 24 32 48 64 256; do
 done
 node "$root/tools/icon/windows.mjs" "$icon/snappy.ico" "$icon/snappy.res" "${windows[@]}"
 
-# The settings window's icon on Linux, which Tauri embeds.
+# The app's icon on Linux, which Tauri embeds.
 render 256 "$icon/snappy.png"
 
 # The macOS menu bar glyph, a vector PDF the daemon embeds and marks as a template image. Its

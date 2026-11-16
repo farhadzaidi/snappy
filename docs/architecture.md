@@ -4,8 +4,8 @@ How Snappy is put together: its two programs, its crates, the engine at its cent
 
 ## Two programs
 
-- **The daemon**, `snappy` (`apps/snappy`), runs all the time. It watches input, moves windows, draws the zone overlays, owns the menu bar or tray item, and is the only program that writes Snappy's files. Started with `--background`, as the login item does, it stays quiet; started any other way, it also opens the settings window.
-- **The settings app**, `snappy-settings` (`apps/settings`), is started by the daemon on demand and quits when its window closes. It never touches other apps' windows: it sends commands and shows the state the daemon sends back.
+- **The daemon**, `snappy` (`apps/snappy`), runs all the time. It watches input, moves windows, draws the zone overlays, owns the menu bar or tray item, and is the only program that writes Snappy's files. Started with `--background`, as the login item does, it stays quiet; started any other way, it also opens the app's window.
+- **The app**, `snappy-app` (`apps/app`), is started by the daemon on demand and quits when its window closes. It never touches other apps' windows: it sends commands and shows the state the daemon sends back.
 
 ```
                  ┌──────────────────────── snappy (daemon) ───────────────────────────┐
@@ -15,18 +15,18 @@ How Snappy is put together: its two programs, its crates, the engine at its cent
                  │                                        └──► settings, state, logs   │
                  └───────────────────────────────▲────────────────────────────────────┘
                                                  │ piped stdin/stdout, length-prefixed JSON
-                 ┌───────────────────────────────┴──── snappy-settings ───────────────┐
+                 ┌───────────────────────────────┴──── snappy-app ────────────────────┐
                  │  Tauri shell ◄──► React UI ──► snappy-core as WebAssembly           │
                  └────────────────────────────────────────────────────────────────────┘
 ```
 
 ### How they talk
 
-The daemon starts the settings app with piped standard input and output (`apps/snappy/src/settings_app.rs`). The pipes are the only channel, so there is no socket to find or secure, and the settings app can't outlive the daemon that started it.
+The daemon starts the app with piped standard input and output (`apps/snappy/src/app_process.rs`). The pipes are the only channel, so there is no socket to find or secure, and the app can't outlive the daemon that started it.
 
-Each message is a 4-byte little-endian length and then UTF-8 JSON, capped at 8 MB (`crates/ipc`). Both sides open with `Hello` and a protocol version, and the settings app exits on a mismatch. From then on:
+Each message is a 4-byte little-endian length and then UTF-8 JSON, capped at 8 MB (`crates/ipc`). Both sides open with `Hello` and a protocol version, and the app exits on a mismatch. From then on:
 
-- **The settings app sends a `Command`** for each thing the user does: save a layout, record a shortcut, add a workspace, change the Snappy key, and so on.
+- **The app sends a `Command`** for each thing the user does: save a layout, record a shortcut, add a workspace, change the Snappy key, and so on.
 - **The daemon answers every command with a `Reply`**, carrying a `Refusal` when it said no: a message for the user and, when the message names one of Snappy's shortcuts, that shortcut's `ShortcutId`, so the UI can link to the right recorder. It then sends a fresh `State`, the whole `AppState`, which is all the UI ever renders.
 
 ## Crates
@@ -36,10 +36,10 @@ core ◄── platform ◄── engine ◄── apps/snappy
  ▲          ▲  ▲                    │
  │          │  └── macos, windows, x11, gnome, kwin ◄──┘
  │          │      linux ◄── x11, gnome, kwin
- │          ├── ipc ◄── engine, apps/settings/src-tauri
+ │          ├── ipc ◄── engine, apps/app/src-tauri
  │          ├── fake        (engine tests)
  │          └── live        (live tests; also uses engine and the adapters)
- └── wasm ◄── apps/settings/ui
+ └── wasm ◄── apps/app/ui
 ```
 
 | Crate | Role |
@@ -47,16 +47,16 @@ core ◄── platform ◄── engine ◄── apps/snappy
 | `core` | Every rule: geometry, layouts and zones, the layout editor, drag intent, snapping and settling, swaps, navigation and focus, filling empty zones, shortcuts and their conflicts, the Snappy key and Caps Lock, settings and their validation, undo, workspace sessions, which windows may be managed. No I/O, threads, or clocks. |
 | `platform` | The traits every adapter implements (`WindowSystem`, `Input`, `HotKeys`, `CapsLock`, `Overlay`, `Permissions`, `DesktopGuard`, `Tray`, `LoginItem`, gathered as `Platform`), the `PlatformEvent`s adapters report, the overlay's shared look (`overlay_style`), the tray glyph, and the daemon's launch flags. |
 | `engine` | Runtime state, the order things happen in, the window-operation queue, and every file Snappy writes. |
-| `ipc` | The messages between the daemon and the settings app, and their framing. |
+| `ipc` | The messages between the daemon and the app, and their framing. |
 | `macos`, `windows`, `x11`, `gnome`, `kwin` | One adapter per desktop. Each one's dependencies sit behind a `cfg` for its OS, so the crate is empty elsewhere. |
 | `linux` | What the Linux adapters share: one daemon per session and its signals, the autostart entry, `/proc` facts, recognizing the session, key codes, the menu, the overlay renderer, display IDs, the tray, XKB and a minimal Wayland client for Caps Lock and overlays, and D-Bus plumbing for the desktop-shell adapters. |
-| `wasm` | A JSON API over `core` for the settings UI. |
+| `wasm` | A JSON API over `core` for the app. |
 | `fake`, `live` | Test support: an in-memory desktop for engine tests, and the live test runner and fixture app. Never linked into the daemon. |
 
 They are separate crates for three reasons:
 
 - **OS dependencies stay contained.** `objc2`, `windows`, `x11rb`, and `zbus` appear only in the adapters, `crates/linux`, and the live harness, so `core` and `engine` build and test on any machine.
-- **`core` compiles to WebAssembly.** The settings app's editor and shortcut recorder call the same Rust the daemon uses, so a zone drawn in the editor lands exactly where the daemon puts the window, and a conflict the recorder reports is the one the daemon would.
+- **`core` compiles to WebAssembly.** The app's editor and shortcut recorder call the same Rust the daemon uses, so a zone drawn in the editor lands exactly where the daemon puts the window, and a conflict the recorder reports is the one the daemon would.
 - **The compiler enforces the layering.** `core` can't reach the engine, the engine can't call an OS API, and an adapter can't make a policy decision without depending on something it doesn't.
 
 ### Where code goes
@@ -67,9 +67,9 @@ They are separate crates for three reasons:
 | When something happens, or what state changes as a result | `crates/engine` |
 | How an OS does something | its adapter: `crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome` with its extension in `apps/gnome-extension`, or `crates/kwin` with its script in `apps/kwin-script`; what more than one Linux adapter needs goes in `crates/linux` |
 | A capability every adapter must provide | a trait method in `crates/platform`, implemented by each adapter and by `crates/fake` |
-| Something the settings app can ask for | a `Command` in `crates/ipc`, handled in `crates/engine/src/commands.rs` |
-| A rule the settings UI needs too | `crates/core`, exported through `crates/wasm` and `apps/settings/ui/src/core/snappyCore.ts` |
-| The settings UI | `apps/settings/ui/src/<page>` |
+| Something the app can ask for | a `Command` in `crates/ipc`, handled in `crates/engine/src/commands.rs` |
+| A rule the app needs too | `crates/core`, exported through `crates/wasm` and `apps/app/ui/src/core/snappyCore.ts` |
+| A page of the app | `apps/app/ui/src/<page>` |
 
 ## The engine
 
@@ -79,7 +79,7 @@ The adapter runs the OS event loop on the main thread, which AppKit and Win32 re
 
 ### State
 
-Runtime state is one `EngineState` (`crates/engine/src/state.rs`): settings, displays, whether live control runs, the drag in progress, registered shortcuts, workspaces, the selection, the debug log, and the outbox to the settings app. Its behaviors are split by concern under `state/` (what's on screen, live control, shortcut registration, the overlay, the tray menu, logging, the status message, and what the settings app is sent). The window-operation queue and the undo histories sit beside it, in `ops.rs`. The features that act on it each have a module: `drag`, `actions` (shortcuts), `focus`, `selection`, `marks` (window outlines), `caps_lock`, `commands` (from the settings app), and `workspaces/`. `events.rs` routes each platform event to the features that care about it, and `engine.rs` is what the daemon sees: start, handle an input, shut down, or stop for a restart.
+Runtime state is one `EngineState` (`crates/engine/src/state.rs`): settings, displays, whether live control runs, the drag in progress, registered shortcuts, workspaces, the selection, the debug log, and the outbox to the app. Its behaviors are split by concern under `state/` (what's on screen, live control, shortcut registration, the overlay, the tray menu, logging, the status message, and what the app is sent). The window-operation queue and the undo histories sit beside it, in `ops.rs`. The features that act on it each have a module: `drag`, `actions` (shortcuts), `focus`, `selection`, `marks` (window outlines), `caps_lock`, `commands` (from the app), and `workspaces/`. `events.rs` routes each platform event to the features that care about it, and `engine.rs` is what the daemon sees: start, handle an input, shut down, or stop for a restart.
 
 "Live control" is whether Snappy acts on windows right now: snapping is on, the platform's permission is granted, and the platform says it can (on GNOME and KDE, that its extension or script answers). Press monitoring and every shortcut but the workspace ones follow it.
 
@@ -98,7 +98,7 @@ Apps often acknowledge a position or size before their redraw applies it, insist
 
 ### Settings changes
 
-Every command lands in `crates/engine/src/commands.rs`. A settings change copies the settings, applies the edit (the edits themselves are rules in `core::settings`, which the settings UI's fake daemon runs too), validates the whole (normalizing layouts and checking every shortcut conflict), saves atomically, then reconfigures what depends on settings: the debug log, workspaces, live control, shortcuts, overlays, and the tray. A rejected change leaves the old settings in place and replies with the reason.
+Every command lands in `crates/engine/src/commands.rs`. A settings change copies the settings, applies the edit (the edits themselves are rules in `core::settings`, which the app's fake daemon runs too), validates the whole (normalizing layouts and checking every shortcut conflict), saves atomically, then reconfigures what depends on settings: the debug log, workspaces, live control, shortcuts, overlays, and the tray. A rejected change leaves the old settings in place and replies with the reason.
 
 ### Diagnostics
 
@@ -119,7 +119,7 @@ Diagnostics never hold window titles, window contents, or keystrokes: only frame
 ### A shortcut
 
 1. Whenever settings, displays, or live control change, the engine works out the shortcuts the current state needs (`core::shortcuts::desired_hotkeys`) and registers them if the set differs. Each comes with its `Combo`, the concrete key and modifiers with the Snappy key already expanded, so adapters never know the Snappy key exists.
-2. The adapter reports a press by ID, and the engine maps it back to a `HotKeyAction` (`actions.rs`). Shortcuts do nothing while the settings app is recording one.
+2. The adapter reports a press by ID, and the engine maps it back to a `HotKeyAction` (`actions.rs`). Shortcuts do nothing while the app is recording one.
 3. Zone and arrow shortcuts find the destination zone (`core::placement::navigate` for arrows) and submit a swap or a snap, as "When the zone is taken" says. Arrow presses that arrive while the last move is still settling continue from where it was headed, so three presses move three zones even in a slow app.
 4. The nearest-empty-zone shortcut picks a zone with `core::placement::empty_zone`, or, with a selection, places every selected window into empty zones at once, pairing windows with zones so the total distance is least, as one undo step.
 5. Focus shortcuts (`focus.rs`) ask `core::placement::focus` for the next window in a direction, moving between zones that hold a window when any does and by window centers otherwise, and outline it briefly. Selection shortcuts (`selection.rs`) keep an in-memory, ordered list of windows that sends and workspace switches take along.
@@ -170,10 +170,10 @@ With `SNAPPY_HOME` set, the files go in that folder instead: `settings.json`, `s
 
 The engine's store (`crates/engine/src/store/`) writes every file whole, through a temporary file renamed into place, readable only by the user. A settings file that can't be read is reported and never overwritten; Snappy runs on defaults. Each state file records the version of its shape; one that can't be read is moved aside as `<name>.unreadable.json` and Snappy carries on without it.
 
-## The settings app
+## The app
 
-- **The Tauri shell** (`apps/settings/src-tauri`) relays frames between the pipes and the web UI, adds the Edit menu text fields need on macOS, and reports which display its window is on. Its content security policy allows only bundled assets; its one plugin is the file dialog for importing and exporting settings.
-- **The React UI** (`apps/settings/ui/src`) has four pages, Layouts, Editor, Workspaces, and Settings, in the shell in `shell/`. `state/daemonClient.ts` sends commands and turns each `State` into what the pages render.
+- **The Tauri shell** (`apps/app/src-tauri`) relays frames between the pipes and the web UI, adds the Edit menu text fields need on macOS, and reports which display its window is on. Its content security policy allows only bundled assets; its one plugin is the file dialog for importing and exporting settings.
+- **The React UI** (`apps/app/ui/src`) has four pages, Layouts, Editor, Workspaces, and Settings, in the shell in `shell/`. `state/daemonClient.ts` sends commands and turns each `State` into what the pages render.
 - **The WebAssembly core** (`crates/wasm`, loaded by `core/snappyCore.ts`) answers everything that is a rule: zone frames, editor gestures and guides, shortcut conflicts, titles and labels, the help list of defaults, limits, and validation. The UI never computes geometry or names a shortcut itself.
 - **The fake daemon** (`bridge/fake/`) stands in for the pipe in development and in the UI's tests. It speaks the same messages and applies commands with the real core rules through WebAssembly.
 

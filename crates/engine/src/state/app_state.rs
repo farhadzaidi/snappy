@@ -1,9 +1,9 @@
-//! What goes to the settings app: the engine's state, and every message queued for it.
+//! What goes to the app: the engine's state, and every message queued for it.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use snappy_ipc::{AppState, SnappingState, ToSettings, WorkspacesState};
+use snappy_ipc::{AppState, SnappingState, ToApp, WorkspacesState};
 use snappy_platform::Platform;
 use tokio::sync::Notify;
 
@@ -11,24 +11,23 @@ use super::EngineState;
 
 impl<P: Platform> EngineState<P> {
     pub fn publish_state(&mut self) {
-        if self.settings_app_pid.is_none() {
+        if self.app_pid.is_none() {
             return;
         }
         let state = self.app_state();
-        self.outbox
-            .retain(|message| !matches!(message, ToSettings::State(_)));
-        self.send_to_settings(ToSettings::State(Box::new(state)));
+        self.outbox.retain(|message| !matches!(message, ToApp::State(_)));
+        self.send_to_app(ToApp::State(Box::new(state)));
     }
 
-    /// Queues a message for the settings app and signals that one is waiting, so work that
+    /// Queues a message for the app and signals that one is waiting, so work that
     /// finishes between inputs reaches the app at once.
-    pub fn send_to_settings(&mut self, message: ToSettings) {
+    pub fn send_to_app(&mut self, message: ToApp) {
         self.outbox.push(message);
         self.outbox_ready.notify_one();
     }
 
     /// The messages queued since the last call.
-    pub fn take_outbox(&mut self) -> Vec<ToSettings> {
+    pub fn take_outbox(&mut self) -> Vec<ToApp> {
         std::mem::take(&mut self.outbox)
     }
 

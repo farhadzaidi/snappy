@@ -1,5 +1,5 @@
-//! The changes the settings app asks for, as rules on the settings themselves. The daemon
-//! validates and saves what they produce; the settings app's fake daemon runs the same rules.
+//! The changes the app asks for, as rules on the settings themselves. The daemon
+//! validates and saves what they produce; the app's fake daemon runs the same rules.
 
 use super::{LayoutEditError, LayoutOptions, MAX_WORKSPACES, Settings, Workspace};
 use crate::editor::is_separated;

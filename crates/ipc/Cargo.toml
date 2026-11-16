@@ -5,7 +5,7 @@ publish.workspace = true
 version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Messages between Snappy's daemon and its settings app."
+description = "Messages between Snappy's daemon and its app."
 
 [dependencies]
 snappy-core = { path = "../core" }

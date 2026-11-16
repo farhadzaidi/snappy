@@ -22,7 +22,7 @@ pub enum HistoryStep {
 impl HistoryStep {
     pub const ALL: [HistoryStep; 2] = [HistoryStep::Undo, HistoryStep::Redo];
 
-    /// The name the settings app and conflict messages use.
+    /// The name the app and conflict messages use.
     pub fn title(self) -> &'static str {
         match self {
             HistoryStep::Undo => "Undo window move",

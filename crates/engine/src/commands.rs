@@ -1,4 +1,4 @@
-//! Commands from the settings app: layouts, shortcuts and recording, workspaces, and
+//! Commands from the app: layouts, shortcuts and recording, workspaces, and
 //! preferences.
 
 use std::path::Path;
@@ -9,7 +9,7 @@ use snappy_core::layout::Layout;
 use snappy_core::settings::Reset;
 use snappy_core::settings::{LayoutOptions, Settings, SettingsError};
 use snappy_core::shortcuts::{Probe, Refusal, availability_probes};
-use snappy_ipc::{Command, ToSettings};
+use snappy_ipc::{Command, ToApp};
 use snappy_platform::Platform;
 
 use crate::caps_lock;
@@ -33,7 +33,7 @@ pub(crate) fn handle<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u64, com
         );
         core.announce_error(&refusal.message);
     }
-    core.send_to_settings(ToSettings::Reply {
+    core.send_to_app(ToApp::Reply {
         id,
         error: result.err(),
     });
@@ -118,7 +118,7 @@ fn apply<P: Platform>(core: &mut EngineState<P>, command: Command) -> Result<(),
         }
         Command::ProbeShortcut { chord } => {
             let available = core.platform.is_available(&chord.combo(core.settings.snappy_key));
-            core.send_to_settings(ToSettings::ProbeResult { available });
+            core.send_to_app(ToApp::ProbeResult { available });
             Ok(())
         }
         Command::SetWorkspacesEnabled { .. } => enable_workspaces(core),
@@ -377,7 +377,7 @@ fn enable_workspaces<P: Platform>(core: &mut EngineState<P>) -> Result<(), Strin
     Ok(())
 }
 
-/// Add a workspace, and tell the settings app which, so it can open it.
+/// Add a workspace, and tell the app which, so it can open it.
 fn add_workspace<P: Platform>(core: &mut EngineState<P>) -> Result<(), String> {
     let mut next = core.settings.clone();
     let Some(id) = next.add_workspace() else {

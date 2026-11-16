@@ -1,7 +1,7 @@
 //! The engine's state. Its behaviors are split by concern: what is on screen (`screen`),
 //! whether live control runs (`live_control`), shortcut registration (`hotkeys`), the zone
 //! overlay (`overlay`), the tray menu (`tray`), the debug log (`logging`), status messages
-//! (`status`), and what the settings app is sent (`app_state`).
+//! (`status`), and what the app is sent (`app_state`).
 
 mod app_state;
 mod hotkeys;
@@ -18,7 +18,7 @@ use snappy_core::keys::Os;
 use snappy_core::placement::drag::DragIntent;
 use snappy_core::settings::Settings;
 use snappy_core::shortcuts::HotKey;
-use snappy_ipc::{Status, ToSettings};
+use snappy_ipc::{Status, ToApp};
 use snappy_platform::{Capabilities, Caption, Display, LiveControl, Platform, WindowId};
 use tokio::sync::Notify;
 
@@ -76,7 +76,7 @@ pub(crate) struct EngineState<P> {
     /// Windows a new gesture has claimed; recovery leaves them alone.
     pub protected: Vec<WindowId>,
     pub pending_navigation: Option<PendingNavigation>,
-    /// The display and layout the settings app is previewing.
+    /// The display and layout the app is previewing.
     preview: Option<(String, String)>,
     /// The display whose overlay shows, so the debug log records when it appears and goes.
     overlay_on: Option<String>,
@@ -87,13 +87,13 @@ pub(crate) struct EngineState<P> {
     registration_failed: bool,
     pub workspaces: WorkspaceController,
     pub selection: Selection,
-    /// The settings app's process, so its window can be found.
-    pub settings_app_pid: Option<u32>,
+    /// The app's process, so its window can be found.
+    pub app_pid: Option<u32>,
     /// The latest message, which only the `announce` family sets.
     status: Option<Status>,
     status_counter: u64,
-    /// Messages for the settings app not yet taken, and the signal that there are some.
-    outbox: Vec<ToSettings>,
+    /// Messages for the app not yet taken, and the signal that there are some.
+    outbox: Vec<ToApp>,
     outbox_ready: Rc<Notify>,
     pub diagnostics: Diagnostics,
     pub debug: DebugLog,
@@ -135,7 +135,7 @@ impl<P: Platform> EngineState<P> {
             registration_failed: false,
             workspaces: WorkspaceController::default(),
             selection: Selection::default(),
-            settings_app_pid: None,
+            app_pid: None,
             status: None,
             status_counter: 0,
             outbox: Vec::new(),

@@ -1,6 +1,6 @@
 //! Routing platform events to the features that handle them.
 
-use snappy_ipc::ToSettings;
+use snappy_ipc::ToApp;
 use snappy_platform::{Platform, PlatformEvent, TrayCommand};
 
 use crate::engine::Engine;
@@ -101,8 +101,8 @@ impl<P: Platform + 'static> Engine<P> {
                 shared.cancel_current();
                 shared.core.borrow_mut().end_drag();
             }
-            PlatformEvent::OpenSettingsRequested | PlatformEvent::Tray(TrayCommand::ManageWorkspaces) => {
-                self.reveal_settings()
+            PlatformEvent::OpenAppRequested | PlatformEvent::Tray(TrayCommand::ManageWorkspaces) => {
+                self.reveal_app()
             }
             PlatformEvent::Tray(TrayCommand::SelectLayout { display, layout }) => {
                 commands::apply_layout(&mut shared.core.borrow_mut(), &display, &layout)
@@ -115,11 +115,11 @@ impl<P: Platform + 'static> Engine<P> {
         }
     }
 
-    /// Bring the settings window forward, switching to its workspace first.
-    fn reveal_settings(&self) {
+    /// Bring the app's window forward, switching to its workspace first.
+    fn reveal_app(&self) {
         let owner = {
             let mut core = self.shared.core.borrow_mut();
-            let pid = core.settings_app_pid;
+            let pid = core.app_pid;
             let window = core
                 .platform
                 .all_windows()
@@ -134,8 +134,8 @@ impl<P: Platform + 'static> Engine<P> {
             owner.filter(|owner| *owner != active && core.workspaces.is_running())
         };
         match owner {
-            Some(owner) => workspaces::request_switch(&self.shared, &owner, SwitchFocus::Settings),
-            None => self.shared.core.borrow_mut().send_to_settings(ToSettings::Focus),
+            Some(owner) => workspaces::request_switch(&self.shared, &owner, SwitchFocus::App),
+            None => self.shared.core.borrow_mut().send_to_app(ToApp::Focus),
         }
     }
 }

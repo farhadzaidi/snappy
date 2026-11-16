@@ -5,7 +5,7 @@ use snappy_platform::{TrayCommand, TrayDisplay, TrayItem, TrayMenu};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuAction {
-    OpenSettings,
+    OpenApp,
     Quit,
     Tray(TrayCommand),
 }
@@ -39,7 +39,7 @@ pub fn build(menu: &TrayMenu) -> Vec<MenuEntry> {
     let mut entries = vec![
         MenuEntry::Heading(heading.to_owned()),
         MenuEntry::Separator,
-        command("Open Snappy…", ",", MenuAction::OpenSettings),
+        command("Open Snappy…", ",", MenuAction::OpenApp),
         MenuEntry::SectionHeader("Layouts".to_owned()),
     ];
     entries.extend(menu.displays.iter().map(display_submenu));
@@ -184,7 +184,7 @@ mod tests {
             &entries[2],
             MenuEntry::Item {
                 key: ",",
-                action: MenuAction::OpenSettings,
+                action: MenuAction::OpenApp,
                 ..
             }
         ));

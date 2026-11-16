@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
-/// The argument the daemon starts the settings app with, telling it that its standard input
+/// The argument the daemon starts the app with, telling it that its standard input
 /// and output are the pipe. The app doesn't guess from standard input: a Windows release build
 /// started on its own has a null standard input, which reads as no terminal and ends at once.
 pub const DAEMON_ARGUMENT: &str = "--daemon";

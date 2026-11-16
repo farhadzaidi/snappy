@@ -1,5 +1,5 @@
 //! One daemon per session: a lock file holding the daemon's process ID. A
-//! second launch sends that process `SIGUSR1`, which opens the settings window.
+//! second launch sends that process `SIGUSR1`, which opens the app's window.
 //! `SIGTERM`, from `kill` or the session ending, quits the way the tray's Quit does, so
 //! parked windows come back first, and so do `SIGINT` and `SIGHUP`, from Ctrl+C or closing
 //! the terminal Snappy was started from. `SIGUSR2` stops for a restart, as when installing a
@@ -43,7 +43,7 @@ static WAKE_FD: AtomicI32 = AtomicI32::new(-1);
 pub enum Claim {
     /// This process is the daemon. Keep the lock for its lifetime.
     Primary(InstanceLock),
-    /// Another daemon runs and has been asked to open the settings window.
+    /// Another daemon runs and has been asked to open the app's window.
     Secondary,
 }
 
@@ -95,7 +95,7 @@ pub fn claim(path: &Path) -> std::io::Result<Claim> {
 }
 
 impl InstanceLock {
-    /// Forwards `SIGUSR1` to `events` as `OpenSettingsRequested`, then records this
+    /// Forwards `SIGUSR1` to `events` as `OpenAppRequested`, then records this
     /// process ID so second launches can find it. The handler is installed first, because
     /// the signal's default action ends the process.
     pub fn publish(&mut self, events: Sender<PlatformEvent>) -> std::io::Result<()> {
@@ -120,7 +120,7 @@ extern "C" fn on_signal(signum: c_int) {
 /// The event a received signal stands for.
 fn signal_event(signum: c_int) -> Option<PlatformEvent> {
     match signum {
-        SIGUSR1 => Some(PlatformEvent::OpenSettingsRequested),
+        SIGUSR1 => Some(PlatformEvent::OpenAppRequested),
         SIGTERM | SIGINT | SIGHUP => Some(PlatformEvent::QuitRequested),
         SIGUSR2 => Some(PlatformEvent::RestartRequested),
         _ => None,
@@ -175,7 +175,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn second_launch_signals_the_daemon_to_open_settings() {
+    fn second_launch_signals_the_daemon_to_open_the_app() {
         let folder = std::env::temp_dir().join(format!("snappy-instance-{}", std::process::id()));
         let path = folder.join(LOCK_NAME);
         let Claim::Primary(mut lock) = claim(&path).unwrap() else {
@@ -190,7 +190,7 @@ mod tests {
 
         assert!(matches!(claim(&path).unwrap(), Claim::Secondary));
         let event = received.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-        assert_eq!(event, PlatformEvent::OpenSettingsRequested);
+        assert_eq!(event, PlatformEvent::OpenAppRequested);
 
         drop(lock);
         assert!(matches!(claim(&path).unwrap(), Claim::Primary(_)));
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(signal_event(SIGINT), Some(PlatformEvent::QuitRequested));
         assert_eq!(signal_event(SIGHUP), Some(PlatformEvent::QuitRequested));
         assert_eq!(signal_event(SIGUSR2), Some(PlatformEvent::RestartRequested));
-        assert_eq!(signal_event(SIGUSR1), Some(PlatformEvent::OpenSettingsRequested));
+        assert_eq!(signal_event(SIGUSR1), Some(PlatformEvent::OpenAppRequested));
         assert_eq!(signal_event(0), None);
     }
 

@@ -6,8 +6,8 @@ use snappy_core::error::WindowError;
 
 use crate::messages::{NOT_STANDARD, unavailable};
 
-/// The settings app runs with the accessory policy, yet its windows are managed.
-pub const SETTINGS_APP_BUNDLE_ID: &str = "io.github.farhadzaidi.Snappy.Settings";
+/// Snappy's app runs with the accessory policy, yet its windows are managed.
+pub const SNAPPY_APP_BUNDLE_ID: &str = "io.github.farhadzaidi.Snappy.App";
 
 const STANDARD_WINDOW_SUBROLE: &str = "AXStandardWindow";
 
@@ -27,7 +27,7 @@ pub struct AppFacts {
 impl AppFacts {
     /// Apps whose windows Snappy can manage.
     pub fn is_supported(&self) -> bool {
-        !self.is_self && (self.regular || self.bundle_id.as_deref() == Some(SETTINGS_APP_BUNDLE_ID))
+        !self.is_self && (self.regular || self.bundle_id.as_deref() == Some(SNAPPY_APP_BUNDLE_ID))
     }
 
     /// Whether the app's windows may be managed.
@@ -116,8 +116,8 @@ mod tests {
     }
 
     #[test]
-    fn settings_app_is_managed_despite_its_accessory_policy() {
-        assert!(app(SETTINGS_APP_BUNDLE_ID, false).check().is_ok());
+    fn snappys_app_is_managed_despite_its_accessory_policy() {
+        assert!(app(SNAPPY_APP_BUNDLE_ID, false).check().is_ok());
     }
 
     #[test]

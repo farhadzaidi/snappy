@@ -1,16 +1,16 @@
-//! Starting up, Accessibility permission, live control coming and going, and the settings app's window.
+//! Starting up, Accessibility permission, live control coming and going, and the app's window.
 
 use snappy_core::geometry::Rect;
 use snappy_core::keys::{KeyChord, Modifier, SnappyKey};
 use snappy_core::settings::DragModifier;
 use snappy_engine::{Engine, Input};
 use snappy_fake::{FakePlatform, OverlayCall};
-use snappy_ipc::{Command, ToSettings};
+use snappy_ipc::{Command, ToApp};
 use snappy_platform::{LiveControl, PlatformEvent, Remedy, WindowId};
 
 use crate::support::{
     FLOATING, LEFT_ZONE, app_state, command, enable_workspaces, event, frame_of, hotkey_id, is_parked,
-    live_engine, paths_kept, scenario, send_to, settle, snappy, started, status_text, with_settings_window,
+    live_engine, paths_kept, scenario, send_to, settle, snappy, started, status_text, with_app_window,
     with_window,
 };
 
@@ -363,7 +363,7 @@ fn a_login_item_error_keeps_the_switch_off_and_shows_the_message() {
         engine.take_outbox();
 
         command(&engine, Command::SetLoginItem { enabled: true });
-        assert!(engine.take_outbox().contains(&ToSettings::Reply {
+        assert!(engine.take_outbox().contains(&ToApp::Reply {
             id: 1,
             error: Some(refusal.to_owned().into()),
         }));
@@ -374,10 +374,10 @@ fn a_login_item_error_keeps_the_switch_off_and_shows_the_message() {
 }
 
 #[test]
-fn what_finishes_between_inputs_signals_the_settings_app_at_once() {
+fn what_finishes_between_inputs_signals_the_app_at_once() {
     scenario(|| async {
         let engine = live_engine("outbox-signal", with_window(LEFT_ZONE));
-        engine.handle(Input::SettingsAppStarted { pid: 4242 });
+        engine.handle(Input::AppStarted { pid: 4242 });
         let ready = engine.outbox_ready();
         let signalled = || async {
             tokio::time::timeout(std::time::Duration::ZERO, ready.notified())
@@ -402,14 +402,14 @@ fn what_finishes_between_inputs_signals_the_settings_app_at_once() {
 }
 
 #[test]
-fn reopening_snappy_brings_the_settings_window_forward() {
+fn reopening_snappy_brings_the_app_window_forward() {
     scenario(|| async {
-        let (fake, _) = with_settings_window();
+        let (fake, _) = with_app_window();
         let engine = live_engine("reopen", fake);
-        engine.handle(Input::SettingsAppStarted { pid: 4242 });
+        engine.handle(Input::AppStarted { pid: 4242 });
         engine.take_outbox();
-        event(&engine, PlatformEvent::OpenSettingsRequested);
-        assert!(engine.take_outbox().contains(&ToSettings::Focus));
+        event(&engine, PlatformEvent::OpenAppRequested);
+        assert!(engine.take_outbox().contains(&ToApp::Focus));
     });
 }
 
@@ -418,12 +418,12 @@ fn closing_settings_keeps_snappy_running_and_quit_returns_parked_windows() {
     scenario(|| async {
         let name = "close-settings";
         let engine = live_engine(name, with_window(FLOATING));
-        engine.handle(Input::SettingsAppStarted { pid: 4242 });
+        engine.handle(Input::AppStarted { pid: 4242 });
         enable_workspaces(&engine);
         event(&engine, PlatformEvent::HotKey(send_to(&engine, 2)));
         settle(&engine).await;
 
-        engine.handle(Input::SettingsAppExited);
+        engine.handle(Input::AppExited);
         assert!(engine.is_live());
         assert!(engine.with_platform(|p| p.press_monitoring && !p.registered.is_empty()));
         assert!(is_parked(&engine, 1), "workspaces keep running");

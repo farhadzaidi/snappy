@@ -163,7 +163,7 @@ impl ShortcutId {
         }
     }
 
-    /// The name the settings app and messages give it, or none for a workspace, layout, or
+    /// The name the app and messages give it, or none for a workspace, layout, or
     /// zone that doesn't exist.
     pub fn title(&self, settings: &Settings) -> Option<String> {
         match self {

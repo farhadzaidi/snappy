@@ -15,7 +15,7 @@ pub struct Probe {
 }
 
 /// What to say when the OS or another app already holds `chord` for `shortcut`, naming that
-/// shortcut so the settings app can point to it. The Snappy key's probes and a recorder's
+/// shortcut so the app can point to it. The Snappy key's probes and a recorder's
 /// say the same.
 pub fn unavailable_refusal(chord: &KeyChord, shortcut: NamedShortcut, platform: Os) -> Refusal {
     Refusal {
