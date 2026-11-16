@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: FarhadZaidi.Snappy
+PackageVersion: @VERSION@
+PackageLocale: en-US
+Publisher: Syed Zaidi
+PublisherUrl: https://github.com/farhadzaidi
+PublisherSupportUrl: https://github.com/farhadzaidi/snappy/issues
+Author: Syed Zaidi
+PackageName: Snappy
+PackageUrl: https://github.com/farhadzaidi/snappy
+License: FSL-1.1-ALv2
+LicenseUrl: https://github.com/farhadzaidi/snappy/blob/v@VERSION@/LICENSE.md
+ShortDescription: Arrange windows into zones by dragging or with shortcuts.
+Description: |-
+  Snappy arranges your windows into zones. Pick a layout for each display, then drag a window with a key held, or press a shortcut, and it snaps into place.
+  It runs quietly in the background with a tray icon, and never uses the network.
+Moniker: snappy
+Tags:
+- productivity
+- snap
+- tiling
+- window-manager
+- zones
+ReleaseNotesUrl: https://github.com/farhadzaidi/snappy/releases/tag/v@VERSION@
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

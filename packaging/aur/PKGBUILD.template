@@ -1,0 +1,26 @@
+# Maintainer: Syed Zaidi <70859631+farhadzaidi@users.noreply.github.com>
+# Rendered from packaging/aur/PKGBUILD.template in github.com/farhadzaidi/snappy.
+
+pkgname=snappy-app-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Arrange windows into zones by dragging or with shortcuts'
+arch=('x86_64' 'aarch64')
+url='https://github.com/farhadzaidi/snappy'
+license=('LicenseRef-FSL-1.1-ALv2')
+depends=('cairo' 'dbus' 'gcc-libs' 'gdk-pixbuf2' 'glib2' 'glibc' 'gtk3' 'hicolor-icon-theme'
+         'libsoup3' 'webkit2gtk-4.1')
+provides=("snappy-app=${pkgver}")
+conflicts=('snappy-app')
+options=('!debug')
+source_x86_64=("${url}/releases/download/v${pkgver}/snappy-app-${pkgver}-linux-x86_64.tar.gz")
+source_aarch64=("${url}/releases/download/v${pkgver}/snappy-app-${pkgver}-linux-aarch64.tar.gz")
+sha256sums_x86_64=('@SHA256_LINUX_X86_64@')
+sha256sums_aarch64=('@SHA256_LINUX_AARCH64@')
+
+package() {
+  # Copied without the build user's ownership, so the files belong to root.
+  cp -R --preserve=mode "${srcdir}/snappy-app-${pkgver}-linux-${CARCH}/usr" "${pkgdir}/"
+  # The tarball names its license folder after the program; Arch expects the package's name.
+  mv "${pkgdir}/usr/share/licenses/snappy-app" "${pkgdir}/usr/share/licenses/${pkgname}"
+}

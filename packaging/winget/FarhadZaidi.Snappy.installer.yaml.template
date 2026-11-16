@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+PackageIdentifier: FarhadZaidi.Snappy
+PackageVersion: @VERSION@
+InstallerType: wix
+Scope: user
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+UpgradeBehavior: install
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/farhadzaidi/snappy/releases/download/v@VERSION@/Snappy-@VERSION@-windows-x64.msi
+  InstallerSha256: @SHA256_WINDOWS_X64_MSI@
+- Architecture: arm64
+  InstallerUrl: https://github.com/farhadzaidi/snappy/releases/download/v@VERSION@/Snappy-@VERSION@-windows-arm64.msi
+  InstallerSha256: @SHA256_WINDOWS_ARM64_MSI@
+ManifestType: installer
+ManifestVersion: 1.10.0

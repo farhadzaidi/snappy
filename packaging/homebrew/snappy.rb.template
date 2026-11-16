@@ -1,0 +1,36 @@
+cask "snappy" do
+  version "@VERSION@"
+  sha256 "@SHA256_MACOS_DMG@"
+
+  url "https://github.com/farhadzaidi/snappy/releases/download/v#{version}/Snappy-#{version}-macos-universal.dmg"
+  name "Snappy"
+  desc "Arrange windows into zones by dragging or with shortcuts"
+  homepage "https://github.com/farhadzaidi/snappy"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: ">= :sonoma"
+
+  app "Snappy.app"
+
+  uninstall launchctl: "io.github.farhadzaidi.Snappy.Agent",
+            quit:      [
+              "io.github.farhadzaidi.Snappy",
+              "io.github.farhadzaidi.Snappy.App",
+            ]
+
+  zap trash: [
+    "~/Library/Application Support/Snappy",
+    "~/Library/Caches/io.github.farhadzaidi.Snappy",
+    "~/Library/Caches/io.github.farhadzaidi.Snappy.App",
+    "~/Library/HTTPStorages/io.github.farhadzaidi.Snappy.App",
+    "~/Library/Logs/Snappy",
+    "~/Library/Preferences/io.github.farhadzaidi.Snappy.App.plist",
+    "~/Library/Preferences/io.github.farhadzaidi.Snappy.plist",
+    "~/Library/Saved Application State/io.github.farhadzaidi.Snappy.App.savedState",
+    "~/Library/WebKit/io.github.farhadzaidi.Snappy.App",
+  ]
+end
