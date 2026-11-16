@@ -2,7 +2,7 @@
 
 Every app on the Mac App Store runs in the App Sandbox. Snappy's store build is the daemon built with the `mac-app-store` feature (`crates/macos`, forwarded by `apps/snappy`), which leaves out what the sandbox doesn't allow. `tools/macos/app-store.sh` builds, signs, and packages it, and `.github/workflows/mac-app-store.yml` does that for each release and uploads the package to App Store Connect.
 
-The store listing is called **Snappy App**, because "Snappy" is taken on the App Store. The name under the icon, in the menu bar, and in System Settings stays **Snappy**: it comes from the bundles' `CFBundleDisplayName`, not from the listing.
+The store listing is called **Snappy - Window Zones**, because "Snappy" is taken on the App Store, and the same name is used on the Microsoft Store. The name under the icon, in the menu bar, and in System Settings stays **Snappy**: it comes from the bundles' `CFBundleDisplayName`, not from the listing.
 
 ## What's different in the store build
 
@@ -65,7 +65,7 @@ All of this is in the Apple Developer account of the team that publishes Snappy.
 1. **App ID.** Certificates, Identifiers & Profiles → Identifiers → App IDs: an explicit App ID for `io.github.farhadzaidi.Snappy`, with no extra capabilities. The app's helper, `io.github.farhadzaidi.Snappy.App`, inherits the daemon's sandbox, so it needs no App ID or profile of its own, and no App Group is needed because the two talk over pipes.
 2. **Certificates.** An **Apple Distribution** certificate and a **Mac Installer Distribution** certificate (it shows in Keychain Access as "3rd Party Mac Developer Installer"). Export each with its private key as a `.p12`, with the same password.
 3. **Provisioning profile.** Profiles → Distribution → **Mac App Store Connect**, for the App ID above and the Apple Distribution certificate. Download the `.provisionprofile`.
-4. **The app record.** App Store Connect → Apps → New App: platform macOS, name **Snappy App**, bundle ID `io.github.farhadzaidi.Snappy`, a SKU such as `snappy`. Category Productivity, free, and App Privacy "Data Not Collected".
+4. **The app record.** App Store Connect → Apps → New App: platform macOS, name **Snappy - Window Zones**, bundle ID `io.github.farhadzaidi.Snappy`, a SKU such as `snappy`. Category Productivity, free, and App Privacy "Data Not Collected".
 5. **API key.** App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys: a key with the **App Manager** role. Download the `.p8`, which can be downloaded only once, and note its Key ID and the Issuer ID.
 6. **Secrets.** In the GitHub repository, Settings → Secrets and variables → Actions. Base64 files with `base64 -i <file> | pbcopy`.
 

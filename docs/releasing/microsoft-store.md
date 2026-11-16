@@ -13,12 +13,12 @@ The package's version is the daemon's Cargo version with a fourth part of 0, suc
 
 ### 1. A Partner Center account
 
-1. Sign up as an individual developer at [storedeveloper.microsoft.com](https://storedeveloper.microsoft.com). The publisher display name is **Syed Zaidi**, which must match `PublisherDisplayName` in the manifest.
-2. In Partner Center, under **Apps and games**, choose **New product** → **MSIX or PWA app** and reserve the name **Snappy**. If it's taken, reserve **Snappy App** and change `DisplayName` in the manifest's `Properties` and `uap:VisualElements` to match.
+1. Sign up as an individual developer at [storedeveloper.microsoft.com](https://storedeveloper.microsoft.com). The publisher display name is **Syed F Zaidi**, which must match `PublisherDisplayName` in the manifest.
+2. In Partner Center, under **Apps and games**, choose **New product** → **MSIX or PWA app** and reserve the name **Snappy - Window Zones**, the Store listing's name. Then, under **Product management** → **Manage app names**, reserve **Snappy** as well: the package's Start menu name (`DisplayName` in `uap:VisualElements`) is plain "Snappy", and the Store only accepts names reserved for the app. If "Snappy" is taken, set that `DisplayName` to the listing name too.
 3. Open the product's **Product management** → **Product identity** page. Note:
-   - **Package/Identity/Name**, such as `12345SyedZaidi.Snappy`;
+   - **Package/Identity/Name**, such as `SyedFZaidi.Snappy-WindowZones`;
    - **Package/Identity/Publisher**, such as `CN=1A2B3C4D-…`;
-   - **Package/Properties/PublisherDisplayName**, which should be `Syed Zaidi`;
+   - **Package/Properties/PublisherDisplayName**, which should be `Syed F Zaidi`;
    - the **Store ID**, such as `9N…`, which is the product ID.
 
 ### 2. Access for the workflow

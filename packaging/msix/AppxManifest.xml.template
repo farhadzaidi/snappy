@@ -19,8 +19,10 @@
     ProcessorArchitecture="{{ARCHITECTURE}}" />
 
   <Properties>
-    <DisplayName>Snappy</DisplayName>
-    <PublisherDisplayName>Syed Zaidi</PublisherDisplayName>
+    <!-- The Store listing's name. The Start menu, taskbar, and Settings use the short name in
+         VisualElements; the Store accepts both because both are names reserved for the app. -->
+    <DisplayName>Snappy - Window Zones</DisplayName>
+    <PublisherDisplayName>Syed F Zaidi</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
