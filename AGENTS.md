@@ -77,6 +77,6 @@ Ask the owner before adding a dependency. Prefer the standard library and what t
 
 ## Before committing
 
-- `tools/check.sh` and `pnpm -C apps/app/ui e2e` pass. A change to an adapter is also linted for its OS (`tools/cross-check.sh`) and run in its sandbox ([CONTRIBUTING.md](CONTRIBUTING.md#testing)).
+- `tools/check.sh` and `tools/e2e.sh` pass. A change to an adapter is also linted for its OS (`tools/cross-check.sh`) and run in its sandbox ([CONTRIBUTING.md](CONTRIBUTING.md#testing)).
 - One logical change per commit, with a message that says what changed and why. No co-author or attribution lines.
 - The repository is `github.com/farhadzaidi/snappy`. Commit locally; push, tag, or release only when the owner asks. Never rewrite pushed history.

@@ -51,7 +51,7 @@ npm install -g pnpm@9
 pnpm -C apps/app/ui install
 ```
 
-For the app's end-to-end tests, also install the browsers they run in:
+The app's end-to-end tests run in Playwright's own container, so they need [Docker](https://docs.docker.com/engine/install/). To also run them straight on your machine, which is quicker while you work on one test, install the browsers:
 
 ```sh
 pnpm -C apps/app/ui exec playwright install chromium webkit
@@ -183,8 +183,10 @@ Copy-Item target\release\snappy.exe, target\release\snappy-app.exe $dest
 
 ```sh
 tools/check.sh              # formatting, lints, every Rust test, and the app's checks
-pnpm -C apps/app/ui e2e     # the app end to end, in Chromium and WebKit
+tools/e2e.sh                # the app end to end, in Chromium and WebKit, as CI runs it
 ```
+
+Some end-to-end tests measure how text lays out, and fonts differ between machines, so `tools/e2e.sh` runs them in Playwright's container, the same way CI does. `pnpm -C apps/app/ui e2e` runs them with your own browsers and fonts, which is quicker for one test, but layout tests may disagree with CI there.
 
 ### If you changed an adapter
 

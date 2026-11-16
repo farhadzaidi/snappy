@@ -47,9 +47,7 @@ jobs:
       - run: pnpm -C apps/app/ui install --frozen-lockfile
       - run: tools/check.sh
       - name: App end to end
-        run: |
-          pnpm -C apps/app/ui exec playwright install --with-deps chromium webkit
-          pnpm -C apps/app/ui e2e
+        run: tools/e2e.sh
 
   # The macOS and Windows adapters compile only on their own systems. Their integration
   # tests drive a real desktop, so here they are linted and unit-tested.
