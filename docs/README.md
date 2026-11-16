@@ -42,3 +42,7 @@ For setting up, building, running, and testing, see [CONTRIBUTING.md](../CONTRIB
 - [Adapter tests](adapter-tests.md): unit tests, the fake GNOME Shell, and integration tests against real desktops.
 - [The live suite](live-suite.md): the real daemon, real windows, and real input.
 - [Sandboxes](sandboxes.md): the containers, sealed-off KWin, and VMs the desktop tests run in.
+
+## Releasing
+
+- [Releasing](releasing/README.md): setting the version, the release workflow, the packages it builds, and signing.

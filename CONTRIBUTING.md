@@ -288,8 +288,6 @@ The tray glyph on Linux and Windows is also drawn in code (`crates/platform/src/
 
 ## Releasing
 
-Releases are made by the maintainer from `main`, once CI passes:
+The maintainer releases from `main` once CI passes, or from a release branch for a hotfix. `tools/release/bump.sh <version>` sets the version everywhere it's written. Pushing the tag `v<version>` runs the release workflow, which builds every package and drafts a GitHub release to check and publish.
 
-1. Set the new version in `[workspace.package]` in `Cargo.toml`, the macOS property lists in `packaging/macos`, the GNOME extension's `metadata.json`, and the app's `package.json`. Tests check they all match.
-2. Commit, tag the commit `v<version>`, and push the tag.
-3. Publish a GitHub release for the tag, with notes on what changed since the last one.
+[docs/releasing/](docs/releasing/README.md) covers the whole process, the packages, hotfixes, and the signing secrets.
