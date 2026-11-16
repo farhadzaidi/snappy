@@ -60,7 +60,7 @@ pub fn placement(zone: &OverlayZone, work_area: Rect, scale: f64) -> Placement {
 
 #[cfg(test)]
 mod tests {
-    use snappy_platform::overlay_style::mark_border;
+    use snappy_platform::overlay_style::{mark_border, number_size};
     use snappy_platform::{Caption, MarkStyle};
 
     use super::*;
@@ -94,7 +94,7 @@ mod tests {
         assert_eq!(placed.shape, Rect::new(2.0, 2.0, 396.0, 296.0));
         assert_eq!(placed.corner_radius, 32.0);
         assert_eq!(placed.border_width, 8.0);
-        assert_eq!(placed.number_size, 48.0);
+        assert_eq!(placed.number_size, number_size(placed.shape.height, 2.0));
     }
 
     #[test]
