@@ -12,9 +12,9 @@ import Shell from 'gi://Shell';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-/** Snappy's top bar item: STATUS_AREA_ROLE in apps/gnome-extension/menu.js. */
+/** Snappy's top bar item: STATUS_AREA_ROLE in crates/gnome/extension/menu.js. */
 const SNAPPY_ITEM = 'snappy';
-/** The name Snappy's extension gives its overlay actors, in apps/gnome-extension/overlay.js. */
+/** The name Snappy's extension gives its overlay actors, in crates/gnome/extension/overlay.js. */
 const SNAPPY_OVERLAY = 'snappy-overlay';
 
 const INTERFACE = `

@@ -27,51 +27,21 @@ pub const METADATA: &str = "metadata.json";
 pub const EXTENSIONS_FOLDER: &str = "gnome-shell/extensions";
 
 pub const FILES: &[(&str, &[u8])] = &[
-    (
-        "extension.js",
-        include_bytes!("../../../apps/gnome-extension/extension.js"),
-    ),
-    (
-        "service.js",
-        include_bytes!("../../../apps/gnome-extension/service.js"),
-    ),
-    (
-        "compat.js",
-        include_bytes!("../../../apps/gnome-extension/compat.js"),
-    ),
-    (
-        "windows.js",
-        include_bytes!("../../../apps/gnome-extension/windows.js"),
-    ),
-    (
-        "input.js",
-        include_bytes!("../../../apps/gnome-extension/input.js"),
-    ),
-    (
-        "shortcuts.js",
-        include_bytes!("../../../apps/gnome-extension/shortcuts.js"),
-    ),
-    (
-        "capsLock.js",
-        include_bytes!("../../../apps/gnome-extension/capsLock.js"),
-    ),
-    (
-        "overlay.js",
-        include_bytes!("../../../apps/gnome-extension/overlay.js"),
-    ),
-    ("menu.js", include_bytes!("../../../apps/gnome-extension/menu.js")),
-    (
-        "parking.js",
-        include_bytes!("../../../apps/gnome-extension/parking.js"),
-    ),
+    ("extension.js", include_bytes!("../extension/extension.js")),
+    ("service.js", include_bytes!("../extension/service.js")),
+    ("compat.js", include_bytes!("../extension/compat.js")),
+    ("windows.js", include_bytes!("../extension/windows.js")),
+    ("input.js", include_bytes!("../extension/input.js")),
+    ("shortcuts.js", include_bytes!("../extension/shortcuts.js")),
+    ("capsLock.js", include_bytes!("../extension/capsLock.js")),
+    ("overlay.js", include_bytes!("../extension/overlay.js")),
+    ("menu.js", include_bytes!("../extension/menu.js")),
+    ("parking.js", include_bytes!("../extension/parking.js")),
     (
         "icons/snappy-symbolic.svg",
-        include_bytes!("../../../apps/gnome-extension/icons/snappy-symbolic.svg"),
+        include_bytes!("../extension/icons/snappy-symbolic.svg"),
     ),
-    (
-        METADATA,
-        include_bytes!("../../../apps/gnome-extension/metadata.json"),
-    ),
+    (METADATA, include_bytes!("../extension/metadata.json")),
 ];
 
 /// `GetExtensionInfo` states, which GNOME 47 renamed but kept the numbers of.
@@ -317,7 +287,7 @@ mod tests {
 
     #[test]
     fn every_extension_file_is_built_in() {
-        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/gnome-extension");
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("extension");
         let mut on_disk = Vec::new();
         let mut pending = vec![folder.clone()];
         while let Some(dir) = pending.pop() {

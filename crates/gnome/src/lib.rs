@@ -2,7 +2,7 @@
 //!
 //! Wayland lets no ordinary program move other apps' windows, watch global input, or own
 //! global shortcuts; on GNOME only GNOME Shell can. Snappy's GNOME Shell extension
-//! (`apps/gnome-extension`) does those things when asked over the session bus and reports
+//! (`crates/gnome/extension`) does those things when asked over the session bus and reports
 //! what happens. Every decision stays here and in the engine.
 //!
 //! `App` owns the event loop, which turns the extension's events into engine events;

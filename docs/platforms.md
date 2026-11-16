@@ -123,7 +123,7 @@ Apps draw their tabs inside one window on Linux, so every Linux adapter reports 
 
 ### GNOME on Wayland
 
-`crates/gnome` and the GNOME Shell extension in `apps/gnome-extension`, for GNOME 46 to 49. Wayland lets no ordinary program move other apps' windows, watch global input, or own global shortcuts; on GNOME only GNOME Shell can. So the extension does those things when the daemon asks and reports what happens, and makes no decisions of its own. Calls that differ between GNOME versions go through `compat.js`.
+`crates/gnome` and the GNOME Shell extension in `crates/gnome/extension`, for GNOME 46 to 49. Wayland lets no ordinary program move other apps' windows, watch global input, or own global shortcuts; on GNOME only GNOME Shell can. So the extension does those things when the daemon asks and reports what happens, and makes no decisions of its own. Calls that differ between GNOME versions go through `compat.js`.
 
 **Installing the extension** (`src/extension.rs`). The extension's files are built into the daemon, which writes any that are missing or differ into the user's extensions folder at every start. GNOME Shell on Wayland loads a new extension only at the next login, so a fresh install turns itself on in GNOME's settings and the app's window asks the user to log out and back in once, with a **Log out now** button. After that, turning it on or off is the user's choice.
 
@@ -162,7 +162,7 @@ Apps draw their tabs inside one window on Linux, so every Linux adapter reports 
 
 ### KDE Plasma on Wayland
 
-`crates/kwin` and the KWin script in `apps/kwin-script`, for Plasma 6.8. On Wayland only KWin can move other apps' windows or see them move, so the script does that when the daemon asks and reports what happens, and makes no decisions. Unlike GNOME, the overlay, shortcuts, and modifier keys don't go through the script: the daemon draws the overlay as a Wayland client, registers shortcuts with KDE's shortcut service, and reads modifiers from KWin directly.
+`crates/kwin` and the KWin script in `crates/kwin/script`, for Plasma 6.8. On Wayland only KWin can move other apps' windows or see them move, so the script does that when the daemon asks and reports what happens, and makes no decisions. Unlike GNOME, the overlay, shortcuts, and modifier keys don't go through the script: the daemon draws the overlay as a Wayland client, registers shortcuts with KDE's shortcut service, and reads modifiers from KWin directly.
 
 **Loading the script** (`src/script.rs`). The script's files are built into the daemon. At every start it writes them to a folder in `$XDG_RUNTIME_DIR` named for their hash, since KWin caches compiled QML by path, and loads them over KWin's scripting D-Bus interface, replacing any copy a crashed daemon left loaded. Nothing is installed and there's no need to log out. Quitting unloads it, and when KWin starts over the daemon loads it again.
 

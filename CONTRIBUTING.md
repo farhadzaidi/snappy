@@ -41,7 +41,7 @@ Optional, depending on what you work on:
 | `crates/engine` | Snappy's runtime state and the order things happen in; the only writer of Snappy's files. |
 | `crates/platform` | The interfaces every OS adapter implements, and the events they report. |
 | `crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome`, `crates/kwin` | One adapter per desktop. `crates/linux` holds what the Linux ones share. |
-| `apps/gnome-extension`, `apps/kwin-script` | The parts that run inside GNOME Shell and KWin on Wayland. |
+| `crates/gnome/extension`, `crates/kwin/script` | The parts that run inside GNOME Shell and KWin on Wayland. |
 | `apps/snappy` | The daemon: the program that runs in the background. |
 | `apps/app` | The app: a Tauri shell (`src-tauri`) around a React UI (`ui`). |
 | `crates/ipc` | Messages between the daemon and the app. |

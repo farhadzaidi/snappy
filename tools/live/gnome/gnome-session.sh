@@ -104,7 +104,7 @@ enabled="'$test_uuid'"
 if [[ "${SNAPPY_GNOME_PREINSTALL:-}" == 1 ]]; then
     snappy_folder="$HOME/.local/share/gnome-shell/extensions/snappy@farhadzaidi.github.io"
     mkdir -p "$snappy_folder"
-    cp -r "$here/../../../apps/gnome-extension/." "$snappy_folder/"
+    cp -r "$here/../../../crates/gnome/extension/." "$snappy_folder/"
     enabled+=", 'snappy@farhadzaidi.github.io'"
 fi
 gsettings set org.gnome.shell enabled-extensions "[$enabled]"

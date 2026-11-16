@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn the_script_handles_every_request_and_reports_only_known_events() {
-        let service = include_str!("../../../apps/kwin-script/service.js");
+        let service = include_str!("../script/service.js");
         let handled = quoted_after(service, "case '");
         for request in one_of_each_request() {
             let json = serde_json::to_value(&request).unwrap();
@@ -308,18 +308,18 @@ mod tests {
     /// The script's source declares the same protocol version and names.
     #[test]
     fn the_script_speaks_this_protocol_version() {
-        let service = include_str!("../../../apps/kwin-script/service.js");
+        let service = include_str!("../script/service.js");
         assert!(service.contains(&format!("var PROTOCOL_VERSION = {PROTOCOL_VERSION};")));
         assert_eq!(OBJECT_PATH, snappy_linux::names::object_path("KWin"));
         assert_eq!(INTERFACE, format!("{BUS_NAME}.KWin"));
-        let main = include_str!("../../../apps/kwin-script/main.qml");
+        let main = include_str!("../script/main.qml");
         for method in [EVENT_METHOD, TAKE_METHOD, ANSWER_METHOD] {
             assert!(main.contains(&format!("method: \"{method}\"")), "{method}");
         }
         for name in [BUS_NAME, OBJECT_PATH, INTERFACE, DOORBELL, GONE] {
             assert!(service.contains(&format!("'{name}'")), "{name}");
         }
-        let parking = include_str!("../../../apps/kwin-script/parking.js");
+        let parking = include_str!("../script/parking.js");
         for refusal in [REFUSED_ALL_DESKTOPS, REFUSED_NOT_MOVED] {
             assert!(parking.contains(&format!("'{refusal}'")), "{refusal}");
         }

@@ -43,6 +43,6 @@ SOURCE_DATE_EPOCH=0 rsvg-convert --format pdf --dpi-x 72 --dpi-y 72 \
 # glyph itself, in the gray symbolic icons are drawn in.
 sed -e 's/#000000/#bebebe/' \
     -e 's|<!--.*-->|<!-- Written by tools/icon/generate.sh from assets/icon/snappy-glyph.svg. -->|' \
-    "$icon/snappy-glyph.svg" >"$root/apps/gnome-extension/icons/snappy-symbolic.svg"
+    "$icon/snappy-glyph.svg" >"$root/crates/gnome/extension/icons/snappy-symbolic.svg"
 
 echo "Wrote $icon and the GNOME extension's icon"

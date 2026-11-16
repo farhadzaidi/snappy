@@ -22,7 +22,7 @@ Snappy moves other apps' windows, registers global shortcuts, and changes keyboa
 - `crates/core` holds every rule: geometry, snapping, swaps, navigation, settings and their validation, shortcut conflicts, workspace bookkeeping. It has no OS dependencies and does no I/O, threads, or clocks; where logic needs an effect, core defines a small trait that the engine or tests implement.
 - `crates/engine` owns all runtime state and is the only writer of settings, state, and log files. Every window move goes through its window-operation queue.
 - Adapters (`crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome`, `crates/kwin`) translate between the engine and the OS. They make no policy decisions: if an adapter is choosing between behaviors, that choice belongs in core or the engine. What more than one Linux adapter needs goes in `crates/linux`. A new capability every adapter must provide is a trait in `crates/platform`, implemented by each adapter and by `crates/fake`.
-- The GNOME extension (`apps/gnome-extension`) and the KWin script (`apps/kwin-script`) stay thin: they carry out requests and report events.
+- The GNOME extension (`crates/gnome/extension`) and the KWin script (`crates/kwin/script`) stay thin: they carry out requests and report events.
 - The app computes no rules itself; it asks core through `crates/wasm`.
 - Shipped code has no test-only branches. Tests use `crates/fake` or their own fakes; read-only helpers for tests live in each adapter's `reference` module, built only with its `reference` feature.
 - No blocking OS call on a UI thread, and nothing polls or wakes up while Snappy is idle. Keyboard events are observed only during a drag or a window operation, and, with Caps Lock as the Snappy key, Caps Lock itself.

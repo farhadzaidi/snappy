@@ -65,7 +65,7 @@ They are separate crates for three reasons:
 |---|---|
 | A rule: geometry, snapping, swaps, navigation, settings validation, shortcut conflicts, workspace bookkeeping | `crates/core`, with unit tests beside it |
 | When something happens, or what state changes as a result | `crates/engine` |
-| How an OS does something | its adapter: `crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome` with its extension in `apps/gnome-extension`, or `crates/kwin` with its script in `apps/kwin-script`; what more than one Linux adapter needs goes in `crates/linux` |
+| How an OS does something | its adapter: `crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome` with its extension in `crates/gnome/extension`, or `crates/kwin` with its script in `crates/kwin/script`; what more than one Linux adapter needs goes in `crates/linux` |
 | A capability every adapter must provide | a trait method in `crates/platform`, implemented by each adapter and by `crates/fake` |
 | Something the app can ask for | a `Command` in `crates/ipc`, handled in `crates/engine/src/commands.rs` |
 | A rule the app needs too | `crates/core`, exported through `crates/wasm` and `apps/app/ui/src/core/snappyCore.ts` |

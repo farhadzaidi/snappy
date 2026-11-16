@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn probes_read_work_areas_as_snappys_script_does() {
-        let service = include_str!("../../../../apps/kwin-script/service.js");
+        let service = include_str!("../../../kwin/script/service.js");
         assert!(service.contains(&format!("var MAXIMIZE_AREA = {MAXIMIZE_AREA};")));
     }
 }

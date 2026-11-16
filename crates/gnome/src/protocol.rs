@@ -462,16 +462,16 @@ mod tests {
 
     /// Every file of the extension, for the names they share with the daemon.
     const EXTENSION: [&str; 10] = [
-        include_str!("../../../apps/gnome-extension/service.js"),
-        include_str!("../../../apps/gnome-extension/windows.js"),
-        include_str!("../../../apps/gnome-extension/input.js"),
-        include_str!("../../../apps/gnome-extension/capsLock.js"),
-        include_str!("../../../apps/gnome-extension/parking.js"),
-        include_str!("../../../apps/gnome-extension/shortcuts.js"),
-        include_str!("../../../apps/gnome-extension/menu.js"),
-        include_str!("../../../apps/gnome-extension/overlay.js"),
-        include_str!("../../../apps/gnome-extension/compat.js"),
-        include_str!("../../../apps/gnome-extension/extension.js"),
+        include_str!("../extension/service.js"),
+        include_str!("../extension/windows.js"),
+        include_str!("../extension/input.js"),
+        include_str!("../extension/capsLock.js"),
+        include_str!("../extension/parking.js"),
+        include_str!("../extension/shortcuts.js"),
+        include_str!("../extension/menu.js"),
+        include_str!("../extension/overlay.js"),
+        include_str!("../extension/compat.js"),
+        include_str!("../extension/extension.js"),
     ];
 
     #[test]
@@ -513,7 +513,7 @@ mod tests {
     /// The extension's source declares the same protocol version.
     #[test]
     fn the_extension_speaks_this_protocol_version() {
-        let service = include_str!("../../../apps/gnome-extension/service.js");
+        let service = include_str!("../extension/service.js");
         assert!(service.contains(&format!("export const PROTOCOL_VERSION = {PROTOCOL_VERSION};")));
         assert_eq!(OBJECT_PATH, snappy_linux::names::object_path("Shell"));
         assert_eq!(INTERFACE, format!("{}.Shell", snappy_linux::names::APP_ID));
@@ -522,7 +522,7 @@ mod tests {
         assert!(service.contains(&format!("<method name=\"{CALL_METHOD}\">")));
         assert!(service.contains(&format!("<signal name=\"{EVENT_SIGNAL}\">")));
         assert!(service.contains(&format!("<property name=\"{VERSION_PROPERTY}\"")));
-        let parking = include_str!("../../../apps/gnome-extension/parking.js");
+        let parking = include_str!("../extension/parking.js");
         for refusal in [REFUSED_ALL_WORKSPACES, REFUSED_NOT_MOVED] {
             assert!(parking.contains(&format!("'{refusal}'")), "{refusal}");
         }
