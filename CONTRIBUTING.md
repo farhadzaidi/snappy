@@ -130,6 +130,6 @@ Results land in `target/live/<desktop>/`. [docs/testing.md](docs/testing.md) exp
 
 Releases are made by the maintainer from `main`, once CI passes:
 
-1. Set the new version in `[workspace.package]` in `Cargo.toml`, `apps/settings/src-tauri/tauri.conf.json`, and the macOS property lists in `packaging/macos`.
-2. Note the changes in `CHANGELOG.md`.
-3. Commit, tag the commit `v<version>`, and push the tag.
+1. Set the new version in `[workspace.package]` in `Cargo.toml`, the macOS property lists in `packaging/macos`, the GNOME extension's `metadata.json`, and the settings UI's `package.json`. Tests check they all match.
+2. Commit, tag the commit `v<version>`, and push the tag.
+3. Publish a GitHub release for the tag, with notes on what changed since the last one.

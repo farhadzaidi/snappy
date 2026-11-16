@@ -8,7 +8,6 @@ authors = ["Syed Zaidi"]
 repository = "https://github.com/farhadzaidi/snappy"
 edition = "2024"
 publish = false
-license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

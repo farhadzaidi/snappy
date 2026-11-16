@@ -101,8 +101,4 @@ On every system, turn on **Open at login** in Snappy's settings to start it auto
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) explains how to set up a development environment, build, test, and release. To report a security problem, see [SECURITY.md](SECURITY.md).
-
-## License
-
-Snappy is licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the [MIT license](LICENSE-MIT), at your option.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to set up a development environment, build, test, and release.
