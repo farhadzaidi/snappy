@@ -128,7 +128,7 @@ This serves the app at http://localhost:5179 against a fake, in-memory daemon:
 pnpm -C apps/app/ui dev
 ```
 
-- Add `?platform=windows` or `?platform=linux` to the address to see another platform's controls. The default is macOS.
+- Add `?platform=windows` or `?platform=linux` to the address to see another platform's controls. The default is macOS. Add `&build=app-store` to see the Mac App Store build's.
 - In the browser console, `window.snappyFake` is the fake daemon.
 - `SNAPPY_UI_PORT` picks another port.
 

@@ -6,7 +6,7 @@ import { core } from "../../core/snappyCore";
 import type { Bridge, Transport } from "../bridge";
 import type { AppState, Command, ToApp } from "../protocol";
 import type { FakeFiles } from "./fakeFiles";
-import { FAKE_DISPLAYS, initialState } from "./fixtures";
+import { FAKE_DISPLAYS, initialState, type FakeBuild } from "./fixtures";
 import { applyCommand } from "./reducer";
 
 /** The daemon's protocol version; `snappy-ipc` checks this copy matches its own. */
@@ -30,8 +30,8 @@ export class FakeDaemon implements Transport {
   /** Probe answers kept back, while `holdProbeAnswers` holds them. */
   private heldProbeAnswers: ToApp[] | null = null;
 
-  constructor(platform: PlatformName) {
-    this.state = initialState(platform);
+  constructor(platform: PlatformName, build: FakeBuild = "github") {
+    this.state = initialState(platform, build);
   }
 
   listen(onMessage: (message: ToApp) => void): () => void {

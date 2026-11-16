@@ -588,6 +588,34 @@ test("caps lock as the snappy key is a switch of the snappy key, refused with th
   await expect(snappyKey.getByRole("alert")).toHaveText(problem);
 });
 
+test("in the App Store build, caps lock shows as unavailable with the reason under it", async ({ page }) => {
+  await openApp(page, "macos", "app-store");
+  await showPage(page, "Settings");
+  const snappyKey = group(page, "Snappy key");
+  const capsLock = snappyKey.getByRole("switch", { name: "Also use Caps Lock as the Snappy key" });
+  const reason = "Apps from the App Store can't remap Caps Lock, so it can't be the Snappy key.";
+  await expect(capsLock).toBeDisabled();
+  await expect(capsLock).toHaveAttribute("aria-checked", "false");
+  await expect(capsLock).toHaveAccessibleDescription(reason);
+  await expect(snappyKey.getByText(reason)).toBeVisible();
+  await expect(snappyKey.getByText("A tap still toggles Caps Lock.")).toHaveCount(0);
+
+  await capsLock.click({ force: true });
+  expect(await lastCommandOf(page, "setCapsLockAsSnappyKey")).toBeUndefined();
+
+  // A setting imported from another build stays off here, with no other warning.
+  await page.evaluate(() =>
+    window.snappyFake.patchState((state) => ({
+      ...state,
+      settings: { ...state.settings, capsLockAsSnappyKey: true },
+      capsLockProblem: "Caps Lock is already remapped.",
+    })),
+  );
+  await expect(capsLock).toHaveAttribute("aria-checked", "false");
+  await expect(capsLock).toBeDisabled();
+  await expect(snappyKey.getByRole("alert")).toHaveCount(0);
+});
+
 test("reset brings back Control, Option, and Command after asking", async ({ page }) => {
   const reset = page.getByRole("button", { name: "Reset the Snappy key" });
   await group(page, "Snappy key").getByRole("button", { name: "Control", exact: true }).click();

@@ -412,3 +412,68 @@ fn caps_lock_lost_to_settings_that_remap_it_stays_off_and_says_why() {
         );
     });
 }
+
+const SANDBOXED: &str = "Apps from the App Store can't remap Caps Lock, so it can't be the Snappy key.";
+
+/// A platform built without Caps Lock as the Snappy key. Its hold refuses too, as the
+/// adapter's backstop, so any attempt would show as a problem and an error.
+fn without_caps_lock() -> FakePlatform {
+    let mut fake = with_window(FLOATING);
+    fake.caps_lock_unavailable = Some(SANDBOXED);
+    fake.caps_lock_refusal = Some(CapsLockRefusal::Refused(SANDBOXED.to_owned()));
+    fake
+}
+
+#[test]
+fn a_build_without_caps_lock_says_so_up_front_and_refuses_turning_it_on() {
+    scenario(|| async {
+        let engine = live_engine("caps-lock-unavailable", without_caps_lock());
+        let state = app_state(&engine);
+        assert_eq!(state.caps_lock_unavailable.as_deref(), Some(SANDBOXED));
+        assert_eq!(state.caps_lock_problem, None);
+
+        assert_eq!(turn_on(&engine).as_deref(), Some(SANDBOXED));
+        assert!(!engine.settings().caps_lock_as_snappy_key);
+        assert_eq!(held_as(&engine), None);
+        assert_eq!(app_state(&engine).caps_lock_problem, None, "the reply says why");
+    });
+}
+
+#[test]
+fn a_build_without_caps_lock_treats_a_stored_setting_as_off_without_an_error() {
+    scenario(|| async {
+        let name = "caps-lock-unavailable-stored";
+        let engine = live_engine(name, with_window(FLOATING));
+        event(&engine, PlatformEvent::QuitRequested);
+        drop(engine);
+        save_setting(name, true);
+
+        let engine = relaunched(name, without_caps_lock());
+        assert!(engine.settings().caps_lock_as_snappy_key, "the setting is kept");
+        assert_eq!(held_as(&engine), None);
+        assert!(
+            engine.status().is_none_or(|status| !status.is_error),
+            "nothing to announce"
+        );
+        let state = app_state(&engine);
+        assert_eq!(state.caps_lock_problem, None);
+        assert_eq!(state.caps_lock_unavailable.as_deref(), Some(SANDBOXED));
+
+        reply_to(
+            &engine,
+            Command::SetSnappyKey {
+                modifiers: control_option(),
+            },
+        );
+        assert_eq!(held_as(&engine), None, "nor when the key changes");
+        assert!(engine.status().is_none_or(|status| !status.is_error));
+    });
+}
+
+#[test]
+fn where_caps_lock_works_the_platform_declares_nothing() {
+    scenario(|| async {
+        let engine = live_engine("caps-lock-available", with_window(FLOATING));
+        assert_eq!(app_state(&engine).caps_lock_unavailable, None);
+    });
+}

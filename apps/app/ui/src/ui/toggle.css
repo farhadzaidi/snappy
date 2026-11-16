@@ -20,7 +20,9 @@
   font-size: 12px;
 }
 
-.toggle:disabled {
+/* The hint stays readable: on a disabled switch it says why. */
+.toggle:disabled .toggle-label,
+.toggle:disabled .toggle-track {
   opacity: 0.5;
 }
 

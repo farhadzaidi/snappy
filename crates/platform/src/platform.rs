@@ -21,6 +21,10 @@ pub struct Capabilities {
     pub parking: ParkingPolicy,
     /// macOS asks for Accessibility; Windows and Linux need nothing.
     pub needs_permission: bool,
+    /// Why Caps Lock can never be the Snappy key in this build, as a sentence for the user,
+    /// so the app shows the setting as unavailable before anyone tries it. None where it can
+    /// be, even if the system's keyboard settings refuse it for now.
+    pub caps_lock_unavailable: Option<&'static str>,
 }
 
 pub trait Platform:

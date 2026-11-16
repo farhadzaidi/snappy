@@ -2,6 +2,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 import type { FakeDaemon } from "../src/bridge/fake/fakeDaemon";
 import type { FakeFiles } from "../src/bridge/fake/fakeFiles";
+import type { FakeBuild } from "../src/bridge/fake/fixtures";
 import type { Command } from "../src/bridge/protocol";
 import type { KeyChord } from "../src/core/model";
 
@@ -60,9 +61,9 @@ export async function expectRecordersLinedUp(
  */
 const FIRST_LOAD_TIMEOUT_MS = 30_000;
 
-/** Open the app against a fresh fake daemon. */
-export async function openApp(page: Page, platform = "macos"): Promise<void> {
-  await page.goto(`/?platform=${platform}`);
+/** Open the app against a fresh fake daemon, standing in for `build` of Snappy. */
+export async function openApp(page: Page, platform = "macos", build: FakeBuild = "github"): Promise<void> {
+  await page.goto(`/?platform=${platform}&build=${build}`);
   await expect(page.getByRole("heading", { name: "Layouts", exact: true })).toBeVisible({
     timeout: FIRST_LOAD_TIMEOUT_MS,
   });

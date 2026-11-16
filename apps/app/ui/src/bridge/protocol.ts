@@ -70,6 +70,8 @@ export interface AppState {
   addedWorkspace: string | null;
   /** Why Caps Lock isn't the Snappy key though the setting asks for it. */
   capsLockProblem: string | null;
+  /** Why Caps Lock can never be the Snappy key in this build, such as the Mac App Store's. */
+  capsLockUnavailable: string | null;
 }
 
 export type ToApp =

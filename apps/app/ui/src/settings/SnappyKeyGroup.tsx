@@ -22,13 +22,18 @@ const SNAPPY_KEY_MODIFIERS: readonly Modifier[] = ["ctrl", "alt", "meta", "shift
  * which the daemon refuses, saying what clashed, unless every one of them still works.
  */
 export function SnappyKeyGroup() {
-  const { settings, platform, capsLockProblem } = useAppState();
+  const { settings, platform, capsLockProblem, capsLockUnavailable } = useAppState();
   const send = useSend();
   const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [capsLockRefusal, setCapsLockRefusal] = useState<Refusal | null>(null);
   const snappyKey = settings.snappyKey;
   const defaultKey = core.defaultSettings(platform).snappyKey;
-  const capsLockNotice = capsLockRefusal?.message ?? (settings.capsLockAsSnappyKey ? capsLockProblem : null);
+  // Where the build can't hold Caps Lock, the switch is off and disabled with the reason under
+  // it, whatever the stored setting says.
+  const capsLockAvailable = capsLockUnavailable === null;
+  const capsLockNotice = capsLockAvailable
+    ? (capsLockRefusal?.message ?? (settings.capsLockAsSnappyKey ? capsLockProblem : null))
+    : null;
 
   const choose = async (modifiers: Modifier[]) => {
     setRefusal(await send({ kind: "setSnappyKey", modifiers }, { inPlace: true }));
@@ -80,8 +85,9 @@ export function SnappyKeyGroup() {
       {refusal !== null && <WarningNotice message={refusal.message} shortcut={refusal.shortcut} />}
       <Toggle
         label="Also use Caps Lock as the Snappy key"
-        hint="A tap still toggles Caps Lock."
-        checked={settings.capsLockAsSnappyKey}
+        hint={capsLockUnavailable ?? "A tap still toggles Caps Lock."}
+        checked={capsLockAvailable && settings.capsLockAsSnappyKey}
+        disabled={!capsLockAvailable}
         onChange={(enabled) =>
           void send({ kind: "setCapsLockAsSnappyKey", enabled }, { inPlace: true }).then(setCapsLockRefusal)
         }

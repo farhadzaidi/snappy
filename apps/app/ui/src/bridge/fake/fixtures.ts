@@ -19,8 +19,17 @@ export const FAKE_DISPLAYS: Display[] = [
   },
 ];
 
-/** A daemon that just started: default settings, permission granted, snapping on. */
-export function initialState(platform: PlatformName): AppState {
+/** The builds the fake daemon stands in for, as `?build=` names them in `pnpm dev` and the tests. */
+export type FakeBuild = "github" | "app-store";
+
+/** Why the Mac App Store build can't hold Caps Lock, as `crates/macos` says it. */
+const CAPS_LOCK_SANDBOXED = "Apps from the App Store can't remap Caps Lock, so it can't be the Snappy key.";
+
+/**
+ * A daemon that just started: default settings, permission granted, snapping on. The App Store
+ * build declares that Caps Lock can't be the Snappy key.
+ */
+export function initialState(platform: PlatformName, build: FakeBuild = "github"): AppState {
   const validation = core.validateSettings(core.defaultSettings(platform), platform);
   if (!("valid" in validation)) {
     throw new Error(validation.invalid);
@@ -49,5 +58,6 @@ export function initialState(platform: PlatformName): AppState {
     status: null,
     addedWorkspace: null,
     capsLockProblem: null,
+    capsLockUnavailable: build === "app-store" ? CAPS_LOCK_SANDBOXED : null,
   };
 }

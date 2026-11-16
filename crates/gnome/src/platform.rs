@@ -551,6 +551,7 @@ impl Platform for GnomePlatform {
             platform: Os::Linux,
             parking: ParkingPolicy::Desktop,
             needs_permission: false,
+            caps_lock_unavailable: None,
         }
     }
 

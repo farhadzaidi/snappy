@@ -38,7 +38,7 @@ The store listing is called **Snappy - Window Zones**, because "Snappy" is taken
 
 ### What users of the store build lose
 
-- **Caps Lock as the Snappy key.** Turning it on is refused with "Apps from the App Store can't remap Caps Lock, so it can't be the Snappy key." The Snappy key itself works as everywhere else.
+- **Caps Lock as the Snappy key.** The setting shows off and disabled, with "Apps from the App Store can't remap Caps Lock, so it can't be the Snappy key." under it. Settings imported from a GitHub build with it on load with it off, quietly. The Snappy key itself works as everywhere else.
 - **Changed system shortcuts**, if the sandbox hides them: Snappy may offer a chord the user has moved one of macOS's own shortcuts onto. macOS's default shortcuts are still known.
 - **Settings shared with a GitHub build.** The store build keeps its files in its container, so the two builds don't see each other's settings. Export from one and import into the other to move them.
 
@@ -117,7 +117,7 @@ Nothing here has run on macOS yet: the code is linted for macOS from Linux (`too
 3. Snappy asks for Accessibility, appears in the Accessibility list, and after the grant snaps windows by drag and by shortcut, in Safari, Finder, and Chrome.
 4. Settings land in `~/Library/Containers/io.github.farhadzaidi.Snappy/Data/Library/Application Support/Snappy/`, and Snappy's window shows the debug log's path there.
 5. "Open Snappy…" opens the window, and its pages, layouts, and editor draw (the web view isn't blank). If it is blank, the sandbox is keeping WebKit from something; try adding `com.apple.security.network.client` to `AppStore.entitlements`.
-6. Turning on Caps Lock as the Snappy key shows the App Store message and changes nothing; `hidutil property --get UserKeyMapping` stays as it was.
+6. Caps Lock as the Snappy key shows disabled with the App Store message under it, and `hidutil property --get UserKeyMapping` stays as it was, also after importing settings from a GitHub build that has it on.
 7. Shortcuts work. Then move Mission Control's shortcut to Control-Option-Command-M in System Settings → Keyboard → Keyboard Shortcuts and record that chord in Snappy. A GitHub build refuses it. If the store build takes it, the sandbox hides `com.apple.symbolichotkeys`, as the table expects.
 8. Turning on Open at login lists Snappy under System Settings → General → Login Items. After logging out and in, Snappy starts without opening its window. Opening it from Launchpad or Finder, the first time and while it runs, opens the window.
 9. Export settings to a file in Documents, change a setting, and import the file: the setting comes back.

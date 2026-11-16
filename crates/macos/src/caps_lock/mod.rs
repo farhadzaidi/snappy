@@ -26,10 +26,10 @@ mod toggle;
 mod unavailable;
 
 #[cfg(not(feature = "mac-app-store"))]
-pub use holding::{hold_as, restore, undo, unmap};
+pub use holding::{UNAVAILABLE, hold_as, restore, undo, unmap};
 #[cfg(not(feature = "mac-app-store"))]
 pub use tap::{key_changed, stop};
 #[cfg(not(feature = "mac-app-store"))]
 pub use toggle::toggle;
 #[cfg(feature = "mac-app-store")]
-pub use unavailable::{hold_as, restore, stop, toggle, undo, unmap};
+pub use unavailable::{UNAVAILABLE, hold_as, restore, stop, toggle, undo, unmap};

@@ -202,6 +202,9 @@ function setCapsLockAsSnappyKey(state: AppState, enabled: boolean, system: FakeS
   if (enabled === state.settings.capsLockAsSnappyKey) {
     return done(state);
   }
+  if (enabled && state.capsLockUnavailable !== null) {
+    return { state, error: state.capsLockUnavailable };
+  }
   if (enabled && system.capsLockRefusal !== undefined) {
     return { state, error: system.capsLockRefusal };
   }

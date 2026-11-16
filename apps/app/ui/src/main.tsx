@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import type { Bridge } from "./bridge/bridge";
+import type { FakeBuild } from "./bridge/fake/fixtures";
 import { tauriBridge } from "./bridge/tauriBridge";
 import type { PlatformName } from "./core/model";
 import { loadCore } from "./core/snappyCore";
@@ -39,8 +40,10 @@ import "./settings/settings.css";
 async function fakeDaemonBridge(): Promise<Bridge> {
   const { FakeDaemon, fakeBridge } = await import("./bridge/fake/fakeDaemon");
   const { FakeFiles } = await import("./bridge/fake/fakeFiles");
-  const platform = (new URLSearchParams(window.location.search).get("platform") ?? "macos") as PlatformName;
-  const daemon = new FakeDaemon(platform);
+  const query = new URLSearchParams(window.location.search);
+  const platform = (query.get("platform") ?? "macos") as PlatformName;
+  const build = (query.get("build") ?? "github") as FakeBuild;
+  const daemon = new FakeDaemon(platform, build);
   const files = new FakeFiles();
   Object.assign(window, { snappyFake: daemon, snappyFiles: files });
   return fakeBridge(daemon, files);

@@ -281,6 +281,7 @@ impl Platform for WindowsPlatform {
             platform: Os::Windows,
             parking: ParkingPolicy::OffScreen,
             needs_permission: false,
+            caps_lock_unavailable: None,
         }
     }
 

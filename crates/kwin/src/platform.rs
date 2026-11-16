@@ -510,6 +510,7 @@ impl Platform for KWinPlatform {
             platform: Os::Linux,
             parking: ParkingPolicy::Desktop,
             needs_permission: false,
+            caps_lock_unavailable: None,
         }
     }
 

@@ -20,6 +20,8 @@ pub struct FakePlatform {
     pub platform: Os,
     pub parking: ParkingPolicy,
     pub needs_permission: bool,
+    /// Why Caps Lock can never be the Snappy key, as a build without it declares.
+    pub caps_lock_unavailable: Option<&'static str>,
     /// What `live_control` answers.
     pub live_control: LiveControl,
     /// What `notes` answers.
@@ -86,6 +88,7 @@ impl Default for FakePlatform {
             platform: Os::MacOs,
             parking: ParkingPolicy::CornerSliver,
             needs_permission: true,
+            caps_lock_unavailable: None,
             live_control: LiveControl::Available,
             notes: Vec::new(),
             remedies: Vec::new(),
@@ -278,6 +281,7 @@ impl Platform for FakePlatform {
             platform: self.platform,
             parking: self.parking,
             needs_permission: self.needs_permission,
+            caps_lock_unavailable: self.caps_lock_unavailable,
         }
     }
 

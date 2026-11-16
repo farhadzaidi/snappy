@@ -79,10 +79,15 @@ pub(crate) fn start<P: Platform>(core: &mut EngineState<P>) {
 }
 
 /// Caps Lock stands for the Snappy key while the setting asks for it and Snappy can
-/// control the desktop, which on macOS needs the permission that taps keys.
+/// control the desktop, which on macOS needs the permission that taps keys. In a build that
+/// can't hold it, a setting that asks anyway, as one imported from another build does, is
+/// treated as off without trying: the app already shows why.
 fn wanted<P: Platform>(core: &EngineState<P>) -> Option<Mods> {
-    (core.settings.caps_lock_as_snappy_key && core.has_permission() && core.live_control.is_available())
-        .then(|| core.settings.snappy_key.modifiers())
+    (core.settings.caps_lock_as_snappy_key
+        && core.capabilities.caps_lock_unavailable.is_none()
+        && core.has_permission()
+        && core.live_control.is_available())
+    .then(|| core.settings.snappy_key.modifiers())
 }
 
 /// Bring Caps Lock to what the settings and the platform's state ask, announcing a
@@ -173,10 +178,14 @@ fn forget<P: Platform>(core: &mut EngineState<P>) {
 }
 
 /// Turn Caps Lock as the Snappy key on or off. Turning it on while Snappy can apply it
-/// tries first, so a refusal leaves the setting off and says why.
+/// tries first, so a refusal leaves the setting off and says why. Where the build can't hold
+/// Caps Lock at all, turning it on is refused with the platform's reason.
 pub(crate) fn set_enabled<P: Platform>(core: &mut EngineState<P>, enabled: bool) -> Result<(), String> {
     if enabled == core.settings.caps_lock_as_snappy_key {
         return Ok(());
+    }
+    if enabled && let Some(reason) = core.capabilities.caps_lock_unavailable {
+        return Err(reason.to_owned());
     }
     let modifiers = core.settings.snappy_key.modifiers();
     let mut waits_for_login = None;

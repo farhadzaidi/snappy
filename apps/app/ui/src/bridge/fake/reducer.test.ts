@@ -434,6 +434,15 @@ describe("fake daemon", () => {
     expect(refused.state.settings.capsLockAsSnappyKey).toBe(false);
   });
 
+  it("the App Store build declares caps lock unavailable and refuses it with the reason", () => {
+    const store = initialState("macos", "app-store");
+    expect(initialState("macos").capsLockUnavailable).toBeNull();
+    expect(store.capsLockUnavailable).not.toBeNull();
+    const refused = run(store, { kind: "setCapsLockAsSnappyKey", enabled: true });
+    expect(refused.error).toBe(store.capsLockUnavailable);
+    expect(refused.state.settings.capsLockAsSnappyKey).toBe(false);
+  });
+
   it("an exported text imports back, turning workspaces off and keeping snapping as it is", () => {
     const before = run(
       initialState("macos"),

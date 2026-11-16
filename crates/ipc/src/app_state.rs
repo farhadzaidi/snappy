@@ -30,6 +30,10 @@ pub struct AppState {
     /// system remapping Caps Lock since it was turned on.
     #[serde(default)]
     pub caps_lock_problem: Option<String>,
+    /// Why Caps Lock can never be the Snappy key in this build, such as the Mac App Store's.
+    /// The app shows the setting as unavailable, with this under it.
+    #[serde(default)]
+    pub caps_lock_unavailable: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

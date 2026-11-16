@@ -38,3 +38,7 @@ The platform pages describe how each OS does it.
 While a change is in place, the engine keeps what undoes it in `caps-lock.json`. So a crashed run's change is undone at the next start, before anything else.
 
 When the system's keyboard settings change under Snappy, the adapter reports Caps Lock lost. The engine holds it again from the new settings, unless they now remap Caps Lock themselves.
+
+### Where it can never be
+
+A build that can't hold Caps Lock at all, as the Mac App Store's, says so in its `Capabilities` (`caps_lock_unavailable`, a sentence for the user). The engine sends it in `AppState`, and the app shows the setting off and disabled, with the sentence under it, before anyone tries. The engine treats the setting as off there, even when the settings file has it on, as one imported from another build does: it never asks the adapter, so nothing is announced at start. Turning it on is refused with the same sentence, and the adapter refuses too.

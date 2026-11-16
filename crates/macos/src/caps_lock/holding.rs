@@ -8,6 +8,9 @@ use super::hid::EventSystem;
 use super::{key_mapping, modifier_keys, tap};
 use crate::{main_thread, messages};
 
+/// This build can hold Caps Lock, unless the user's keyboard settings already remap it.
+pub const UNAVAILABLE: Option<&str> = None;
+
 /// Make Caps Lock, held, stand for `modifiers`. Refuses, leaving Caps Lock as usual, when
 /// the user's own key mapping or Modifier Keys setting already remaps it.
 pub fn hold_as(modifiers: Mods) -> Result<CapsLockUndo, String> {

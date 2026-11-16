@@ -79,7 +79,7 @@ So Snappy learns tabs as they're focused. A tracked window that has dropped out 
 
 The `mac-app-store` feature builds the adapter for the App Sandbox. `tools/macos/app-store.sh` builds it, and [The Mac App Store](../releasing/mac-app-store.md) goes through what the sandbox allows, the signing, and the release.
 
-- **Caps Lock** can't be the Snappy key. `src/caps_lock/unavailable.rs` stands in for the module and refuses with a message of its own, and none of the HID, event tap, or F18 hotkey code is compiled.
+- **Caps Lock** can't be the Snappy key. `src/caps_lock/unavailable.rs` stands in for the module, and none of the HID, event tap, or F18 hotkey code is compiled. The platform declares it unavailable with its message, so the app shows the setting disabled with the message under it ([The Snappy key and Caps Lock](../snappy-key.md#where-it-can-never-be)), and a hold is still refused.
 - **Open at login** registers the app itself (`SMAppService.mainApp`) instead of the launch agent, which the bundle leaves out. macOS then opens Snappy at login without `--background`, so the daemon starts without the window, and the delegate asks for it when the launch's Apple event isn't a login (`src/login_launch.rs`).
 - **The app** is signed to inherit the daemon's sandbox, so the pipes between them work as they are.
 - **Files** live in the app's container, where a sandboxed process's home points.

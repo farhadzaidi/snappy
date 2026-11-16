@@ -68,6 +68,7 @@ impl<P: Platform> EngineState<P> {
             status: self.status.clone(),
             added_workspace: self.added_workspace.take(),
             caps_lock_problem: self.caps_lock.problem().map(str::to_owned),
+            caps_lock_unavailable: self.capabilities.caps_lock_unavailable.map(str::to_owned),
         }
     }
 }

@@ -253,6 +253,7 @@ impl Platform for MacPlatform {
             platform: Os::MacOs,
             parking: ParkingPolicy::CornerSliver,
             needs_permission: true,
+            caps_lock_unavailable: caps_lock::UNAVAILABLE,
         }
     }
 
