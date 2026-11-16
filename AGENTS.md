@@ -1,6 +1,6 @@
 # Working in Snappy
 
-Guidance for coding agents working in this repository. [CONTRIBUTING.md](CONTRIBUTING.md) covers setting up, building, running, and testing; [docs/architecture.md](docs/architecture.md), [docs/platforms.md](docs/platforms.md), and [docs/testing.md](docs/testing.md) explain how the code is put together. Read the ones that touch what you're changing before you start.
+Guidance for coding agents working in this repository. [CONTRIBUTING.md](CONTRIBUTING.md) covers setting up, building, running, and testing; the pages in [docs/](docs/README.md) explain how the code is put together. Read the ones that touch what you're changing before you start.
 
 ## Safety
 

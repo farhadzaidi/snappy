@@ -328,7 +328,7 @@ fn a_refusal_at_start_is_shown_with_the_setting_and_tried_again_when_the_key_cha
 /// The engine keeps the hold while recording on every platform. Where Caps Lock holds the
 /// modifiers themselves, macOS and Linux, Caps Lock + J then reaches the recorder as the
 /// Snappy key + J; Windows' hook runs Snappy's shortcuts itself and gives other apps,
-/// the recorder included, nothing, as platforms.md says.
+/// the recorder included, nothing (see docs/platforms/windows.md).
 #[test]
 fn recording_a_shortcut_keeps_caps_lock_as_the_snappy_key() {
     scenario(|| async {
