@@ -53,6 +53,7 @@ impl AxElement {
     /// # Safety
     /// `raw` must be null or an owned `AXUIElementRef`.
     pub unsafe fn from_owned(raw: AXUIElementRef) -> Option<Self> {
+        // SAFETY: the caller hands over an owned reference, and null was ruled out.
         NonNull::new(raw.cast_mut()).map(|raw| Self(unsafe { CFRetained::from_raw(raw) }))
     }
 
@@ -112,6 +113,7 @@ impl AxElement {
             AXUIElementCopyElementAtPosition(self.as_ptr(), point.x as f32, point.y as f32, &mut hit)
         };
         AxError::check(code)?;
+        // SAFETY: on success the copy function stored a +1 reference or null.
         unsafe { Self::from_owned(hit) }.ok_or(AxError::NO_VALUE)
     }
 
@@ -121,6 +123,7 @@ impl AxElement {
         // SAFETY: valid element, name, and out-pointer; the result is +1.
         let code = unsafe { AXUIElementCopyAttributeValue(self.as_ptr(), &name, &mut value) };
         AxError::check(code)?;
+        // SAFETY: on success the copy function stored a +1 reference, owned from here on.
         NonNull::new(value.cast_mut())
             .map(|value| unsafe { CFRetained::from_raw(value) })
             .ok_or(AxError::NO_VALUE)
@@ -198,6 +201,7 @@ impl AxElement {
             AXUIElementCopyMultipleAttributeValues(self.as_ptr(), names.as_opaque(), 0, &mut values)
         };
         AxError::check(code).ok()?;
+        // SAFETY: on success the copy function stored a +1 reference, owned from here on.
         let values = NonNull::new(values.cast_mut()).map(|raw| unsafe { CFRetained::from_raw(raw) })?;
         // SAFETY: the array holds one CF object per requested attribute.
         let values = unsafe { CFRetained::cast_unchecked::<CFArray<CFType>>(values) };

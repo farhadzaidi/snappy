@@ -12,12 +12,15 @@ pub fn executable(pid: u32) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
+/// Field 22, the start time, counted from the first field after the command name.
+const START_TIME_AFTER_NAME: usize = 19;
+
 /// The command name in field 2 may hold spaces and parentheses, so fields are counted
-/// from its closing parenthesis; field 22 is the 20th after it.
+/// from its closing parenthesis.
 pub fn parse_start_time(stat: &str) -> Option<f64> {
     let (_, rest) = stat.rsplit_once(')')?;
     rest.split_whitespace()
-        .nth(19)?
+        .nth(START_TIME_AFTER_NAME)?
         .parse::<u64>()
         .ok()
         .map(|ticks| ticks as f64)

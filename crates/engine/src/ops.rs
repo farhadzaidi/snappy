@@ -7,21 +7,23 @@ use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
-use snappy_core::bounds::{BoundsBackend, BoundsStep, CancelToken, Clock, apply_settled};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::operations::{self, Placement, Replay, SwapRequest, UndoHistory, WindowOps};
-use snappy_core::swap::{SwapPlan, SwapSource, ZoneSlot, plan_swap};
+use snappy_core::placement::bounds::{BoundsBackend, BoundsStep, CancelToken, Clock, apply_settled};
+use snappy_core::placement::operations::{self, Placement, Replay, SwapRequest, UndoHistory, WindowOps};
+use snappy_core::placement::swap::{SwapPlan, SwapSource, ZoneSlot, plan_swap};
 use snappy_platform::{Platform, WindowId};
 use tokio::task::JoinHandle;
 
-use crate::core::Core;
 use crate::debug_log::Level;
-use crate::diagnostics::{DropRecord, Step};
+use crate::diagnostics::{DropRecord, Step, millis};
+use crate::log_event::LogEvent;
+use crate::outcome::Outcome;
+use crate::state::EngineState;
 
 /// Everything the engine and its in-flight operation share on the engine thread.
 pub(crate) struct Shared<P> {
-    pub core: RefCell<Core<P>>,
+    pub core: RefCell<EngineState<P>>,
     /// Undo histories by scope: one per workspace, or one global.
     pub histories: RefCell<BTreeMap<String, UndoHistory>>,
     queue: RefCell<Queue>,
@@ -35,7 +37,7 @@ struct Queue {
 }
 
 impl<P: Platform + 'static> Shared<P> {
-    pub fn new(core: Core<P>) -> Rc<Self> {
+    pub fn new(core: EngineState<P>) -> Rc<Self> {
         Rc::new(Self {
             core: RefCell::new(core),
             histories: RefCell::default(),
@@ -121,13 +123,20 @@ impl<P: Platform + 'static> Shared<P> {
     pub fn history_scope(&self) -> String {
         let core = self.core.borrow();
         let workspaces = &core.settings.workspaces;
-        if workspaces.enabled {
-            format!("workspace:{}", workspaces.active_id)
-        } else {
-            "global".to_owned()
-        }
+        history_scope(workspaces.enabled.then_some(workspaces.active_id.as_str()))
     }
 }
+
+/// The undo history a move belongs to: its workspace's while workspaces are on, else one
+/// for everything.
+pub fn history_scope(workspace: Option<&str>) -> String {
+    match workspace {
+        Some(id) => format!("workspace:{id}"),
+        None => GLOBAL_HISTORY.to_owned(),
+    }
+}
+
+const GLOBAL_HISTORY: &str = "global";
 
 /// Real waits on the engine's runtime.
 pub(crate) struct TokioClock {
@@ -148,7 +157,7 @@ impl Clock for TokioClock {
     }
 
     fn now_ms(&self) -> f64 {
-        self.started.elapsed().as_secs_f64() * 1000.0
+        millis(self.started.elapsed().as_secs_f64())
     }
 }
 
@@ -258,7 +267,7 @@ pub(crate) async fn run_snap<P: Platform + 'static>(
     let steps = core.diagnostics.last_steps.clone();
     log_snap(&mut core, request.window, request.frame, &result, &steps);
     if let Some(mut record) = request.drop {
-        record.outcome = snap_outcome(&result).to_owned();
+        record.outcome = snap_outcome(&result).as_str().to_owned();
         record.requested = Some(request.frame);
         record.actual = result.as_ref().ok().map(|placement| placement.actual);
         record.steps = core.diagnostics.last_steps.iter().map(Step::from).collect();
@@ -296,15 +305,15 @@ pub(crate) async fn run_swap<P: Platform + 'static>(
             return run_snap(shared, cancel, request).await;
         }
         Ok(SwapPlan::Exchange { occupant, source }) => Ok((occupant, source)),
-        Ok(SwapPlan::Blocked(block)) => Err(("swapBlocked", block.message().to_owned())),
-        Err(error) => Err(("swapFailed", error.to_string())),
+        Ok(SwapPlan::Blocked(block)) => Err((Outcome::SwapBlocked, block.message().to_owned())),
+        Err(error) => Err((Outcome::SwapFailed, error.to_string())),
     };
     let scope = shared.history_scope();
     let mut history = shared.take_history(&scope);
     let protected = |window: WindowId| shared.core.borrow().protected.contains(&window);
 
     let mut source_kind = swap.source.kind();
-    let (outcome, failure): (&str, Option<String>) = match occupant {
+    let (outcome, failure): (Outcome, Option<String>) = match occupant {
         Err((outcome, message)) => (outcome, Some(message)),
         Ok((occupant, source)) => {
             source_kind = source.kind();
@@ -321,17 +330,17 @@ pub(crate) async fn run_swap<P: Platform + 'static>(
             match result {
                 Ok(_) => {
                     shared.core.borrow_mut().announce_quietly("Windows swapped.");
-                    ("swapped", None)
+                    (Outcome::Swapped, None)
                 }
-                Err(WindowError::Cancelled) => ("swapInterrupted", None),
-                Err(error) => ("swapFailed", Some(error.to_string())),
+                Err(WindowError::Cancelled) => (Outcome::SwapInterrupted, None),
+                Err(error) => (Outcome::SwapFailed, Some(error.to_string())),
             }
         }
     };
     shared.return_history(scope, history);
 
     // A rejected drag goes back where it started, unless a new gesture holds it.
-    let rejected = outcome == "swapBlocked" || outcome == "swapFailed";
+    let rejected = outcome.is_rejected();
     let moved = shared
         .core
         .borrow_mut()
@@ -347,12 +356,12 @@ pub(crate) async fn run_swap<P: Platform + 'static>(
     }
 
     let mut core = shared.core.borrow_mut();
-    core.log(level_of(outcome == "swapFailed"), "swap", || {
+    core.log(level_of(outcome.is_failure()), LogEvent::Swap, || {
         serde_json::json!({
             "window": swap.window.0,
             "destination": swap.destination.frame,
             "source": source_kind,
-            "outcome": outcome,
+            "outcome": outcome.as_str(),
             "reason": failure,
         })
     });
@@ -360,7 +369,7 @@ pub(crate) async fn run_swap<P: Platform + 'static>(
         core.announce_error(message);
     }
     if let Some(mut record) = swap.record {
-        record.outcome = outcome.to_owned();
+        record.outcome = outcome.as_str().to_owned();
         record.cancellation = failure;
         record.requested = Some(swap.destination.frame);
         record.actual = core.platform.frame(swap.window).ok();
@@ -399,8 +408,8 @@ async fn run_replay<P: Platform + 'static>(shared: Rc<Shared<P>>, which: Replay,
     };
     shared.return_history(scope, history);
     let (event, done, message) = match which {
-        Replay::Undo => ("undo", "undone", "Last live move undone."),
-        Replay::Redo => ("redo", "redone", "Last live move redone."),
+        Replay::Undo => (LogEvent::Undo, "undone", "Last live move undone."),
+        Replay::Redo => (LogEvent::Redo, "redone", "Last live move redone."),
     };
     let mut core = shared.core.borrow_mut();
     match result {
@@ -421,19 +430,19 @@ fn level_of(failed: bool) -> Level {
 }
 
 /// What a snap came to, as the debug log and the drop records name it.
-fn snap_outcome(result: &Result<Placement, WindowError>) -> &'static str {
+fn snap_outcome(result: &Result<Placement, WindowError>) -> Outcome {
     match result {
-        Ok(placement) if placement.constrained() => "appConstrainedBounds",
-        Ok(_) => "snapped",
-        Err(WindowError::Cancelled) => "interruptedByNewInteraction",
-        Err(_) => "windowWriteFailed",
+        Ok(placement) if placement.constrained() => Outcome::AppConstrainedBounds,
+        Ok(_) => Outcome::Snapped,
+        Err(WindowError::Cancelled) => Outcome::Interrupted,
+        Err(_) => Outcome::WindowWriteFailed,
     }
 }
 
 /// Record a snap of `window` toward `requested` in the debug log, as a warning when the
 /// write failed.
 pub(crate) fn log_snap<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     window: WindowId,
     requested: Rect,
     result: &Result<Placement, WindowError>,
@@ -442,12 +451,12 @@ pub(crate) fn log_snap<P: Platform>(
     let outcome = snap_outcome(result);
     let actual = result.as_ref().ok().map(|placement| placement.actual);
     let steps = debug_steps(steps);
-    core.log(level_of(outcome == "windowWriteFailed"), "snap", || {
+    core.log(level_of(outcome.is_failure()), LogEvent::Snap, || {
         serde_json::json!({
             "window": window.0,
             "requested": requested,
             "actual": actual,
-            "outcome": outcome,
+            "outcome": outcome.as_str(),
             "steps": steps,
         })
     });

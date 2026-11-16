@@ -4,11 +4,12 @@ use snappy_core::error::WindowError;
 use snappy_core::geometry::Point;
 use snappy_platform::WindowInfo;
 
-use super::{Windows, server};
+use super::occupancy::{HitScope, hit_scope};
+use super::server;
+use super::tracked::Windows;
 use crate::apps;
 use crate::ax::{self, AxElement, names};
 use crate::messages::{NO_FOCUSED_WINDOW, NO_PERMISSION, NOT_STANDARD, unavailable};
-use crate::occupancy::{HitScope, hit_scope};
 use crate::thresholds::{AX_MESSAGING_TIMEOUT, POINTER_HIT_WALK};
 
 impl Windows {

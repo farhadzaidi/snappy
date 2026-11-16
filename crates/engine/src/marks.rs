@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use snappy_platform::{MarkStyle, MarkedWindow, OverlayMarks, Platform, WindowId};
 
-use crate::core::Core;
+use crate::log_event::LogEvent;
+use crate::state::EngineState;
 
 /// The marks each display was last sent; displays without any are absent.
 #[derive(Default)]
@@ -13,11 +14,12 @@ pub(crate) struct Marks {
     sent: BTreeMap<String, OverlayMarks>,
 }
 
-impl<P: Platform> Core<P> {
+impl<P: Platform> EngineState<P> {
     /// Outline the selected windows, and the window a focus shortcut just focused, on each
     /// display they show on, where they are now. Only displays whose outlines changed are
     /// sent.
     pub fn refresh_marks(&mut self) {
+        let was_showing = !self.marks.sent.is_empty();
         let mut marked = Vec::new();
         for (window, style) in self.outlined() {
             if let (true, Ok(frame)) = (self.is_on_screen(window), self.platform.frame(window)) {
@@ -49,6 +51,15 @@ impl<P: Platform> Core<P> {
         }
         let displays = self.display_ids();
         self.marks.sent.retain(|display, _| displays.contains(display));
+        let showing = !self.marks.sent.is_empty();
+        if showing != was_showing {
+            let event = if showing {
+                LogEvent::MarksShown
+            } else {
+                LogEvent::MarksHidden
+            };
+            self.trace(event, || serde_json::json!({}));
+        }
     }
 
     /// The windows to outline and how. A selected tab is outlined on its group's shown

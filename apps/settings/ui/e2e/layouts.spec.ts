@@ -39,6 +39,21 @@ test("tabs switch collections and browse the display's layout", async ({ page })
   expect(await lastCommandOf(page, "applyLayout")).toBeUndefined();
 });
 
+test("the arrow keys move between collection tabs, which control the library", async ({ page }) => {
+  const presets = page.getByRole("tab", { name: "Presets" });
+  await presets.focus();
+  await page.keyboard.press("ArrowRight");
+  const custom = page.getByRole("tab", { name: "My layouts" });
+  await expect(custom).toBeFocused();
+  await expect(custom).toHaveAttribute("aria-selected", "true");
+  await expect(presets).toHaveAttribute("tabindex", "-1");
+  const panel = page.getByRole("tabpanel", { name: "My layouts" });
+  await expect(panel).toContainText("No custom layouts yet");
+  await expect(custom).toHaveAttribute("aria-controls", (await panel.getAttribute("id")) ?? "");
+  await page.keyboard.press("ArrowRight");
+  await expect(presets).toBeFocused();
+});
+
 test("an empty My layouts collection offers to create one", async ({ page }) => {
   await page.getByRole("tab", { name: "My layouts" }).click();
   await expect(page.getByText("No custom layouts yet")).toBeVisible();

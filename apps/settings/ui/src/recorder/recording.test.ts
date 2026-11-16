@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Command } from "../core/model";
+import type { Command } from "../bridge/protocol";
 import { Recording } from "./recording";
 
 function recordingWithLog() {

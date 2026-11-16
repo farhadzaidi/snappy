@@ -1,7 +1,7 @@
 //! Workspaces on platforms that park windows on a desktop of their own.
 
 use snappy_core::geometry::Point;
-use snappy_engine::Engine;
+use snappy_engine::{Engine, file_names};
 use snappy_ipc::Command;
 use snappy_platform::{PlatformEvent, WindowId, WindowSystem};
 
@@ -128,11 +128,7 @@ fn desktop_parking_startup_keeps_a_window_parked_for_its_own_workspace() {
             "frame": FLOATING,
             "parkedOrigin": FLOATING.origin(),
         }]);
-        std::fs::write(
-            paths.state_dir.join("workspace-membership.json"),
-            saved.to_string(),
-        )
-        .unwrap();
+        std::fs::write(paths.state_dir.join(file_names::MEMBERSHIP), saved.to_string()).unwrap();
         let mut fake = parking_on_a_desktop(with_window(FLOATING));
         fake.windows
             .get_mut(&WindowId(1))

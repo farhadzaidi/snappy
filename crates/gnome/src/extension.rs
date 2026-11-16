@@ -21,6 +21,11 @@ use snappy_linux::journal;
 /// The extension's files, relative to its folder. `metadata.json` comes last: whether an
 /// install is fresh is told by it, so an install cut short is finished, and turned on, next
 /// time.
+/// The extension's description file.
+pub const METADATA: &str = "metadata.json";
+/// Where extensions go in the user's data folder.
+pub const EXTENSIONS_FOLDER: &str = "gnome-shell/extensions";
+
 pub const FILES: &[(&str, &[u8])] = &[
     (
         "extension.js",
@@ -64,7 +69,7 @@ pub const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../apps/gnome-extension/icons/snappy-symbolic.svg"),
     ),
     (
-        "metadata.json",
+        METADATA,
         include_bytes!("../../../apps/gnome-extension/metadata.json"),
     ),
 ];
@@ -79,11 +84,7 @@ mod state {
 
 /// `$XDG_DATA_HOME/gnome-shell/extensions/<uuid>`, defaulting to `~/.local/share`.
 pub fn install_folder() -> Option<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))?;
-    Some(data.join("gnome-shell/extensions").join(EXTENSION_UUID))
+    snappy_linux::xdg::data_home().map(|data| data.join(EXTENSIONS_FOLDER).join(EXTENSION_UUID))
 }
 
 /// What installing did.
@@ -100,7 +101,7 @@ pub enum Installed {
 /// Writes every file that is missing or differs, each through a temporary file in the same
 /// folder, so a crash never leaves a half-written file for GNOME Shell to load.
 pub fn install(folder: &Path) -> std::io::Result<Installed> {
-    let fresh = !folder.join("metadata.json").exists();
+    let fresh = !folder.join(METADATA).exists();
     let mut changed = false;
     for (relative, contents) in FILES {
         let path = folder.join(relative);
@@ -128,26 +129,28 @@ fn file_name(relative: &str) -> &str {
 /// Adds the extension to GNOME's enabled extensions and takes it off the disabled ones. The
 /// running GNOME Shell doesn't know a freshly installed extension, so it can't be asked.
 pub fn enable_in_settings() -> Result<(), String> {
-    let enabled = read_list("enabled-extensions")?;
+    let enabled = read_list(ENABLED_KEY)?;
     if !enabled.iter().any(|uuid| uuid == EXTENSION_UUID) {
         let mut enabled = enabled;
         enabled.push(EXTENSION_UUID.to_owned());
-        write_list("enabled-extensions", &enabled)?;
+        write_list(ENABLED_KEY, &enabled)?;
     }
     // GNOME 46 and newer also keep a list of extensions the user turned off.
-    if let Ok(disabled) = read_list("disabled-extensions")
+    if let Ok(disabled) = read_list(DISABLED_KEY)
         && disabled.iter().any(|uuid| uuid == EXTENSION_UUID)
     {
         let kept: Vec<String> = disabled
             .into_iter()
             .filter(|uuid| uuid != EXTENSION_UUID)
             .collect();
-        write_list("disabled-extensions", &kept)?;
+        write_list(DISABLED_KEY, &kept)?;
     }
     Ok(())
 }
 
 const SHELL_SCHEMA: &str = "org.gnome.shell";
+const ENABLED_KEY: &str = "enabled-extensions";
+const DISABLED_KEY: &str = "disabled-extensions";
 
 fn read_list(key: &str) -> Result<Vec<String>, String> {
     let output = Command::new("gsettings")
@@ -309,7 +312,7 @@ mod tests {
 
     #[test]
     fn metadata_is_written_last() {
-        assert_eq!(FILES.last().map(|(path, _)| *path), Some("metadata.json"));
+        assert_eq!(FILES.last().map(|(path, _)| *path), Some(METADATA));
     }
 
     #[test]
@@ -335,8 +338,9 @@ mod tests {
 
     #[test]
     fn the_metadata_names_this_extension_and_the_supported_shells() {
-        let metadata: serde_json::Value = serde_json::from_slice(file("metadata.json")).unwrap();
+        let metadata: serde_json::Value = serde_json::from_slice(file(METADATA)).unwrap();
         assert_eq!(metadata["uuid"], EXTENSION_UUID);
+        assert_eq!(metadata["version-name"], env!("CARGO_PKG_VERSION"));
         let versions: Vec<&str> = metadata["shell-version"]
             .as_array()
             .unwrap()

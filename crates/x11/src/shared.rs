@@ -3,7 +3,7 @@
 //! it so those events arrive where they are read.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt, EventMask, Window};
@@ -12,8 +12,8 @@ use x11rb::rust_connection::RustConnection;
 use crate::caps_lock::CapsLockState;
 use crate::hotkeys::HotKeyTable;
 use crate::input::Monitoring;
-use crate::keys::{Keymap, ModMasks, ModifierKeys};
-use crate::x::{Atoms, ScreenInfo, lock};
+use crate::keymap::{Keymap, ModMasks, ModifierKeys};
+use crate::xserver::{Atoms, ScreenInfo};
 
 pub struct Shared {
     pub conn: RustConnection,
@@ -120,4 +120,9 @@ impl Shared {
     pub fn scale(&self, display: &str) -> f64 {
         lock(&self.scales).get(display).copied().unwrap_or(1.0)
     }
+}
+
+/// Locks a mutex, recovering the data if a panicking thread poisoned it.
+pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }

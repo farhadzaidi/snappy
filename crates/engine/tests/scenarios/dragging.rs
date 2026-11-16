@@ -5,7 +5,7 @@ use std::time::Duration;
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::{Modifier, Mods};
 use snappy_core::settings::DragModifier;
-use snappy_engine::Engine;
+use snappy_engine::{Engine, file_names};
 use snappy_fake::{FakePlatform, FakeWindow, OverlayCall};
 use snappy_ipc::Command;
 use snappy_platform::{PlatformEvent, WindowId};
@@ -33,14 +33,7 @@ fn zones_show_only_with_the_modifier_after_moving() {
             with_window(Rect::new(300.0, 200.0, 600.0, 400.0)),
         );
         let grip = Point::new(500.0, 215.0);
-        event(
-            &engine,
-            PlatformEvent::PointerDown {
-                at: grip,
-                mods: shift(),
-                window: None,
-            },
-        );
+        press(&engine, grip, shift());
         event(
             &engine,
             PlatformEvent::PointerDragged {
@@ -111,14 +104,7 @@ fn a_press_hides_the_preview() {
             engine.with_platform(|p| p.last_overlay().cloned()),
             Some(OverlayCall::Show(..))
         ));
-        event(
-            &engine,
-            PlatformEvent::PointerDown {
-                at: Point::new(500.0, 215.0),
-                mods: Mods::NONE,
-                window: None,
-            },
-        );
+        press(&engine, Point::new(500.0, 215.0), Mods::NONE);
         assert_eq!(
             engine.with_platform(|p| p.last_overlay().cloned()),
             Some(OverlayCall::Hide)
@@ -130,14 +116,7 @@ fn a_press_hides_the_preview() {
 fn sleep_cancels_a_drag() {
     scenario(|| async {
         let engine = live_engine("sleep", with_window(Rect::new(300.0, 200.0, 600.0, 400.0)));
-        event(
-            &engine,
-            PlatformEvent::PointerDown {
-                at: Point::new(500.0, 215.0),
-                mods: shift(),
-                window: None,
-            },
-        );
+        press(&engine, Point::new(500.0, 215.0), shift());
         event(&engine, PlatformEvent::WillSleep);
         engine.with_platform(|p| p.windows.get_mut(&WindowId(1)).unwrap().frame.x = 0.0);
         event(
@@ -424,7 +403,7 @@ fn without_a_candidate_the_window_stays_and_snappy_says_so_quietly() {
         let status = engine.status().unwrap();
         assert_eq!(
             (status.message.as_str(), status.is_error, status.notify),
-            ("No zone right of this window.", false, false)
+            ("No zone to the right of this window.", false, false)
         );
 
         place(&engine, 1, LEFT_ZONE);
@@ -434,7 +413,7 @@ fn without_a_candidate_the_window_stays_and_snappy_says_so_quietly() {
         );
         settle(&engine).await;
         assert_eq!(frame_of(&engine, 1), LEFT_ZONE, "never wraps around");
-        assert_eq!(status_text(&engine), "No zone left of this window.");
+        assert_eq!(status_text(&engine), "No zone to the left of this window.");
     });
 }
 
@@ -466,7 +445,7 @@ fn bounds_changes_are_bracketed_and_reread_after_the_restore_delay() {
         place(&engine, 1, restored);
         settle(&engine).await;
         assert_eq!(status_text(&engine), "Snapped, limited by the app's window size.");
-        let drops = std::fs::read(paths_kept(name).log("drops.json")).unwrap();
+        let drops = std::fs::read(paths_kept(name).log(file_names::DROPS)).unwrap();
         let drops: Vec<serde_json::Value> = serde_json::from_slice(&drops).unwrap();
         assert_eq!(
             drops.last().unwrap()["actual"],

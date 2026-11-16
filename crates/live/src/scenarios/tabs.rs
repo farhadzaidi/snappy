@@ -2,6 +2,7 @@
 
 use snappy_core::geometry::Point;
 use snappy_core::settings::{NavigationShortcut, WorkspaceStep};
+use snappy_engine::LogEvent;
 
 use super::Outcome;
 use super::support::{Context, floating, timed};
@@ -40,7 +41,7 @@ fn tabs_along_and_out(context: &mut Context) -> Result<Outcome, String> {
     let elapsed = context.elapsed_ms();
     pause(600);
     context.stayed("tab-c", group)?;
-    let taken_along = context.logged("selectionTakenAlong");
+    let taken_along = context.logged(LogEvent::SelectionTakenAlong);
     let tabs = taken_along
         .last()
         .map(|record| record["tabs"].clone())

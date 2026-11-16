@@ -4,17 +4,18 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use snappy_core::bounds::{BoundsStep, CancelToken};
-use snappy_core::empty_zone::place_selection;
 use snappy_core::error::WindowError;
 use snappy_core::geometry::Rect;
-use snappy_core::operations::{self, GroupMove, WindowOps};
+use snappy_core::placement::bounds::{BoundsStep, CancelToken};
+use snappy_core::placement::empty_zone::place_selection;
+use snappy_core::placement::operations::{self, GroupMove, WindowOps};
 use snappy_core::window::WindowSnapshot;
 use snappy_platform::{Platform, WindowId};
 
-use crate::core::Core;
 use crate::drag::zone_slots;
+use crate::log_event::LogEvent;
 use crate::ops::{Live, Shared, log_snap};
+use crate::state::EngineState;
 use crate::workspaces;
 
 /// The selected windows, in the order they were selected. Kept in memory only: quitting
@@ -38,13 +39,16 @@ impl Selection {
 
 /// Add the focused window to the selection, or take it out when it is already in it. A
 /// tab group is selected as one: a tab of a selected group counts as selected.
-pub(crate) fn toggle<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn toggle<P: Platform>(core: &mut EngineState<P>) {
     prune(core);
     let focused = match core.platform.focused_window() {
         Ok(info) => info,
         Err(error) => {
             let reason = error.to_string();
-            core.trace("selectionSkipped", || serde_json::json!({ "reason": reason }));
+            core.trace(
+                LogEvent::SelectionSkipped,
+                || serde_json::json!({ "reason": reason }),
+            );
             core.announce_quietly("Focus a window to select it.");
             return;
         }
@@ -64,7 +68,7 @@ pub(crate) fn toggle<P: Platform>(core: &mut Core<P>) {
     }
     if !workspaces::shown_on_active_workspace(core, &focused) {
         core.trace(
-            "selectionSkipped",
+            LogEvent::SelectionSkipped,
             || serde_json::json!({ "window": focused.id.0, "app": focused.app, "reason": "not on the current workspace" }),
         );
         core.announce_quietly("Focus a window on the current workspace first.");
@@ -73,34 +77,34 @@ pub(crate) fn toggle<P: Platform>(core: &mut Core<P>) {
     core.selection.windows.push(focused.id);
     let selected = core.selection.windows.len();
     core.trace(
-        "selectionAdded",
+        LogEvent::SelectionAdded,
         || serde_json::json!({ "window": focused.id.0, "app": focused.app, "selected": selected }),
     );
     core.refresh_marks();
 }
 
 /// Take `window` out of the selection.
-pub(crate) fn remove<P: Platform>(core: &mut Core<P>, window: WindowId, reason: &str) {
+pub(crate) fn remove<P: Platform>(core: &mut EngineState<P>, window: WindowId, reason: &str) {
     if !core.selection.contains(window) {
         return;
     }
     core.selection.windows.retain(|selected| *selected != window);
     let selected = core.selection.windows.len();
     core.trace(
-        "selectionRemoved",
+        LogEvent::SelectionRemoved,
         || serde_json::json!({ "window": window.0, "reason": reason, "selected": selected }),
     );
     core.refresh_marks();
 }
 
 /// Empty the selection.
-pub(crate) fn clear<P: Platform>(core: &mut Core<P>, reason: &str) {
+pub(crate) fn clear<P: Platform>(core: &mut EngineState<P>, reason: &str) {
     if core.selection.is_empty() {
         return;
     }
     let windows: Vec<u64> = core.selection.windows.drain(..).map(|window| window.0).collect();
     core.trace(
-        "selectionCleared",
+        LogEvent::SelectionCleared,
         || serde_json::json!({ "windows": windows, "reason": reason }),
     );
     core.refresh_marks();
@@ -108,7 +112,7 @@ pub(crate) fn clear<P: Platform>(core: &mut Core<P>, reason: &str) {
 
 /// Forget selected windows that closed without the platform saying so, as when their app
 /// quit.
-pub(crate) fn prune<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn prune<P: Platform>(core: &mut EngineState<P>) {
     let closed: Vec<WindowId> = core
         .selection
         .windows
@@ -122,14 +126,14 @@ pub(crate) fn prune<P: Platform>(core: &mut Core<P>) {
 }
 
 /// Prune closed windows, then say whether any are selected.
-pub(crate) fn has_windows<P: Platform>(core: &mut Core<P>) -> bool {
+pub(crate) fn has_windows<P: Platform>(core: &mut EngineState<P>) -> bool {
     prune(core);
     !core.selection.is_empty()
 }
 
 /// Take out every selected window that stands for one of `groups`, by its tab group's
 /// shown tab.
-pub(crate) fn remove_groups<P: Platform>(core: &mut Core<P>, groups: &[WindowId], reason: &str) {
+pub(crate) fn remove_groups<P: Platform>(core: &mut EngineState<P>, groups: &[WindowId], reason: &str) {
     let gone: Vec<WindowId> = core
         .selection
         .windows
@@ -164,7 +168,7 @@ pub(crate) fn place<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
     });
 }
 
-fn plan_placement<P: Platform>(core: &mut Core<P>) -> Result<Option<PlacementPlan>, WindowError> {
+fn plan_placement<P: Platform>(core: &mut EngineState<P>) -> Result<Option<PlacementPlan>, WindowError> {
     prune(core);
     let mut selected: Vec<WindowSnapshot> = Vec::new();
     // A selected tab that its app has since hidden moves its group's shown tab.
@@ -240,7 +244,7 @@ async fn run_placement<P: Platform + 'static>(
         plan.in_zones.iter().map(|window| window.0).collect::<Vec<_>>(),
     );
     core.trace(
-        "selectionPlaced",
+        LogEvent::SelectionPlaced,
         || serde_json::json!({ "placed": placed_ids, "leftOver": left_over, "inZones": in_zones }),
     );
     match (failure, plan.left_over.len(), placed.len()) {

@@ -52,6 +52,16 @@ test("save enables only after a change", async ({ page }) => {
   await expect(save(page)).toBeEnabled();
 });
 
+test("a blank name blocks saving and the sidebar says why", async ({ page }) => {
+  await drawLeftHalf(page);
+  await page.getByRole("textbox", { name: "Layout name" }).fill("  ");
+  await expect(save(page)).toBeDisabled();
+  await expect(page.getByText("Give this layout a name to save it.")).toBeVisible();
+  await page.getByRole("textbox", { name: "Layout name" }).fill("Coding");
+  await expect(save(page)).toBeEnabled();
+  await expect(page.getByText("Give this layout a name to save it.")).toHaveCount(0);
+});
+
 test("undoing back to the saved content disables save", async ({ page }) => {
   await showPage(page, "Layouts");
   await layoutAction(page, "Shortcuts");

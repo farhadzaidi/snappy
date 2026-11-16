@@ -15,12 +15,12 @@ use objc2_core_graphics::{CGColor, CGPath};
 use objc2_foundation::NSString;
 use objc2_quartz_core::{CALayer, CAShapeLayer, CATextLayer, CATransaction, kCAAlignmentCenter};
 use snappy_core::geometry::Rect;
+use snappy_platform::overlay_style::{
+    CAPTION_FONT_SIZE, Paint, TEXT, TEXT_SHADOW, TEXT_SHADOW_BLUR, Tint, ZONE_CORNER_RADIUS, zone_style,
+};
 use snappy_platform::{OverlayScene, OverlayZone};
 
-use super::style::{
-    CAPTION_FONT_SIZE, CORNER_RADIUS, NUMBER_SHADOW_BLUR, NUMBER_SHADOW_OPACITY, Paint, Tint, place_zone,
-    zone_style,
-};
+use super::style::layer_frames;
 use crate::coords::{flip_rect, layer_y};
 use crate::displays::to_cg_rect;
 
@@ -169,7 +169,7 @@ impl ZoneLayers {
     }
 
     fn draw(&mut self, zone: &OverlayZone, work_area: Rect, scale: CGFloat) {
-        let placement = place_zone(zone, work_area);
+        let placement = layer_frames(zone, work_area);
         let container = work_area.height;
         let style = zone_style(zone);
 
@@ -177,8 +177,9 @@ impl ZoneLayers {
         self.shape.setFrame(layer_rect(shape, container));
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(shape.width, shape.height));
         // SAFETY: a null transform means identity.
-        let path =
-            unsafe { CGPath::with_rounded_rect(bounds, CORNER_RADIUS, CORNER_RADIUS, std::ptr::null()) };
+        let path = unsafe {
+            CGPath::with_rounded_rect(bounds, ZONE_CORNER_RADIUS, ZONE_CORNER_RADIUS, std::ptr::null())
+        };
         self.shape.setPath(Some(&path));
         self.shape.setFillColor(Some(&color(style.fill)));
         self.shape.setStrokeColor(Some(&color(style.border)));
@@ -215,10 +216,11 @@ fn text_layer() -> Retained<CATextLayer> {
     let layer = CATextLayer::new();
     // SAFETY: reading an immutable framework constant.
     layer.setAlignmentMode(unsafe { kCAAlignmentCenter });
-    layer.setForegroundColor(Some(&NSColor::whiteColor().CGColor()));
-    layer.setShadowColor(Some(&NSColor::blackColor().CGColor()));
-    layer.setShadowOpacity(NUMBER_SHADOW_OPACITY);
-    layer.setShadowRadius(NUMBER_SHADOW_BLUR);
+    layer.setForegroundColor(Some(&color(TEXT)));
+    // The layer applies the shadow's opacity itself.
+    layer.setShadowColor(Some(&color(Paint::new(TEXT_SHADOW.tint, 1.0))));
+    layer.setShadowOpacity(TEXT_SHADOW.alpha as f32);
+    layer.setShadowRadius(TEXT_SHADOW_BLUR);
     layer.setShadowOffset(CGSize::new(0.0, 0.0));
     layer
 }
@@ -254,6 +256,7 @@ pub(super) fn color(paint: Paint) -> Retained<CGColor> {
         Tint::Mint => NSColor::systemMintColor(),
         Tint::Orange => NSColor::systemOrangeColor(),
         Tint::White => NSColor::whiteColor(),
+        Tint::Black => NSColor::blackColor(),
     };
     base.colorWithAlphaComponent(paint.alpha).CGColor()
 }

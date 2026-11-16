@@ -8,20 +8,19 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Mods, Platform as PlatformName};
+use snappy_core::keys::{Combo, Mods, Os};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
-    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo,
-    WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
+    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu,
+    WindowId, WindowInfo, WindowState, WindowSystem,
 };
 use x11rb::rust_connection::RustConnection;
 
 use crate::messages::{NO_PARKING_DESKTOP, WAYLAND, unavailable};
 use crate::overlay::UiCommand;
-use crate::shared::Shared;
+use crate::shared::{Shared, lock};
 use crate::windows::Windows;
-use crate::x::lock;
 use snappy_linux::login_item;
 
 use crate::{caps_lock, displays, hotkeys, input};
@@ -188,8 +187,8 @@ impl HotKeys for X11Platform {
 }
 
 impl CapsLock for X11Platform {
-    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
-        caps_lock::hold(&self.shared, modifiers)
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, CapsLockRefusal> {
+        caps_lock::hold(&self.shared, modifiers).map_err(CapsLockRefusal::Refused)
     }
 
     fn restore_caps_lock(&mut self) {
@@ -294,7 +293,7 @@ impl LoginItem for X11Platform {
 impl Platform for X11Platform {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            platform: PlatformName::Linux,
+            platform: Os::Linux,
             parking: ParkingPolicy::Desktop,
             needs_permission: false,
         }

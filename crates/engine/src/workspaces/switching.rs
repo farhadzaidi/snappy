@@ -7,17 +7,17 @@ use snappy_core::workspace::Session;
 use snappy_ipc::ToSettings;
 use snappy_platform::{Platform, WindowId, WindowInfo};
 
-use crate::core::Core;
 use crate::diagnostics::{PhaseClock, SwitchTiming};
+use crate::log_event::LogEvent;
 use crate::ops::Shared;
 use crate::selection;
+use crate::state::EngineState;
 
-use super::CoreIo;
 use super::containment;
+use super::core_io::CoreIo;
 use super::events::{Discovery, discover_focused_into};
-use super::members::{enroll, sync_all_tabs, sync_tabs};
+use super::members::{enroll, refresh_members, sync_all_tabs, sync_tabs};
 use super::recovery::save_membership;
-use super::refresh_members;
 
 /// What gets focus once a switch is done.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +76,7 @@ pub(crate) fn request_switch<P: Platform + 'static>(
         };
         if let Some(reason) = refused {
             core.trace(
-                "workspaceSwitchSkipped",
+                LogEvent::WorkspaceSwitchSkipped,
                 || serde_json::json!({ "to": target, "reason": reason }),
             );
             return;
@@ -93,7 +93,7 @@ pub(crate) fn request_switch<P: Platform + 'static>(
     shared.core.borrow_mut().workspaces.requested = Some(target.to_owned());
 }
 
-fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus: SwitchFocus, requested_at: f64) {
+fn switch_now<P: Platform>(core: &mut EngineState<P>, target: &str, focus: SwitchFocus, requested_at: f64) {
     let Some(mut session) = core.workspaces.session.take() else {
         return;
     };
@@ -131,7 +131,7 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus: SwitchFocus,
     match result {
         Ok(focused_any) => {
             if focus == SwitchFocus::Settings {
-                core.outbox.push(ToSettings::Focus);
+                core.send_to_settings(ToSettings::Focus);
             } else if !focused_any {
                 core.platform.activate_self();
             }
@@ -146,7 +146,7 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus: SwitchFocus,
                 if !along.is_empty() {
                     let windows: Vec<u64> = arrived.iter().map(|window| window.0).collect();
                     let tabs = tabs_along(&session, &arrived);
-                    core.trace("selectionTakenAlong", || {
+                    core.trace(LogEvent::SelectionTakenAlong, || {
                         serde_json::json!({ "to": target, "windows": windows, "selected": along.len(), "tabs": tabs })
                     });
                     selection::clear(core, "taken along");
@@ -160,7 +160,7 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus: SwitchFocus,
         }
         Err(error) => {
             core.flag(
-                "workspaceSwitch",
+                LogEvent::WorkspaceSwitch,
                 || serde_json::json!({ "from": previous, "to": target, "error": error.to_string() }),
             );
             core.announce_error(&error.to_string());
@@ -171,7 +171,7 @@ fn switch_now<P: Platform>(core: &mut Core<P>, target: &str, focus: SwitchFocus,
     let windows = timing.windows;
     let total_ms = timing.total_ms;
     core.trace(
-        "workspaceSwitch",
+        LogEvent::WorkspaceSwitch,
         || serde_json::json!({ "from": previous, "to": target, "windows": windows, "totalMs": total_ms }),
     );
     core.diagnostics.record_switch(timing);
@@ -198,7 +198,7 @@ fn tabs_along(session: &Session, windows: &[WindowId]) -> serde_json::Value {
 }
 
 /// Save only the new active workspace.
-fn commit_active<P: Platform>(core: &mut Core<P>, target: &str) -> bool {
+fn commit_active<P: Platform>(core: &mut EngineState<P>, target: &str) -> bool {
     let mut next = core.settings.clone();
     next.workspaces.active_id = target.to_owned();
     match core.store.save(&next) {
@@ -272,7 +272,7 @@ pub(crate) fn send_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target
     });
 }
 
-fn send_now<P: Platform>(core: &mut Core<P>, target: &str, then: AfterSend) -> Option<WindowId> {
+fn send_now<P: Platform>(core: &mut EngineState<P>, target: &str, then: AfterSend) -> Option<WindowId> {
     let focused = match core.platform.focused_window() {
         Ok(info) => info,
         Err(_) => {
@@ -296,7 +296,7 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str, then: AfterSend) -> O
     let sent = match outcome.failure {
         None => {
             let tabs = tabs_along(&session, &[focused.id]);
-            core.trace("workspaceSend", || {
+            core.trace(LogEvent::WorkspaceSend, || {
                 serde_json::json!({
                     "window": focused.id.0,
                     "app": focused.app,
@@ -326,7 +326,7 @@ fn send_now<P: Platform>(core: &mut Core<P>, target: &str, then: AfterSend) -> O
 /// Send every selected window on the active workspace to `target` and stay, focusing the
 /// window used most recently among those left. Returns the windows sent; they leave the
 /// selection, and any that couldn't go stay in it.
-fn send_selection_now<P: Platform>(core: &mut Core<P>, target: &str) -> Vec<WindowId> {
+fn send_selection_now<P: Platform>(core: &mut EngineState<P>, target: &str) -> Vec<WindowId> {
     let Some(mut session) = core.workspaces.session.take() else {
         return Vec::new();
     };
@@ -347,7 +347,7 @@ fn send_selection_now<P: Platform>(core: &mut Core<P>, target: &str) -> Vec<Wind
     if !outcome.sent.is_empty() {
         let windows: Vec<u64> = outcome.sent.iter().map(|window| window.0).collect();
         let tabs = tabs_along(&session, &outcome.sent);
-        core.trace("workspaceSend", || {
+        core.trace(LogEvent::WorkspaceSend, || {
             serde_json::json!({
                 "windows": windows,
                 "to": target,
@@ -378,7 +378,7 @@ struct Sent {
 /// Send `windows` of the active workspace to `target`, saving membership when any went.
 /// To stay, focus moves to the window used most recently among those left.
 fn send_windows<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     session: &mut Session,
     windows: &[WindowId],
     target: &str,
@@ -417,7 +417,7 @@ fn send_windows<P: Platform>(
 
 /// Whether `info` shows on the active workspace, enrolling it first, so it can be
 /// selected. Always true while workspaces don't run.
-pub(crate) fn shown_on_active_workspace<P: Platform>(core: &mut Core<P>, info: &WindowInfo) -> bool {
+pub(crate) fn shown_on_active_workspace<P: Platform>(core: &mut EngineState<P>, info: &WindowInfo) -> bool {
     if !core.workspaces.is_running() {
         return true;
     }
@@ -432,7 +432,7 @@ pub(crate) fn shown_on_active_workspace<P: Platform>(core: &mut Core<P>, info: &
 
 /// Delete a workspace, moving its windows to `destination`.
 pub(crate) fn remove_workspace<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     id: &str,
     destination: &str,
 ) -> Result<(), WindowError> {

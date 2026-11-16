@@ -139,12 +139,11 @@ export class EditorStore {
     this.fieldPending.set(false);
   }
 
-  /** Apply a committed coordinate and return the zones that actually resulted. */
-  setField(zoneId: string, field: CoordinateField, value: number): Zone[] {
+  /** Apply a committed coordinate; core keeps the zones sound, which may change others too. */
+  setField(zoneId: string, field: CoordinateField, value: number): void {
     this.apply((snapshot) =>
       withZones(snapshot, core.setField({ zones: snapshot.layout.zones, id: zoneId, field, value })),
     );
-    return this.draft.get().current.layout.zones;
   }
 
   // Selection and tools

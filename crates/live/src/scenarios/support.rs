@@ -8,6 +8,7 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{KeyChord, Mods};
 use snappy_core::layout::{Spacing, preset, zone_frame};
 use snappy_core::settings::{NavigationShortcut, Settings, Workspace, WorkspaceStep};
+use snappy_engine::LogEvent;
 use snappy_platform::Display;
 
 use super::Outcome;
@@ -132,7 +133,7 @@ impl<'a> Context<'a> {
 
     /// The active workspace, as the daemon saved it.
     pub(super) fn active_workspace(&self) -> Result<String, String> {
-        let path = self.daemon.home().join("settings.json");
+        let path = self.daemon.paths().settings;
         let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
         let settings: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
         settings["workspaces"]["activeId"]
@@ -210,23 +211,23 @@ impl<'a> Context<'a> {
     }
 
     /// Records of `event` in the daemon's debug log so far.
-    pub(super) fn logged(&self, event: &str) -> Vec<serde_json::Value> {
+    pub(super) fn logged(&self, event: LogEvent) -> Vec<serde_json::Value> {
         std::fs::read_to_string(&self.debug_log)
             .unwrap_or_default()
             .lines()
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .filter(|record| record["event"] == event)
+            .filter(|record| record["event"] == event.as_str())
             .collect()
     }
 
     /// Snap records in the daemon's debug log so far.
     pub(super) fn snaps(&self) -> Vec<serde_json::Value> {
-        self.logged("snap")
+        self.logged(LogEvent::Snap)
     }
 
     /// The hovered zone's captions as the debug log recorded them, one per change.
     pub(super) fn captions(&self) -> Vec<Option<String>> {
-        self.logged("overlayCaption")
+        self.logged(LogEvent::OverlayCaption)
             .iter()
             .map(|record| record["caption"].as_str().map(str::to_owned))
             .collect()

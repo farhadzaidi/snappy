@@ -3,6 +3,10 @@ name = "snappy-fake"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "An in-memory desktop for testing Snappy's engine."
 
 [dependencies]
 snappy-core = { path = "../core" }

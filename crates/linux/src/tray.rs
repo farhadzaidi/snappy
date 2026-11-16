@@ -113,7 +113,7 @@ impl TrayIcon {
         match tray.assume_sni_available(true).spawn() {
             Ok(handle) => Some(TrayIcon { handle }),
             Err(error) => {
-                eprintln!("snappy: no tray icon: {error}");
+                crate::journal::warn(format_args!("no tray icon: {error}"));
                 None
             }
         }

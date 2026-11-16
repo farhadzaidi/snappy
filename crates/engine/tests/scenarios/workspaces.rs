@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use snappy_core::geometry::Rect;
 use snappy_core::keys::{KeyChord, Modifier};
-use snappy_engine::{Engine, Input};
+use snappy_engine::{Engine, Input, file_names};
 use snappy_fake::{FakePlatform, FakeWindow, OverlayCall};
 use snappy_ipc::{Command, ToSettings};
 use snappy_platform::{LiveControl, PlatformEvent, WindowId};
@@ -277,7 +277,7 @@ fn switch_timings_are_written_at_quit_and_only_when_there_are_some() {
         let engine = live_engine("timings-none", with_window(FLOATING));
         enable_workspaces(&engine);
         engine.shutdown();
-        let unused = paths_kept("timings-none").log("workspace-performance.json");
+        let unused = paths_kept("timings-none").log(file_names::PERFORMANCE);
         assert!(!unused.exists());
 
         let engine = live_engine("timings", with_window(FLOATING));
@@ -286,7 +286,7 @@ fn switch_timings_are_written_at_quit_and_only_when_there_are_some() {
             event(&engine, PlatformEvent::HotKey(switch_to(&engine, number)));
             settle(&engine).await;
         }
-        let file = paths_kept("timings").log("workspace-performance.json");
+        let file = paths_kept("timings").log(file_names::PERFORMANCE);
         assert!(!file.exists(), "timings stay in memory until quit");
         assert_eq!(engine.switch_timings().len(), 3);
 

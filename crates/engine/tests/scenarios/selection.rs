@@ -3,7 +3,7 @@
 use snappy_core::geometry::Rect;
 use snappy_core::keys::SnappyKey;
 use snappy_core::settings::{NavigationShortcut, Settings};
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent};
 use snappy_fake::{FakePlatform, FakeWindow};
 use snappy_ipc::Command;
 use snappy_platform::{MarkStyle, PlatformEvent, WindowId};
@@ -176,8 +176,7 @@ fn a_macos_file_clearing_with_delete_loads_clearing_with_backslash_and_delete_is
     scenario(|| async {
         let name = "clear-with-delete";
         let paths = paths(name);
-        let mut written =
-            serde_json::to_value(Settings::defaults(snappy_core::keys::Platform::MacOs)).unwrap();
+        let mut written = serde_json::to_value(Settings::defaults(snappy_core::keys::Os::MacOs)).unwrap();
         written["navigation"]["clearSelection"] = serde_json::to_value(snappy("Backspace")).unwrap();
         std::fs::create_dir_all(paths.settings.parent().unwrap()).unwrap();
         std::fs::write(&paths.settings, serde_json::to_vec(&written).unwrap()).unwrap();
@@ -317,14 +316,14 @@ fn the_debug_log_records_the_selection_and_sending() {
         press_default(&engine, "Backslash").await;
         press_default(&engine, "KeyL").await;
         for event in [
-            "selectionAdded",
-            "selectionRemoved",
-            "selectionTakenAlong",
-            "selectionCleared",
-            "workspaceSend",
-            "focusMove",
+            LogEvent::SelectionAdded,
+            LogEvent::SelectionRemoved,
+            LogEvent::SelectionTakenAlong,
+            LogEvent::SelectionCleared,
+            LogEvent::WorkspaceSend,
+            LogEvent::FocusMove,
         ] {
-            assert!(!logged(name, event).is_empty(), "{event}");
+            assert!(!logged(name, event).is_empty(), "{event:?}");
         }
     });
 }
@@ -373,7 +372,7 @@ fn snappy_space_places_the_selection_into_empty_zones_as_one_undo_step() {
         );
         assert!(marks(&engine).is_empty(), "placed windows leave the selection");
         assert_eq!(status_text(&engine), "Snapped 2 windows.");
-        let snaps = logged(name, "snap");
+        let snaps = logged(name, LogEvent::Snap);
         assert_eq!(snaps.len(), 2, "each move is logged as a snap");
         assert!(snaps.iter().all(|snap| snap["outcome"] == "snapped"));
 

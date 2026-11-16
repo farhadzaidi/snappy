@@ -23,7 +23,7 @@ use crate::ffi::carbon::{
     InstallEventHandler, NO_ERR, OPTION_KEY, OSStatus, RegisterEventHotKey, SHIFT_KEY, TYPE_EVENT_HOT_KEY_ID,
     UnregisterEventHotKey,
 };
-use crate::keycodes::CarbonChord;
+use crate::keys::CarbonChord;
 use crate::system_shortcuts;
 
 const SIGNATURE: u32 = u32::from_be_bytes(*b"SNAP");

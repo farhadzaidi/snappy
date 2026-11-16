@@ -11,19 +11,26 @@ use serde::{Deserialize, Serialize};
 pub use snappy_linux::scene::Frame;
 
 /// Matches `PROTOCOL_VERSION` in the script's `service.js`.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The name KWin knows the loaded script by.
 pub const SCRIPT_NAME: &str = "snappy";
 /// The daemon's name on the session bus, where the script finds it.
-pub const BUS_NAME: &str = "io.github.farhadzaidi.Snappy";
+pub const BUS_NAME: &str = snappy_linux::names::APP_ID;
 pub const OBJECT_PATH: &str = "/io/github/farhadzaidi/Snappy/KWin";
 pub const INTERFACE: &str = "io.github.farhadzaidi.Snappy.KWin";
 /// The shortcut action the script registers as its doorbell, in KWin's component.
 pub const DOORBELL: &str = "snappy-requests";
+/// The daemon's methods the script calls: to report an event, to take the waiting requests,
+/// and to answer them.
+pub const EVENT_METHOD: &str = "Event";
+pub const TAKE_METHOD: &str = "Take";
+pub const ANSWER_METHOD: &str = "Answer";
 
 /// The refusal `park` returns for a window KWin shows on every desktop.
 pub const REFUSED_ALL_DESKTOPS: &str = "allDesktops";
+/// The refusal `park` returns when KWin didn't move the window to Snappy's desktop.
+pub const REFUSED_NOT_MOVED: &str = "notMoved";
 /// The error a request names a window with when the window is gone.
 pub const GONE: &str = "gone";
 
@@ -119,10 +126,12 @@ pub enum Event {
     Ready {
         version: u32,
     },
+    /// A move or resize started; `frame` is the window's as it began, before KWin moved it.
     PointerDown {
         x: f64,
         y: f64,
         window: u64,
+        frame: Frame,
     },
     PointerDragged {
         x: f64,
@@ -185,17 +194,102 @@ mod tests {
 
     #[test]
     fn events_read_from_the_scripts_json() {
-        let event: Event = serde_json::from_str(r#"{"type":"pointerDown","x":3,"y":4,"window":12}"#).unwrap();
-        assert_eq!(
-            event,
-            Event::PointerDown {
-                x: 3.0,
-                y: 4.0,
-                window: 12
-            }
-        );
+        let event: Event = serde_json::from_str(
+            r#"{"type":"pointerDown","x":3,"y":4,"window":12,"frame":{"x":1,"y":2,"width":30,"height":40}}"#,
+        )
+        .unwrap();
+        let Event::PointerDown { x, y, window, frame } = event else {
+            panic!("{event:?}");
+        };
+        assert_eq!((x, y, window), (3.0, 4.0, 12));
+        assert_eq!(Rect::from(frame), Rect::new(1.0, 2.0, 30.0, 40.0));
         let event: Event = serde_json::from_str(r#"{"type":"somethingNew","detail":1}"#).unwrap();
         assert_eq!(event, Event::Unknown);
+    }
+
+    /// The names in `source` that follow each `prefix`, up to the closing quote.
+    fn quoted_after<'a>(source: &'a str, prefix: &str) -> Vec<&'a str> {
+        source
+            .split(prefix)
+            .skip(1)
+            .filter_map(|rest| rest.split('\'').next())
+            .collect()
+    }
+
+    /// One request of each kind. The match stops compiling when a kind is added, as a
+    /// reminder to list it here too.
+    fn one_of_each_request() -> Vec<Request> {
+        let all = vec![
+            Request::Windows,
+            Request::Window { id: 0 },
+            Request::Focused,
+            Request::Follow { ids: Vec::new() },
+            Request::SetPosition {
+                id: 0,
+                x: 0.0,
+                y: 0.0,
+            },
+            Request::SetSize {
+                id: 0,
+                width: 0.0,
+                height: 0.0,
+            },
+            Request::Unmaximize { id: 0 },
+            Request::Activate { id: 0 },
+            Request::ClearFocus,
+            Request::Pointer,
+            Request::Monitors,
+            Request::Monitoring {
+                press: false,
+                drag: false,
+            },
+            Request::Bind,
+            Request::OnBoundDesktop,
+            Request::ClearDesktops,
+            Request::Park { id: 0 },
+            Request::Unpark { id: 0 },
+        ];
+        for request in &all {
+            match request {
+                Request::Windows
+                | Request::Window { .. }
+                | Request::Focused
+                | Request::Follow { .. }
+                | Request::SetPosition { .. }
+                | Request::SetSize { .. }
+                | Request::Unmaximize { .. }
+                | Request::Activate { .. }
+                | Request::ClearFocus
+                | Request::Pointer
+                | Request::Monitors
+                | Request::Monitoring { .. }
+                | Request::Bind
+                | Request::OnBoundDesktop
+                | Request::ClearDesktops
+                | Request::Park { .. }
+                | Request::Unpark { .. } => {}
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn the_script_handles_every_request_and_reports_only_known_events() {
+        let service = include_str!("../../../apps/kwin-script/service.js");
+        let handled = quoted_after(service, "case '");
+        for request in one_of_each_request() {
+            let json = serde_json::to_value(&request).unwrap();
+            let op = json["op"].as_str().unwrap();
+            assert!(handled.contains(&op), "the script doesn't handle {op}");
+        }
+        assert_eq!(handled.len(), one_of_each_request().len(), "{handled:?}");
+        for kind in quoted_after(service, "type: '") {
+            let event = serde_json::from_value::<Event>(serde_json::json!({ "type": kind }));
+            assert!(
+                !matches!(event, Ok(Event::Unknown)),
+                "the daemon doesn't know {kind}"
+            );
+        }
     }
 
     #[test]
@@ -214,10 +308,20 @@ mod tests {
     /// The script's source declares the same protocol version and names.
     #[test]
     fn the_script_speaks_this_protocol_version() {
-        let service = include_str!("../../../apps/kwin-script/contents/ui/service.js");
+        let service = include_str!("../../../apps/kwin-script/service.js");
         assert!(service.contains(&format!("var PROTOCOL_VERSION = {PROTOCOL_VERSION};")));
-        for name in [BUS_NAME, OBJECT_PATH, INTERFACE, DOORBELL] {
+        assert_eq!(OBJECT_PATH, snappy_linux::names::object_path("KWin"));
+        assert_eq!(INTERFACE, format!("{BUS_NAME}.KWin"));
+        let main = include_str!("../../../apps/kwin-script/main.qml");
+        for method in [EVENT_METHOD, TAKE_METHOD, ANSWER_METHOD] {
+            assert!(main.contains(&format!("method: \"{method}\"")), "{method}");
+        }
+        for name in [BUS_NAME, OBJECT_PATH, INTERFACE, DOORBELL, GONE] {
             assert!(service.contains(&format!("'{name}'")), "{name}");
+        }
+        let parking = include_str!("../../../apps/kwin-script/parking.js");
+        for refusal in [REFUSED_ALL_DESKTOPS, REFUSED_NOT_MOVED] {
+            assert!(parking.contains(&format!("'{refusal}'")), "{refusal}");
         }
     }
 }

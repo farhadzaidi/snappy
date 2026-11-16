@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use crate::diagnostics::millis;
+use crate::store::file_names::{DEBUG_LOG, PREVIOUS_DEBUG_LOG};
+
 /// Past this size the log moves to `debug.1.jsonl` and starts again.
 const MAX_BYTES: u64 = 5 * 1024 * 1024;
-const FILE_NAME: &str = "debug.jsonl";
-const PREVIOUS_FILE_NAME: &str = "debug.1.jsonl";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -48,7 +49,7 @@ impl DebugLog {
     }
 
     pub fn path(&self) -> PathBuf {
-        self.dir.join(FILE_NAME)
+        self.dir.join(DEBUG_LOG)
     }
 
     pub fn is_on(&self) -> bool {
@@ -74,7 +75,8 @@ impl DebugLog {
     pub fn record(&mut self, at: f64, level: Level, event: &str, details: Value) {
         let Some(file) = &mut self.file else { return };
         let mut line = Map::new();
-        line.insert("t".into(), Value::from((at * 1000.0).round() / 1000.0));
+        // Seconds, to the millisecond.
+        line.insert("t".into(), Value::from(millis(at).round() / millis(1.0)));
         line.insert("level".into(), level.as_str().into());
         line.insert("event".into(), event.into());
         match details {
@@ -108,7 +110,7 @@ impl DebugLog {
 
     fn roll(&mut self) {
         self.file = None;
-        let _ = fs::rename(self.path(), self.dir.join(PREVIOUS_FILE_NAME));
+        let _ = fs::rename(self.path(), self.dir.join(PREVIOUS_DEBUG_LOG));
         self.open();
     }
 }
@@ -182,7 +184,7 @@ mod tests {
         log.record(1.0, Level::Info, "first", Value::Null);
         log.record(2.0, Level::Info, "second", Value::Null);
         assert_eq!(lines(&log).len(), 1);
-        assert!(log.dir.join(PREVIOUS_FILE_NAME).exists());
+        assert!(log.dir.join(PREVIOUS_DEBUG_LOG).exists());
     }
 
     #[cfg(unix)]

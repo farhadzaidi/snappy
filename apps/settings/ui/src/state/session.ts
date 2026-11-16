@@ -1,4 +1,5 @@
-import type { AppState, Display, Rect } from "../core/model";
+import type { AppState, Display } from "../bridge/protocol";
+import type { Rect } from "../core/model";
 import { Observable } from "./observable";
 
 export type Page = "layouts" | "workspaces" | "editor" | "settings";

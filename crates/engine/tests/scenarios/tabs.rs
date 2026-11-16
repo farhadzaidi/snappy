@@ -2,6 +2,7 @@
 
 use snappy_core::geometry::Rect;
 use snappy_core::keys::{KeyChord, Modifier};
+use snappy_engine::LogEvent;
 use snappy_fake::{FakePlatform, FakeWindow};
 use snappy_ipc::Command;
 use snappy_platform::{PlatformEvent, WindowId};
@@ -63,7 +64,7 @@ fn a_selected_tabbed_window_takes_every_tab_along_and_torn_out_tabs_stay_there()
         );
         assert_eq!(window_counts(&engine)["workspace-2"], 3);
 
-        let taken_along = logged(name, "selectionTakenAlong");
+        let taken_along = logged(name, LogEvent::SelectionTakenAlong);
         assert_eq!(taken_along[0]["tabs"], serde_json::json!({ "3": [1, 2] }));
     });
 }
@@ -115,12 +116,12 @@ fn sending_a_tab_and_switching_takes_every_selected_tab_of_its_group_out_of_the_
         settle(&engine).await;
         assert_eq!(active(&engine), "workspace-2");
         assert_eq!(frame_of(&engine, 2), TABBED, "the group went, showing tab 2");
-        let removed = logged(name, "selectionRemoved");
+        let removed = logged(name, LogEvent::SelectionRemoved);
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0]["window"], 3);
         assert_eq!(removed[0]["reason"], "sent to another workspace");
         assert!(
-            logged(name, "selectionTakenAlong").is_empty(),
+            logged(name, LogEvent::SelectionTakenAlong).is_empty(),
             "nothing of the group is left to take along"
         );
         assert!(marks(&engine).is_empty());
@@ -187,7 +188,7 @@ fn a_restart_puts_tabs_remembered_in_other_workspaces_with_their_shown_tab() {
         );
         assert_eq!(window_counts(&engine)["workspace-2"], 1);
         assert_eq!(window_counts(&engine)["workspace-1"], 0);
-        assert!(!logged(name, "tabsUnified").is_empty());
+        assert!(!logged(name, LogEvent::TabsUnified).is_empty());
     });
 }
 

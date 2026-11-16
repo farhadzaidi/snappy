@@ -1,14 +1,16 @@
 // An in-memory daemon for `pnpm dev` and the tests. It speaks the same messages as the real
 // one, applies commands with the real `snappy-core` rules, and records every command.
 
-import type { AppState, Command, KeyChord, Modifier, PlatformName, ToSettings } from "../../core/model";
+import type { KeyChord, Modifier, PlatformName } from "../../core/model";
 import { core } from "../../core/snappyCore";
 import type { Bridge, Transport } from "../bridge";
 import { EXPORT_FILE_NAME } from "../bridge";
+import type { AppState, Command, ToSettings } from "../protocol";
 import { FAKE_DISPLAYS, initialState } from "./fixtures";
 import { applyCommand } from "./reducer";
 
-const PROTOCOL_VERSION = 6;
+/** The daemon's protocol version; `snappy-ipc` checks this copy matches its own. */
+const PROTOCOL_VERSION = 7;
 
 /**
  * The same key for every spelling of one shortcut, such as Snappy + K and its modifiers held

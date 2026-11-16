@@ -4,13 +4,13 @@ import { allLayouts, isEnabled } from "../core/layouts";
 import type { KeyChord, ShortcutId, Workspace, WorkspaceShortcut } from "../core/model";
 import { core } from "../core/snappyCore";
 import { ShortcutRecorder } from "../recorder/ShortcutRecorder";
+import { ResetShortcutsButton } from "../shortcuts/ResetShortcutsButton";
 import { useAppState, useSend } from "../state/services";
 import { Button } from "../ui/Button";
 import { ChoiceMenu } from "../ui/ChoiceMenu";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { Group, Row } from "../ui/Group";
 import { TrashIcon } from "../ui/icons";
-import { ResetShortcutsButton } from "../ui/ResetShortcutsButton";
 import { WorkspaceName } from "./WorkspaceName";
 
 const SHORTCUTS: readonly WorkspaceShortcut[] = ["switchShortcut", "sendShortcut", "sendAndSwitchShortcut"];
@@ -53,7 +53,7 @@ export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace
           <Row key={display.id} label={<span className="muted">{display.name}</span>}>
             <ChoiceMenu
               label={`Layout on ${display.name}`}
-              value={layoutOn(workspace, display.id)}
+              value={core.layoutForDisplay(app.settings, display.id, workspace.id).id}
               choices={allLayouts(app.settings)
                 .filter((layout) => isEnabled(app.settings, layout))
                 .map((layout) => ({ value: layout.id, title: layout.name }))}
@@ -96,7 +96,7 @@ export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace
       {confirmingDelete && (
         <ConfirmDialog
           title={`Delete ${workspace.name}?`}
-          message={`Its windows will be moved to ${deletionDestination(workspace)}. Your windows and layouts will be kept.`}
+          message={`Its windows move to ${deletionDestination(workspace)}. No windows close.`}
           confirmTitle="Delete workspace"
           icon={<TrashIcon />}
           onCancel={() => setConfirmingDelete(false)}
@@ -109,15 +109,6 @@ export function WorkspaceDetail({ workspace, onDeleted }: { workspace: Workspace
       )}
     </div>
   );
-
-  /** The layout this workspace uses on a display: its own, else the display's, else the default. */
-  function layoutOn(item: Workspace, displayId: string): string {
-    return (
-      item.displays[displayId] ??
-      app.settings.layouts.displays[displayId] ??
-      app.settings.layouts.defaultLayoutId
-    );
-  }
 
   /**
    * Where a deleted workspace's windows go: the active workspace, or the first other one

@@ -84,7 +84,7 @@ fn display_submenu(display: &TrayDisplay) -> MenuEntry {
     entries.extend(display.presets.iter().map(layout));
     if !display.custom.is_empty() {
         entries.push(MenuEntry::Separator);
-        entries.push(MenuEntry::SectionHeader("Your layouts".to_owned()));
+        entries.push(MenuEntry::SectionHeader("My layouts".to_owned()));
         entries.extend(display.custom.iter().map(layout));
     }
     MenuEntry::Submenu {
@@ -209,7 +209,7 @@ mod tests {
         let layouts = submenu(&entries, "Studio Display");
         assert_eq!(
             titles(layouts),
-            vec!["Presets", "HALVES", "THIRDS", "-", "Your layouts", "MINE"]
+            vec!["Presets", "HALVES", "THIRDS", "-", "My layouts", "MINE"]
         );
         assert_eq!(
             layouts[2],

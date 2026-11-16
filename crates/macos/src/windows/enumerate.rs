@@ -6,16 +6,17 @@ use snappy_core::error::WindowError;
 use snappy_core::geometry::Rect;
 use snappy_platform::WindowInfo;
 
+use super::eligibility::AppFacts;
+use super::occupancy::{
+    ServerWindow, SwapCandidate, is_on_screen, match_occupants, occupants_by_process, same_frame, unambiguous,
+};
 use super::operations::has_sheet;
-use super::{Windows, server, window_facts};
+use super::server;
+use super::tracked::{Windows, window_facts};
 use crate::apps;
 use crate::ax::{self, AxElement, names};
-use crate::eligibility::AppFacts;
 use crate::messages::{
     SWAP_LIST_UNREADABLE, SWAP_NEEDS_PERMISSION, SWAP_NOT_RESPONDING, SWAP_UNSUPPORTED_OCCUPANT, unavailable,
-};
-use crate::occupancy::{
-    ServerWindow, SwapCandidate, is_on_screen, match_occupants, occupants_by_process, same_frame, unambiguous,
 };
 use crate::thresholds::{AX_ENUMERATION_TIMEOUT, AX_RECOVERY_TIMEOUT};
 

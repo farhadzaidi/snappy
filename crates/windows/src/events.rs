@@ -170,7 +170,9 @@ impl Main {
                 by_activation: true,
             });
         }
-        self.follow_keyboard_layout(hwnd);
+        if self.follow_keyboard_layout(hwnd) {
+            self.emit(PlatformEvent::HotKeysRefused);
+        }
     }
 
     /// A move or size loop began: the press that started it, naming the window when
@@ -187,12 +189,14 @@ impl Main {
                 if minted.new_process {
                     self.hooks.watch_process(info.pid);
                 }
-                info.id
+                info
             });
+        // The frame was read as the loop began, before the window moved.
         self.emit(PlatformEvent::PointerDown {
             at: cursor(),
             mods: modifiers(),
-            window,
+            window: window.as_ref().map(|info| info.id),
+            frame: window.map(|info| info.frame),
         });
     }
 

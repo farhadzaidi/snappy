@@ -6,17 +6,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// The icon's name in the theme, after Snappy's application ID.
-pub const NAME: &str = "io.github.farhadzaidi.Snappy";
+pub const NAME: &str = crate::names::APP_ID;
 
 const SVG: &[u8] = include_bytes!("../../../assets/icon/snappy.svg");
 
 /// `$XDG_DATA_HOME/icons/hicolor/scalable/apps/<name>.svg`, defaulting to `~/.local/share`.
 fn path() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .map(|data| path_in(&data))
+    crate::xdg::data_home().map(|data| path_in(&data))
 }
 
 fn path_in(data: &Path) -> PathBuf {
@@ -32,7 +28,7 @@ pub fn install() {
         None => Err(io::Error::new(io::ErrorKind::NotFound, "no data folder")),
     };
     if let Err(error) = result {
-        eprintln!("snappy: can't install the app icon: {error}");
+        crate::journal::warn(format_args!("can't install the app icon: {error}"));
     }
 }
 

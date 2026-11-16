@@ -19,6 +19,8 @@ import * as Windows from './windows.js';
 export const PROTOCOL_VERSION = 5;
 
 const OBJECT_PATH = '/io/github/farhadzaidi/Snappy/Shell';
+/** The error for a request that names a window that has closed. */
+const GONE = 'gone';
 const INTERFACE = `
 <node>
   <interface name="io.github.farhadzaidi.Snappy.Shell">
@@ -59,6 +61,8 @@ export class Service {
             Main.layoutManager.connectObject('monitors-changed', () => emit({type: 'displays'}), this);
             global.display.connectObject('workareas-changed', () => emit({type: 'displays'}), this);
             Main.sessionMode.connectObject('updated', () => this._sessionModeChanged(), this);
+            // Turned on while the screen is locked, it starts as the lock screen needs.
+            this._sessionModeChanged();
 
             this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE, this);
             this._dbus.export(Gio.DBus.session, OBJECT_PATH);
@@ -135,7 +139,7 @@ export class Service {
     _window(id) {
         const window = Windows.findWindow(id);
         if (window === null)
-            throw new Error('gone');
+            throw new Error(GONE);
         return window;
     }
 

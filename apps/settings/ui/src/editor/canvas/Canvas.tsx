@@ -107,6 +107,7 @@ function ZoneBox({ zone, number, canvas, selected, resizable, cursor }: ZoneBoxP
   return (
     <div
       className="zone"
+      role="img"
       data-zone-id={zone.id}
       data-selected={selected}
       aria-label={`Zone ${number}`}
@@ -192,6 +193,8 @@ function Dividers({ zones, canvas }: { zones: Zone[]; canvas: Size }) {
           <div
             key={divider.id}
             className="divider"
+            role="separator"
+            aria-orientation={vertical ? "vertical" : "horizontal"}
             data-divider-id={divider.id}
             data-vertical={vertical}
             aria-label={vertical ? "Vertical divider" : "Horizontal divider"}

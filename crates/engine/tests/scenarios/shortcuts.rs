@@ -3,13 +3,13 @@
 use snappy_core::geometry::Rect;
 use snappy_core::keys::{KeyChord, SnappyKey};
 use snappy_core::settings::DragModifier;
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent};
 use snappy_fake::{FakePlatform, FakeWindow};
 use snappy_ipc::{Command, ToSettings};
 use snappy_platform::{PlatformEvent, WindowId};
 
 use crate::support::{
-    FLOATING, LEFT_ZONE, RIGHT_ZONE, command, default_workspaces, event, frame_of, hotkey_id,
+    FLOATING, LEFT_ZONE, RIGHT_ZONE, command, default_workspaces, event, frame_of, frozen, hotkey_id,
     inactive_window_in_the_right_zone, live_engine, logged, place, press_default, scenario, settle,
     side_display, side_third, snappy, thirds_on_the_side, two_zoned_windows, with_window, writes_to,
 };
@@ -25,7 +25,7 @@ fn the_debug_log_names_each_shortcut_by_its_action() {
         press_default(&engine, "KeyJ").await;
         press_default(&engine, "Digit2").await;
 
-        let pressed = logged(name, "shortcut");
+        let pressed = logged(name, LogEvent::Shortcut);
         let pressed: Vec<(&str, Option<&str>, bool)> = pressed
             .iter()
             .map(|record| {
@@ -43,7 +43,7 @@ fn the_debug_log_names_each_shortcut_by_its_action() {
                 ("switchWorkspace", Some("workspace-2"), true)
             ]
         );
-        let registered = logged(name, "shortcutsRegistered");
+        let registered = logged(name, LogEvent::ShortcutsRegistered);
         let shortcuts = registered.last().unwrap()["shortcuts"].as_array().unwrap();
         assert!(shortcuts.contains(&serde_json::json!({ "chord": "Snappy + J", "action": "focusLeft" })));
         assert!(shortcuts.contains(&serde_json::json!({
@@ -273,6 +273,72 @@ fn zone_shortcuts_follow_each_displays_layout_and_can_share_chords() {
         event(&engine, PlatformEvent::HotKey(third));
         settle(&engine).await;
         assert_eq!(frame_of(&engine, 1), side_third(2));
+    });
+}
+
+#[test]
+fn a_shortcut_another_app_took_while_live_control_was_away_is_reported_when_it_returns() {
+    scenario(|| async {
+        let engine = live_engine("reregister-on-return", FakePlatform::default());
+        let taken = snappy("ArrowLeft").combo(SnappyKey::DEFAULT);
+        engine.with_platform(|p| {
+            p.taken_elsewhere.insert(taken.clone());
+            p.registered.retain(|(_, combo)| *combo != taken);
+        });
+        event(&engine, PlatformEvent::LiveControlChanged);
+        let status = engine.status().unwrap();
+        assert_eq!(
+            (status.message.as_str(), status.is_error),
+            ("Another app is using Snappy + ←.", true)
+        );
+    });
+}
+
+#[test]
+fn an_arrow_after_a_move_that_failed_starts_from_where_the_window_is() {
+    scenario(|| async {
+        let engine = live_engine("navigation-after-failure", with_window(LEFT_ZONE));
+        command(
+            &engine,
+            Command::ApplyLayout {
+                display: "main".into(),
+                layout: "thirds".into(),
+            },
+        );
+        engine.with_platform(|p| p.focused = Some(WindowId(1)));
+        press_default(&engine, "ArrowLeft").await;
+        let left = frame_of(&engine, 1);
+
+        frozen(&engine, 1, true);
+        press_default(&engine, "ArrowRight").await;
+        assert_eq!(frame_of(&engine, 1), left, "the window refused to move");
+
+        frozen(&engine, 1, false);
+        press_default(&engine, "ArrowRight").await;
+        let work_area = engine.with_platform(|p| p.displays[0].work_area);
+        let landed = frame_of(&engine, 1);
+        assert!(
+            landed.x > left.x && landed.x < work_area.x + work_area.width / 2.0,
+            "one zone to the right of where it is, the middle third: {landed:?}"
+        );
+    });
+}
+
+#[test]
+fn a_shortcut_the_platform_lost_on_its_own_is_reported() {
+    scenario(|| async {
+        let engine = live_engine("refused-on-its-own", FakePlatform::default());
+        let taken = snappy("ArrowRight").combo(SnappyKey::DEFAULT);
+        engine.with_platform(|p| {
+            p.taken_elsewhere.insert(taken.clone());
+            p.registered.retain(|(_, combo)| *combo != taken);
+        });
+        event(&engine, PlatformEvent::HotKeysRefused);
+        let status = engine.status().unwrap();
+        assert_eq!(
+            (status.message.as_str(), status.is_error),
+            ("Another app is using Snappy + →.", true)
+        );
     });
 }
 

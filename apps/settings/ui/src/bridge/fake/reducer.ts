@@ -1,21 +1,11 @@
-// What the fake daemon does with each command: apply it to a copy of the settings, validate
-// with the real `snappy-core` rules, and keep the old state if validation fails.
+// What the fake daemon does with each command: apply it to a copy of the settings by the
+// daemon's own `snappy-core` rules, validate, and keep the old state if validation fails.
 
-import { findLayout, isPreset, optionsFor } from "../../core/layouts";
+import { findLayout } from "../../core/layouts";
 import { modifierLabel, snappyKeyLabel } from "../../core/labels";
-import type {
-  AppState,
-  Command,
-  KeyChord,
-  Layout,
-  Modifier,
-  NamedShortcut,
-  Reset,
-  Settings,
-  Workspace,
-} from "../../core/model";
-import { coreLimits } from "../../core/limits";
-import { core } from "../../core/snappyCore";
+import type { KeyChord, Modifier, NamedShortcut, Reset, Settings } from "../../core/model";
+import { core, type SettingsEdit } from "../../core/snappyCore";
+import type { AppState, Command } from "../protocol";
 
 export interface Outcome {
   state: AppState;
@@ -25,6 +15,9 @@ export interface Outcome {
   /** The availability answer to a `probeShortcut`. */
   probe?: boolean;
 }
+
+/** An outcome that may have changed nothing, which posts no message. */
+type Edited = Outcome & { unchanged?: true };
 
 export interface FakeSystem {
   /** Whether the system and other apps leave a chord free. */
@@ -73,9 +66,12 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
     case "applyLayout":
       return applyLayout(state, command.display, command.layout);
     case "saveLayout":
-      return saveLayout(state, command.layout, command);
+      return saveLayout(state, command);
     case "deleteLayout":
-      return deleteLayout(state, command.layout);
+      return withStatus(
+        edit(state, { kind: "removeLayout", layout: command.layout }),
+        "Custom layout deleted.",
+      );
     case "setLayoutEnabled":
       return setLayoutEnabled(state, command.layout, command.enabled);
     case "showPreview":
@@ -87,18 +83,13 @@ function handle(state: AppState, command: Command, system: FakeSystem): Outcome 
     case "setWorkspacesEnabled":
       return setWorkspacesEnabled(state, command.enabled);
     case "addWorkspace":
-      return addWorkspace(state);
+      return edit(state, { kind: "addWorkspace" });
     case "updateWorkspace":
-      return saveWorkspaces(
-        state,
-        settings.workspaces.items.map((item) =>
-          item.id === command.workspace.id ? command.workspace : item,
-        ),
-      );
+      return edit(state, { kind: "updateWorkspace", workspace: command.workspace });
     case "moveWorkspaces":
-      return saveWorkspaces(state, moveItems(settings.workspaces.items, command.from, command.to));
+      return edit(state, { kind: "reorderWorkspaces", from: command.from, to: command.to });
     case "deleteWorkspace":
-      return deleteWorkspace(state, command.workspace);
+      return edit(state, { kind: "removeWorkspace", workspace: command.workspace });
     case "setWorkspaceStepShortcut":
       return save(state, {
         ...settings,
@@ -148,6 +139,22 @@ function save(state: AppState, settings: Settings): Outcome {
   return done({ ...state, settings: validation.valid });
 }
 
+/** Apply a settings edit by the daemon's own rules and save it, as the daemon does. */
+function edit(state: AppState, change: SettingsEdit): Edited {
+  const outcome = core.applyEdit(state.settings, change, state.platform);
+  if (outcome === "unchanged") {
+    return { ...done(state), unchanged: true };
+  }
+  if ("refused" in outcome) {
+    return { state, error: outcome.refused };
+  }
+  const saved = save(state, outcome.edited.settings);
+  const added = outcome.edited.addedWorkspace;
+  return saved.error === null && added !== null
+    ? { ...saved, state: { ...saved.state, addedWorkspace: added } }
+    : saved;
+}
+
 /**
  * Change the Snappy key as the daemon does: check every shortcut with the new modifiers, then
  * ask about each chord the change moves, refusing with the reason when anything clashes.
@@ -184,8 +191,9 @@ function setCapsLockAsSnappyKey(state: AppState, enabled: boolean, system: FakeS
   return withStatus(save(state, { ...state.settings, capsLockAsSnappyKey: enabled }), message);
 }
 
-function withStatus(outcome: Outcome, message: string, notify = true): Outcome {
-  if (outcome.error !== null) {
+/** Post `message` once `outcome` changed something; refusals and no-ops say nothing. */
+function withStatus(outcome: Edited, message: string, notify = true): Outcome {
+  if (outcome.error !== null || outcome.unchanged) {
     return outcome;
   }
   const id = (outcome.state.status?.id ?? 0) + 1;
@@ -218,170 +226,35 @@ function setSnapping(state: AppState, enabled: boolean): Outcome {
     : withStatus(saved, "Allow Snappy in Accessibility. Snapping will start automatically.");
 }
 
-/**
- * Assign a layout to a display and make it the default. While workspaces run, it belongs to
- * that display in the active workspace only.
- */
-function assignLayout(settings: Settings, displayId: string, layoutId: string): Settings {
-  const workspaces = settings.workspaces;
-  if (workspaces.enabled) {
-    const items = workspaces.items.map((item) =>
-      item.id === workspaces.activeId
-        ? { ...item, displays: { ...item.displays, [displayId]: layoutId } }
-        : item,
-    );
-    return { ...settings, workspaces: { ...workspaces, items } };
-  }
-  return {
-    ...settings,
-    layouts: {
-      ...settings.layouts,
-      displays: { ...settings.layouts.displays, [displayId]: layoutId },
-      defaultLayoutId: layoutId,
-    },
-  };
-}
-
 function displayName(state: AppState, displayId: string): string {
   return state.displays.find((display) => display.id === displayId)?.name ?? "this display";
 }
 
+/** Unknown and turned-off layouts change nothing, and say nothing. */
 function applyLayout(state: AppState, displayId: string, layoutId: string): Outcome {
-  const layout = findLayout(state.settings, layoutId);
-  if (!layout) {
-    return done(state);
-  }
-  const saved = save(state, assignLayout(state.settings, displayId, layoutId));
-  return withStatus(saved, `${layout.name} selected for ${displayName(state, displayId)}.`, false);
+  const name = findLayout(state.settings, layoutId)?.name ?? "";
+  const applied = edit(state, { kind: "assignLayout", display: displayId, layout: layoutId });
+  return withStatus(applied, `${name} selected for ${displayName(state, displayId)}.`, false);
 }
 
-function saveLayout(
-  state: AppState,
-  layout: Layout,
-  command: Extract<Command, { kind: "saveLayout" }>,
-): Outcome {
-  const settings = state.settings;
-  const custom = isPreset(layout.id)
-    ? settings.layouts.custom
-    : settings.layouts.custom.some((item) => item.id === layout.id)
-      ? settings.layouts.custom.map((item) => (item.id === layout.id ? layout : item))
-      : [...settings.layouts.custom, layout];
-  const updated: Settings = {
-    ...settings,
-    layouts: {
-      ...settings.layouts,
-      custom,
-      options: { ...settings.layouts.options, [layout.id]: command.options },
-    },
-  };
-  const name = findLayout(updated, layout.id)?.name ?? layout.name;
-  return withStatus(save(state, assignLayout(updated, command.display, layout.id)), `${name} saved.`);
-}
-
-function deleteLayout(state: AppState, layoutId: string): Outcome {
-  const settings = state.settings;
-  const keep = (assignments: Record<string, string>) =>
-    Object.fromEntries(Object.entries(assignments).filter(([, assigned]) => assigned !== layoutId));
-  const { [layoutId]: _removed, ...options } = settings.layouts.options;
-  const updated: Settings = {
-    ...settings,
-    layouts: {
-      defaultLayoutId:
-        settings.layouts.defaultLayoutId === layoutId ? "focus" : settings.layouts.defaultLayoutId,
-      displays: keep(settings.layouts.displays),
-      custom: settings.layouts.custom.filter((layout) => layout.id !== layoutId),
-      options,
-    },
-    workspaces: {
-      ...settings.workspaces,
-      items: settings.workspaces.items.map((item) => ({ ...item, displays: keep(item.displays) })),
-    },
-  };
-  return withStatus(save(state, updated), "Custom layout deleted.");
+/** Presets keep their names whatever the editor sends, so the message names the saved one. */
+function saveLayout(state: AppState, command: Extract<Command, { kind: "saveLayout" }>): Outcome {
+  const { layout, options, display } = command;
+  const saved = edit(state, { kind: "saveLayout", layout, options, display });
+  const name = findLayout(saved.state.settings, layout.id)?.name ?? layout.name;
+  return withStatus(saved, `${name} saved.`);
 }
 
 function setLayoutEnabled(state: AppState, layoutId: string, enabled: boolean): Outcome {
-  const layout = findLayout(state.settings, layoutId);
-  if (!layout) {
-    return done(state);
-  }
-  const options = { ...optionsFor(state.settings, layout), enabled };
-  const updated: Settings = {
-    ...state.settings,
-    layouts: {
-      ...state.settings.layouts,
-      options: { ...state.settings.layouts.options, [layoutId]: options },
-    },
-  };
-  return withStatus(save(state, updated), `${layout.name} ${enabled ? "enabled" : "disabled"}.`);
+  const name = findLayout(state.settings, layoutId)?.name ?? "";
+  const changed = edit(state, { kind: "setLayoutEnabled", layout: layoutId, enabled });
+  return withStatus(changed, `${name} ${enabled ? "enabled" : "disabled"}.`);
 }
 
-function saveWorkspaces(state: AppState, items: Workspace[]): Outcome {
-  return save(state, { ...state.settings, workspaces: { ...state.settings.workspaces, items } });
-}
-
-/** The first time, every workspace starts from each display's current layout. */
+/** The first time, every workspace starts from each connected display's current layout. */
 function setWorkspacesEnabled(state: AppState, enabled: boolean): Outcome {
-  const workspaces = state.settings.workspaces;
-  const unassigned = workspaces.items.every((item) => Object.keys(item.displays).length === 0);
-  const assignments = Object.fromEntries(
-    state.displays.map((display) => [
-      display.id,
-      state.settings.layouts.displays[display.id] ?? state.settings.layouts.defaultLayoutId,
-    ]),
-  );
-  const items =
-    enabled && unassigned
-      ? workspaces.items.map((item) => ({ ...item, displays: { ...assignments } }))
-      : workspaces.items;
-  return save(state, { ...state.settings, workspaces: { ...workspaces, enabled, items } });
-}
-
-/** A new workspace: the lowest unused number, switched to with its digit, the active layouts. */
-function addWorkspace(state: AppState): Outcome {
-  const workspaces = state.settings.workspaces;
-  if (workspaces.items.length >= coreLimits().workspaces) {
-    return done(state);
+  if (enabled) {
+    return edit(state, { kind: "enableWorkspaces", displays: state.displays.map((display) => display.id) });
   }
-  const number = lowestUnused((n) => workspaces.items.some((item) => item.name === `Workspace ${n}`));
-  const idNumber = lowestUnused((n) => workspaces.items.some((item) => item.id === `workspace-${n}`));
-  const active = workspaces.items.find((item) => item.id === workspaces.activeId);
-  const added: Workspace = {
-    ...core.newWorkspace(state.settings, `workspace-${idNumber}`, number),
-    displays: { ...active?.displays },
-  };
-
-  const saved = save(state, {
-    ...state.settings,
-    workspaces: { ...workspaces, items: [...workspaces.items, added] },
-  });
-  return saved.error === null ? { ...saved, state: { ...saved.state, addedWorkspace: added.id } } : saved;
-}
-
-function lowestUnused(taken: (n: number) => boolean): number {
-  let n = 1;
-  while (taken(n)) {
-    n += 1;
-  }
-  return n;
-}
-
-/** Move the items at `from` so they land before the item that was at `to`. */
-export function moveItems<T>(items: T[], from: number[], to: number): T[] {
-  const moving = items.filter((_, index) => from.includes(index));
-  const staying = items.filter((_, index) => !from.includes(index));
-  const insertAt = to - from.filter((index) => index < to).length;
-  return [...staying.slice(0, insertAt), ...moving, ...staying.slice(insertAt)];
-}
-
-/** At least one workspace stays; deleting the active one activates the first other. */
-function deleteWorkspace(state: AppState, workspaceId: string): Outcome {
-  const workspaces = state.settings.workspaces;
-  if (workspaces.items.length < 2) {
-    return done(state);
-  }
-  const items = workspaces.items.filter((item) => item.id !== workspaceId);
-  const activeId =
-    workspaces.activeId === workspaceId ? (items[0]?.id ?? workspaces.activeId) : workspaces.activeId;
-  return save(state, { ...state.settings, workspaces: { ...workspaces, activeId, items } });
+  return save(state, { ...state.settings, workspaces: { ...state.settings.workspaces, enabled } });
 }

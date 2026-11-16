@@ -3,8 +3,13 @@ name = "snappy-macos"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Snappy's adapter for macOS."
 
 [target.'cfg(target_os = "macos")'.dependencies]
+thiserror.workspace = true
 snappy-core = { path = "../core" }
 snappy-platform = { path = "../platform" }
 block2 = "0.6"
@@ -104,6 +109,10 @@ objc2-service-management = { version = "0.3", default-features = false, features
     "objc2-foundation",
     "SMAppService",
 ] }
+
+[features]
+# The `reference` module, for tests and the live harness only.
+reference = []
 
 [lints]
 workspace = true

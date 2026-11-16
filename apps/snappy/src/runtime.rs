@@ -4,13 +4,10 @@ use std::sync::mpsc::Receiver;
 use std::thread::JoinHandle;
 
 use snappy_engine::{Engine, Input, Paths};
-use snappy_platform::{Platform, PlatformEvent};
+use snappy_platform::{Platform, PlatformEvent, launch};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::settings_app::SettingsApp;
-
-/// Set to `1` to record the debug log for this run regardless of the setting.
-const DEBUG_LOG_OVERRIDE: &str = "SNAPPY_DEBUG";
 
 /// Start the engine on a thread of its own, fed by the adapter's `events`. `open_settings`
 /// opens the settings window at launch.
@@ -75,7 +72,7 @@ fn run_engine<P: Platform + 'static>(
     local.block_on(&runtime, async move {
         let mut settings_app = SettingsApp::new(inputs.clone());
         let engine = Engine::new(platform, paths);
-        if std::env::var_os(DEBUG_LOG_OVERRIDE).is_some_and(|value| value == "1") {
+        if std::env::var_os(launch::DEBUG_ENV).is_some_and(|value| value == "1") {
             engine.force_debug_log();
         }
         engine.start();
@@ -83,7 +80,21 @@ fn run_engine<P: Platform + 'static>(
             let _ = inputs.send(Input::Platform(PlatformEvent::OpenSettingsRequested));
         }
 
-        while let Some(input) = incoming.recv().await {
+        let outbox_ready = engine.outbox_ready();
+        loop {
+            // Messages also come from work that finishes between inputs, such as a snap
+            // that settles or fails, so a queued message wakes the loop too.
+            let input = tokio::select! {
+                input = incoming.recv() => match input {
+                    Some(input) => Some(input),
+                    None => break,
+                },
+                () = outbox_ready.notified() => None,
+            };
+            let Some(input) = input else {
+                settings_app.send(engine.take_outbox());
+                continue;
+            };
             let quit = matches!(
                 input,
                 Input::Platform(PlatformEvent::QuitRequested | PlatformEvent::RestartRequested)

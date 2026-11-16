@@ -1,6 +1,13 @@
 // How shortcuts and modifiers are named on each platform.
 
-import type { KeyChord, Modifier, PlatformName, SwapModifier } from "./model";
+import {
+  MODIFIERS,
+  PLATFORMS,
+  type KeyChord,
+  type Modifier,
+  type PlatformName,
+  type SwapModifier,
+} from "./model";
 import { core, type LabelParts } from "./snappyCore";
 
 /** The Snappy key's name in long labels, and so in every message that names a shortcut. */
@@ -31,8 +38,8 @@ export function longLabel(chord: KeyChord, platform: PlatformName): string {
   return core.chordLabels(chord, platform).long;
 }
 
-/** A shortcut a message names: its long label, and that label split as shortcuts are drawn. */
-export interface NamedShortcut extends LabelParts {
+/** A shortcut as a message writes it: its long label, and that label split as shortcuts are drawn. */
+export interface ShortcutInText extends LabelParts {
   long: string;
 }
 
@@ -41,8 +48,8 @@ export interface NamedShortcut extends LabelParts {
  * as one reference: "Snappy + J is taken." gives "Snappy + J", the Snappy key with "J", then
  * " is taken.".
  */
-export function splitAtShortcuts(message: string): (string | NamedShortcut)[] {
-  const pieces: (string | NamedShortcut)[] = [];
+export function splitAtShortcuts(message: string): (string | ShortcutInText)[] {
+  const pieces: (string | ShortcutInText)[] = [];
   let from = 0;
   for (const match of message.matchAll(shortcutPattern())) {
     const long = match[0];
@@ -65,11 +72,9 @@ let shortcutPatternCache: RegExp | undefined;
  */
 function shortcutPattern(): RegExp {
   if (!shortcutPatternCache) {
-    const platforms: PlatformName[] = ["macos", "windows", "linux"];
-    const modifiers: Modifier[] = ["ctrl", "alt", "shift", "meta"];
     const names = new Set([SNAPPY_KEY_NAME]);
-    for (const platform of platforms) {
-      for (const modifier of modifiers) {
+    for (const platform of PLATFORMS) {
+      for (const modifier of MODIFIERS) {
         const { name, label } = core.modifierNames(modifier, platform);
         names.add(name).add(label);
       }
@@ -106,5 +111,5 @@ function commandModifiers(platform: PlatformName): [string, string, string] {
 export function recorderHelp(platform: PlatformName, snappyKey: Modifier[]): string {
   const [ctrl, alt, meta] = commandModifiers(platform);
   const snappy = snappyKeyLabel(snappyKey, platform);
-  return `Click and press a combination with ${ctrl}, ${alt}, or ${meta}; hold ${snappy} for the Snappy key. Escape cancels; Delete clears.`;
+  return `Click, then press a combination with ${ctrl}, ${alt}, or ${meta}. Hold ${snappy} for the Snappy key. Escape cancels, Delete clears.`;
 }

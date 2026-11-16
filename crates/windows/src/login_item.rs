@@ -16,7 +16,11 @@ const VALUE: PCWSTR = w!("Snappy");
 
 /// What the Run value holds for `executable`.
 pub fn command_line(executable: &Path) -> String {
-    format!("\"{}\" --background", executable.display())
+    format!(
+        "\"{}\" {}",
+        executable.display(),
+        snappy_platform::launch::BACKGROUND
+    )
 }
 
 /// Whether a stored command starts this executable. Paths compare without case, as

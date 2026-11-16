@@ -1,12 +1,15 @@
-//! Open at login through the bundled launch agent. Main thread.
+//! Open at login through the bundled launch agent. Service Management needs no particular
+//! thread, so this runs on the engine's; only opening System Settings goes to the main thread.
 
 use objc2::rc::Retained;
 use objc2_foundation::ns_string;
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
+use crate::main_thread;
+
 fn agent() -> Retained<SMAppService> {
     // SAFETY: plain class constructor.
-    unsafe { SMAppService::agentServiceWithPlistName(ns_string!("local.snappy.agent.plist")) }
+    unsafe { SMAppService::agentServiceWithPlistName(ns_string!("io.github.farhadzaidi.Snappy.Agent.plist")) }
 }
 
 fn status(service: &SMAppService) -> SMAppServiceStatus {
@@ -32,7 +35,7 @@ pub fn set_enabled(on: bool) -> Result<(), String> {
     };
     if on && status(&service) == SMAppServiceStatus::RequiresApproval {
         // SAFETY: plain class method.
-        unsafe { SMAppService::openSystemSettingsLoginItems() };
+        main_thread::spawn(|_| unsafe { SMAppService::openSystemSettingsLoginItems() });
         return Ok(());
     }
     result.map_err(|error| error.localizedDescription().to_string())

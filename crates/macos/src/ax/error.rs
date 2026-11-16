@@ -10,6 +10,7 @@ impl AxError {
     pub const FAILURE: AxError = AxError(-25200);
     pub const INVALID_UI_ELEMENT: AxError = AxError(-25202);
     pub const CANNOT_COMPLETE: AxError = AxError(-25204);
+    pub const NOTIFICATION_UNSUPPORTED: AxError = AxError(-25207);
     pub const API_DISABLED: AxError = AxError(-25211);
     pub const NO_VALUE: AxError = AxError(-25212);
 
@@ -30,6 +31,11 @@ impl AxError {
     /// The app didn't answer within the messaging timeout.
     pub fn is_timeout(self) -> bool {
         self == Self::CANNOT_COMPLETE
+    }
+
+    /// The element doesn't offer the notification, so asking again won't help.
+    pub fn is_unsupported_notification(self) -> bool {
+        self == Self::NOTIFICATION_UNSUPPORTED
     }
 
     /// Accessibility access was revoked.

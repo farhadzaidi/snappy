@@ -19,7 +19,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{PCWSTR, w};
 
-use crate::process::OwnedHandle;
+use crate::handle::OwnedHandle;
 
 const DAEMON_MUTEX: PCWSTR = w!(r"Local\Snappy.Daemon");
 const OPEN_SETTINGS_EVENT: PCWSTR = w!(r"Local\Snappy.OpenSettings");

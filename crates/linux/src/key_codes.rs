@@ -137,6 +137,8 @@ pub fn modifier_keycode(modifier: Modifier) -> u8 {
 
 /// Linux input codes are evdev keycodes minus this; virtual input devices take input codes.
 pub const EVDEV_OFFSET: u8 = 8;
+/// Caps Lock's evdev keycode, as XKB numbers keys: the kernel's 58 plus 8.
+pub const CAPS_LOCK: u8 = 66;
 
 /// The keysym a US layout produces on the key, unshifted.
 pub fn us_keysym(code: &str) -> Option<u32> {
@@ -147,6 +149,11 @@ pub fn us_keysym(code: &str) -> Option<u32> {
 }
 
 pub mod keysym {
+    pub const CAPS_LOCK: u32 = 0xffe5;
+    /// No symbol at all.
+    pub const VOID_SYMBOL: u32 = 0x00ff_ffff;
+    pub const SHIFT_R: u32 = 0xffe2;
+    pub const CONTROL_R: u32 = 0xffe4;
     pub const ESCAPE: u32 = 0xff1b;
     pub const LEFT: u32 = 0xff51;
     pub const NUM_LOCK: u32 = 0xff7f;

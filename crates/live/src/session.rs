@@ -6,8 +6,13 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use snappy_core::settings::Settings;
+use snappy_engine::{Paths, file_names};
+use snappy_platform::launch;
 
 use crate::input::pause;
+
+/// Where the daemon's standard output and errors go, in its home folder.
+pub const DAEMON_OUTPUT: &str = "daemon.log";
 
 /// How long the daemon gets to register shortcuts and observers after it appears.
 const SETTLE_AFTER_LAUNCH: u64 = 1500;
@@ -32,6 +37,15 @@ impl Daemon {
         }
     }
 
+    /// Where the daemon keeps each of its files.
+    pub fn paths(&self) -> Paths {
+        Paths::in_folder(&self.home)
+    }
+
+    pub fn debug_log(&self) -> PathBuf {
+        self.paths().log(file_names::DEBUG_LOG)
+    }
+
     pub fn home(&self) -> &Path {
         &self.home
     }
@@ -39,7 +53,7 @@ impl Daemon {
     pub fn write_settings(&self, settings: &Settings) -> Result<(), String> {
         std::fs::create_dir_all(&self.home).map_err(|error| error.to_string())?;
         let bytes = settings.to_json().map_err(|error| error.to_string())?;
-        std::fs::write(self.home.join("settings.json"), bytes).map_err(|error| error.to_string())
+        std::fs::write(self.paths().settings, bytes).map_err(|error| error.to_string())
     }
 
     pub fn start(&self) -> Result<(), String> {
@@ -62,10 +76,10 @@ impl Daemon {
         let status = Command::new("open")
             .arg("-n")
             .arg("--env")
-            .arg(format!("SNAPPY_HOME={}", self.home.display()))
-            .args(["--env", "SNAPPY_DEBUG=1"])
+            .arg(format!("{}={}", launch::HOME_ENV, self.home.display()))
+            .args(["--env", &format!("{}=1", launch::DEBUG_ENV)])
             .arg(&self.app)
-            .args(["--args", "--background"])
+            .args(["--args", launch::BACKGROUND])
             .status()
             .map_err(|error| error.to_string())?;
         status
@@ -81,13 +95,13 @@ impl Daemon {
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(self.home.join("daemon.log"))
+            .open(self.home.join(DAEMON_OUTPUT))
             .map_err(|error| error.to_string())?;
         let errors = log.try_clone().map_err(|error| error.to_string())?;
         let child = Command::new(&self.app)
-            .arg("--background")
-            .env("SNAPPY_HOME", &self.home)
-            .env("SNAPPY_DEBUG", "1")
+            .arg(launch::BACKGROUND)
+            .env(launch::HOME_ENV, &self.home)
+            .env(launch::DEBUG_ENV, "1")
             .stdout(log)
             .stderr(errors)
             .spawn()
@@ -204,6 +218,8 @@ mod processes {
     use std::path::Path;
     use std::process::Command;
 
+    use snappy_platform::launch;
+
     const IMAGE: &str = "snappy.exe";
 
     /// A close request to the daemon's window, which it handles like the menu's Quit.
@@ -216,7 +232,7 @@ mod processes {
     /// The daemon's own `--stop-for-restart`, which waits for it to exit.
     pub fn request_restart(app: &Path) -> Result<(), String> {
         let status = Command::new(app)
-            .arg("--stop-for-restart")
+            .arg(launch::STOP_FOR_RESTART)
             .status()
             .map_err(|error| error.to_string())?;
         status

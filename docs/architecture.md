@@ -1,271 +1,157 @@
 # Architecture
 
+How Snappy is put together: its two programs, its crates, the engine at its center, and the paths the main features take through them. [platforms.md](platforms.md) covers how each desktop's adapter does its part, and [testing.md](testing.md) how the tests are layered. Commands for building, running, and testing are in [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ## Two programs
 
-Snappy is two executables:
-
-- **The daemon**, `snappy` (`apps/snappy`). It runs all the time: it watches input, moves windows, draws the zone overlays, owns the menu bar item, and is the only program that writes Snappy's files. Started with `--background` (as the login item does), it stays quiet; started any other way, it opens the settings window.
-- **The settings app**, `snappy-settings` (`apps/settings`). The daemon starts it on demand, from the menu's "Open Snappy…", a second launch, or reopening Snappy.app, and it quits when its window closes. It never touches other apps' windows. It sends commands and shows whatever state the daemon sends back.
+- **The daemon**, `snappy` (`apps/snappy`), runs all the time. It watches input, moves windows, draws the zone overlays, owns the menu bar or tray item, and is the only program that writes Snappy's files. Started with `--background`, as the login item does, it stays quiet; started any other way, it also opens the settings window.
+- **The settings app**, `snappy-settings` (`apps/settings`), is started by the daemon on demand and quits when its window closes. It never touches other apps' windows: it sends commands and shows the state the daemon sends back.
 
 ```
-                 ┌──────────────────────── snappy (daemon) ──────────────────────────┐
-  OS events      │  main thread                       engine thread                  │
- ──────────────► │  adapter: event monitors, hooks,   Engine ──► window-operation    │
-                 │  hotkeys, observers, overlays,  ─► (core rules)   queue ──────────┼──► other apps'
-                 │  tray  ◄── overlay/tray updates ──┘     │                         │    windows
-                 │                                         └─► settings, state, logs │
-                 └──────────────────────────────▲────────────────────────────────────┘
-                                                │ piped stdin/stdout, length-prefixed JSON
-                 ┌──────────────────────────────┴──── snappy-settings ───────────────┐
-                 │  Tauri shell ◄──► React UI ──► snappy-core as WebAssembly          │
+                 ┌──────────────────────── snappy (daemon) ───────────────────────────┐
+  OS events      │  main thread                     engine thread                     │
+ ──────────────► │  adapter: hooks, monitors,  ───► engine ──► window-operation queue ─┼──► other apps'
+                 │  hotkeys, overlays, tray   ◄───  (core's rules)        │            │    windows
+                 │                                        └──► settings, state, logs   │
+                 └───────────────────────────────▲────────────────────────────────────┘
+                                                 │ piped stdin/stdout, length-prefixed JSON
+                 ┌───────────────────────────────┴──── snappy-settings ───────────────┐
+                 │  Tauri shell ◄──► React UI ──► snappy-core as WebAssembly           │
                  └────────────────────────────────────────────────────────────────────┘
 ```
 
 ### How they talk
 
-`apps/snappy/src/settings_app.rs` spawns the settings app with piped standard input and output; standard error goes to the daemon's own. The pipes are the only channel, so there is no socket to find or secure, and the settings app's lifetime is tied to the daemon's.
+The daemon starts the settings app with piped standard input and output (`apps/snappy/src/settings_app.rs`). The pipes are the only channel, so there is no socket to find or secure, and the settings app can't outlive the daemon that started it.
 
-Each message is a 4-byte little-endian length followed by UTF-8 JSON, capped at 8 MB (`crates/ipc/src/lib.rs`). Both sides send `Hello { protocolVersion }` first.
+Each message is a 4-byte little-endian length and then UTF-8 JSON, capped at 8 MB (`crates/ipc`). Both sides open with `Hello` and a protocol version, and the settings app exits on a mismatch. From then on:
 
-- **Daemon to settings app** (`ToSettings`): `State` (the full `AppState`: settings, displays, snapping and permission status, workspace status and window counts, the login item, the debug log's path, and the current status message), `Reply { id, error }` for every command, whose error is a `Refusal`: the message, and, when it names one of Snappy's shortcuts, that shortcut as a `NamedShortcut` (its `ShortcutId`, which the settings app finds it by, and its title as the message writes it), `ProbeResult` for a shortcut availability check, `PreviewHidden`, and `Focus`.
-- **Settings app to daemon** (`ToDaemon::Command`): one `Command` per user action, such as `SetSnapping`, `SaveLayout`, `ApplyLayout`, `ShowPreview`, `BeginRecording`, `ProbeShortcut`, `AddWorkspace`, `SetHistoryShortcut`, `SetDebugLog`, `Reset`, `ImportSettings`, and `ExportSettings`. The full list is the `Command` enum.
+- **The settings app sends a `Command`** for each thing the user does: save a layout, record a shortcut, add a workspace, change the Snappy key, and so on.
+- **The daemon answers every command with a `Reply`**, carrying a `Refusal` when it said no: a message for the user and, when the message names one of Snappy's shortcuts, that shortcut's `ShortcutId`, so the UI can link to the right recorder. It then sends a fresh `State`, the whole `AppState`, which is all the UI ever renders.
 
-After every command the daemon replies, then sends a new `State`, which is what the UI renders. On a protocol version mismatch the settings app exits.
-
-## Crates and layering
+## Crates
 
 ```
 core ◄── platform ◄── engine ◄── apps/snappy
- ▲          ▲           ▲             │
- │          ├── macos / windows / x11 / gnome / kwin ◄┘
- │          │           linux ◄── x11, gnome, kwin
- │          ├── fake (engine tests)
- │          └── live (live tests)
- ├── ipc ◄── engine, apps/settings/src-tauri
+ ▲          ▲  ▲                    │
+ │          │  └── macos, windows, x11, gnome, kwin ◄──┘
+ │          │      linux ◄── x11, gnome, kwin
+ │          ├── ipc ◄── engine, apps/settings/src-tauri
+ │          ├── fake        (engine tests)
+ │          └── live        (live tests; also uses engine and the adapters)
  └── wasm ◄── apps/settings/ui
 ```
 
-| Crate | Depends on | Role |
-|---|---|---|
-| `core` | serde, thiserror | Geometry, layouts and presets, the editor's operations, drag intent, swaps, navigation, directional focus, the nearest empty zone and placing the selection, shortcuts, their titles, and conflicts, the settings model and validation, the bounds-settle algorithm, undo, the workspace session, and what a press of Caps Lock was while it is the Snappy key. |
-| `platform` | core | The `Platform` trait family (`WindowSystem`, `Input`, `HotKeys`, `CapsLock`, `Overlay`, `Permissions`, `DesktopGuard`, `Tray`, `LoginItem`) and `PlatformEvent`, plus the tray glyph (`glyph`), drawn as a coverage mask for the trays that take pixels. |
-| `engine` | core, platform, ipc, tokio | Runtime state, event handling, the operation queue, stores, diagnostics. |
-| `ipc` | core, platform | `ToSettings`, `ToDaemon`, `Command`, `AppState`, and framing. |
-| `macos`, `windows`, `x11`, `gnome`, `kwin` | core, platform, OS bindings | One adapter each; `gnome` drives GNOME Shell on Wayland through the extension in `apps/gnome-extension`, and `kwin` drives KWin on Wayland through the script in `apps/kwin-script`. Every dependency is behind a `cfg(target_os)` table, so each crate is empty elsewhere. |
-| `linux` | core, platform | What the Linux adapters share: the single-instance lock and signals, the autostart entry, `/proc` facts, the session kind, physical key codes, the menu's structure, the overlay's look, its drawing, and the finished overlay scenes desktop shells draw, display IDs, the tray icon, warnings for the journal, and a minimal Wayland client. Empty elsewhere. |
-| `wasm` | core, wasm-bindgen | A JSON API over `core` for the settings UI. |
-| `fake`, `live` | core, platform; `live` also the adapter for its OS | Test support; never linked into the shipped daemon. |
+| Crate | Role |
+|---|---|
+| `core` | Every rule: geometry, layouts and zones, the layout editor, drag intent, snapping and settling, swaps, navigation and focus, filling empty zones, shortcuts and their conflicts, the Snappy key and Caps Lock, settings and their validation, undo, workspace sessions, which windows may be managed. No I/O, threads, or clocks. |
+| `platform` | The traits every adapter implements (`WindowSystem`, `Input`, `HotKeys`, `CapsLock`, `Overlay`, `Permissions`, `DesktopGuard`, `Tray`, `LoginItem`, gathered as `Platform`), the `PlatformEvent`s adapters report, the overlay's shared look (`overlay_style`), the tray glyph, and the daemon's launch flags. |
+| `engine` | Runtime state, the order things happen in, the window-operation queue, and every file Snappy writes. |
+| `ipc` | The messages between the daemon and the settings app, and their framing. |
+| `macos`, `windows`, `x11`, `gnome`, `kwin` | One adapter per desktop. Each one's dependencies sit behind a `cfg` for its OS, so the crate is empty elsewhere. |
+| `linux` | What the Linux adapters share: one daemon per session and its signals, the autostart entry, `/proc` facts, recognizing the session, key codes, the menu, the overlay renderer, display IDs, the tray, XKB and a minimal Wayland client for Caps Lock and overlays, and D-Bus plumbing for the desktop-shell adapters. |
+| `wasm` | A JSON API over `core` for the settings UI. |
+| `fake`, `live` | Test support: an in-memory desktop for engine tests, and the live test runner and fixture app. Never linked into the daemon. |
 
 They are separate crates for three reasons:
 
-- **Platform dependencies stay contained.** `objc2`, `windows`, `x11rb`, and `zbus` appear only in their adapter's manifest, so `core` and `engine` build and test on any machine.
-- **`core` compiles to WebAssembly.** The settings app's editor and shortcut recorder call the same Rust functions the daemon uses, through `crates/wasm`, so a zone drawn in the editor lands exactly where the daemon will put the window.
-- **The compiler enforces the layering.** `core` can't reach the engine, the engine can't call an OS API, and an adapter can't make a policy decision without importing something it has no dependency on.
+- **OS dependencies stay contained.** `objc2`, `windows`, `x11rb`, and `zbus` appear only in the adapters, `crates/linux`, and the live harness, so `core` and `engine` build and test on any machine.
+- **`core` compiles to WebAssembly.** The settings app's editor and shortcut recorder call the same Rust the daemon uses, so a zone drawn in the editor lands exactly where the daemon puts the window, and a conflict the recorder reports is the one the daemon would.
+- **The compiler enforces the layering.** `core` can't reach the engine, the engine can't call an OS API, and an adapter can't make a policy decision without depending on something it doesn't.
+
+### Where code goes
+
+| You're changing | It goes in |
+|---|---|
+| A rule: geometry, snapping, swaps, navigation, settings validation, shortcut conflicts, workspace bookkeeping | `crates/core`, with unit tests beside it |
+| When something happens, or what state changes as a result | `crates/engine` |
+| How an OS does something | its adapter: `crates/macos`, `crates/windows`, `crates/x11`, `crates/gnome` with its extension in `apps/gnome-extension`, or `crates/kwin` with its script in `apps/kwin-script`; what more than one Linux adapter needs goes in `crates/linux` |
+| A capability every adapter must provide | a trait method in `crates/platform`, implemented by each adapter and by `crates/fake` |
+| Something the settings app can ask for | a `Command` in `crates/ipc`, handled in `crates/engine/src/commands.rs` |
+| A rule the settings UI needs too | `crates/core`, exported through `crates/wasm` and `apps/settings/ui/src/core/snappyCore.ts` |
+| The settings UI | `apps/settings/ui/src/<page>` |
 
 ## The engine
 
-`crates/engine` owns all runtime state in one `Core` value (`crates/engine/src/core.rs`): settings, displays, whether live control is on, the drag in progress, registered shortcuts, workspaces, the debug log, and the outbox to the settings app.
+### Threads
 
-### One thread
+The adapter runs the OS event loop on the main thread, which AppKit and Win32 require, and forwards every event over a channel. The engine runs on a thread of its own, in a single-threaded Tokio runtime with a `LocalSet` (`apps/snappy/src/runtime.rs`). Neither blocks the other, and the engine's state needs no locks. If the engine thread ends for any reason, a panic included, the adapter's loop is stopped too, so the daemon exits rather than holding windows and keys with nothing behind them; the next start picks up from the saved files.
 
-The engine runs on a dedicated thread inside a Tokio current-thread runtime and `LocalSet` (`apps/snappy/src/runtime.rs`). The OS adapter runs on the main thread, which AppKit and Win32 require, and forwards every event over a channel. The engine never blocks the main thread, and the state needs no locks: `Shared` (`crates/engine/src/ops.rs`) is a `RefCell<Core>` behind an `Rc`.
+### State
+
+Runtime state is one `EngineState` (`crates/engine/src/state.rs`): settings, displays, whether live control runs, the drag in progress, registered shortcuts, workspaces, the selection, the debug log, and the outbox to the settings app. Its behaviors are split by concern under `state/` (what's on screen, live control, shortcut registration, the overlay, the tray menu, logging, the status message, and what the settings app is sent). The window-operation queue and the undo histories sit beside it, in `ops.rs`. The features that act on it each have a module: `drag`, `actions` (shortcuts), `focus`, `selection`, `marks` (window outlines), `caps_lock`, `commands` (from the settings app), and `workspaces/`. `events.rs` routes each platform event to the features that care about it, and `engine.rs` is what the daemon sees: start, handle an input, shut down, or stop for a restart.
+
+"Live control" is whether Snappy acts on windows right now: snapping is on, the platform's permission is granted, and the platform says it can (on GNOME and KDE, that its extension or script answers). Press monitoring and every shortcut but the workspace ones follow it.
 
 ### The window-operation queue
 
-Every window move goes through `Shared::submit` in `crates/engine/src/ops.rs`. Operations are snaps, swaps, undo and redo, workspace switches, and sends.
+Every window move goes through one queue (`crates/engine/src/ops.rs`): snaps, swaps, undo and redo, placing the selection, workspace switches, and sends.
 
-- **The newest operation wins.** Submitting cancels the operation in flight through its `CancelToken`, waits for it to stop, then runs the new one. Settling checks the token before every read and write, so a stale operation stops within one step.
-- **One at a time.** Operations never interleave, so two moves never fight over a window. A generation counter makes sure only the latest operation's completion clears the in-flight state.
-- **A press cancels.** A mouse press on any window cancels the operation in flight (`drag::pointer_down`).
-- **Protected windows.** While a swap or a grouped undo is moving two windows, a press on either one adds it to `Core::protected`. The operation's recovery path (putting a window back after a failure) then leaves that window to the user.
-- **Keyboard observation is scoped.** Drag monitoring, which includes modifier key events, is on only during a drag. At idle Snappy sees no keystrokes except its own registered shortcuts and, with Caps Lock as the Snappy key, Caps Lock itself; while Caps Lock is held it notices that another key or a mouse button was used, and on Windows runs the Snappy shortcut a key completes, never recording or logging which key ([Caps Lock as the Snappy key](#caps-lock-as-the-snappy-key)). Two platforms can't be asked for Caps Lock alone, so while the setting is on, Snappy is woken by more than it uses, and looks at no more: on Windows the low-level keyboard hook receives every key, on the main thread, and ignores all but Caps Lock until it is held; on KDE Plasma KWin's keystate reports each change of the modifier and lock keys, never other keys, since that is how a press of Caps Lock is learned there ([platforms.md](platforms.md#linux-kde-plasma-on-wayland)).
+- **One at a time.** Operations never interleave, so two never fight over a window.
+- **The newest wins.** Submitting cancels the operation in flight through its cancel token and waits for it to stop before starting. Settling checks the token before every read and write, so a stale operation stops within a step.
+- **A press cancels.** While live control is on, a mouse press on any window cancels the operation in flight, so the user's hand beats Snappy's.
+- **Protected windows.** A window pressed while an operation is in flight is marked protected, and the operation's recovery (putting windows back after a failure) leaves it to the user.
 
-## How a drag becomes a snap
+### Settling
 
-1. The adapter reports `PointerDown`. `drag::pointer_down` (`crates/engine/src/drag.rs`) ignores it unless live control is on, cancels any operation in flight, hides the layout preview, asks the platform for the window under the pointer (`window_at`), and starts a `DragIntent` (`crates/core/src/drag.rs`) with the window's frame. It turns drag monitoring on.
-2. Each `PointerDragged` or `ModifiersChanged` reaches `drag::pointer_moved`, which rereads the frame and feeds it to `DragIntent::observe`. The intent decides whether this is a real move: the window must travel more than 2 points, and a size change of 3 points or more cancels it for good unless the press was on the title-bar strip.
-3. While the drag modifier is held and the window has moved, `show_zones` resolves the layout for the display under the pointer (`Settings::layout_for_display`), hit-tests the zones (`core::layout::hit_test`), builds an `OverlayScene`, and calls `Overlay::show`. The setting's own action goes without a caption: occupants are looked up only at the drop, so the overlay can't tell whether the zone is taken. While the swap key reverses it, the hovered zone is captioned with the action that applies instead (`Caption`, "Stack" or "Swap", which adapters draw as given), and for "Swap" the window's current zone is outlined as the swap source. Each change of caption goes to the debug log as `overlayCaption`.
-4. `PointerUp` reaches `drag::pointer_up`. `plan_drop` checks the intent and the modifier again, finds the zone under the pointer, and returns a `SwapMove` when the drop swaps or a `SnapRequest` when it stacks. Whether it swaps is "When the zone is taken" (`WhenTaken` in `crates/core/src/swap.rs`, swap by default), reversed while the swap key is held too. A drop that does nothing still writes a drop record when the modifier was involved, saying why.
-5. `run_snap` (`crates/engine/src/ops.rs`) calls `core::operations::snap`, which calls `apply_settled` (`crates/core/src/bounds.rs`) through the platform. Settling resizes first when shrinking on the same display, moves first when growing would cross a screen edge, re-reads after each write with short waits, accepts the size an app insists on (minimum sizes, terminal cell grids), and moves to the final position. On success the original frame goes onto the undo history; on failure the window goes back where it was.
-6. The engine posts a quiet status ("Snapped."), writes the outcome and the settle steps to `drops.json`, and logs the snap to the debug log when it's on.
+Apps often acknowledge a position or size before their redraw applies it, insist on a minimum size, or size in character cells. `core::placement::bounds` writes a frame and waits for it to settle: it resizes first when shrinking on one display and moves first when growing would cross a screen edge, re-reads after short waits, accepts the size an app insists on, then puts the window at its final position. The engine drives it through the platform; the rule itself is tested against scripted windows and an instant clock. On success the original frame goes onto the undo history (50 moves, one history per workspace or one overall); on failure the window goes back where it was.
 
-A swap runs `run_swap` instead. Its source (`SwapSource`) is the zone the window fills, the zone under a floating window's center (`NearestZone`), or the window's own frame. It looks up the windows filling the source and destination zones at that moment (`WindowSystem::windows_occupying`), plans with `core::swap::plan_swap`, and either snaps exactly like `run_snap` (empty destination), exchanges the two windows (one occupant), or refuses with a message and returns the dragged window (crowded zones, or another window stacked in the window's own zone). The debug log's `swap` record names the source used: `zone`, `nearestZone`, or `floating`.
+### Settings changes
 
-## How a shortcut press works
+Every command lands in `crates/engine/src/commands.rs`. A settings change copies the settings, applies the edit (the edits themselves are rules in `core::settings`, which the settings UI's fake daemon runs too), validates the whole (normalizing layouts and checking every shortcut conflict), saves atomically, then reconfigures what depends on settings: the debug log, workspaces, live control, shortcuts, overlays, and the tray. A rejected change leaves the old settings in place and replies with the reason.
 
-1. `Core::configure_hotkeys` registers the shortcuts the current state needs, computed by `core::bindings::desired_hotkeys` from the settings, the displays, and whether live control is on. It hands the adapter each chord's `Combo`, with the Snappy key expanded ([The Snappy key](#the-snappy-key)). It runs again whenever any of those change, and only re-registers when the set differs or a registration failed.
-2. The adapter reports `HotKey(id)`. `actions::hotkey` (`crates/engine/src/actions.rs`) maps the ID back to a `HotKeyAction`. Shortcuts do nothing while the settings app is recording a shortcut or the master switch is off. The debug log records each press as `shortcut`, naming the action (`HotKeyAction::name`, such as `focusLeft` or `switchWorkspace`, with the `workspace` or `layout` it is for), and each registration as `shortcutsRegistered`, every chord with its action named the same way.
-3. Workspace actions go to `crates/engine/src/workspaces/switching.rs`. Undo and redo submit `run_undo` and `run_redo`. A layout selection applies the layout to the display under the pointer.
-4. The nearest-empty-zone shortcut places the selection when there is one ([Placing the selection](#placing-the-selection)). Without one it reaches `move_to_nearest_empty`. Once the operation runs, it reads the focused window's frame, looks up the windows filling every zone (`Core::occupants`, which leaves out inactive workspaces' windows for a swap too), picks a zone with `core::empty_zone::nearest_empty_zone`, and snaps there exactly like `run_snap`. With no empty zone it moves nothing and posts the quiet status "No empty zone on this display."
-5. Zone and arrow shortcuts reach `move_focused`. It reads the focused window and its display, finds the destination zone (the zone whose chord was pressed in that display's layout, or `core::navigate::destination` for an arrow), and submits a swap, or a snap when "When the zone is taken" is set to stack on top. Zones have no shortcuts until the user records some in the editor.
-6. Arrow presses that arrive while the previous move is still settling continue from the pending destination (`Core::pending_navigation`), so pressing an arrow three times moves three zones even if the app is slow.
-7. Focus shortcuts go to `crates/engine/src/focus.rs` and selection shortcuts to `crates/engine/src/selection.rs` ([Focus and the selection](#focus-and-the-selection)).
+### Diagnostics
 
-## Focus and the selection
+Diagnostics never hold window titles, window contents, or keystrokes: only frames, app identifiers, outcomes, and timings. Failing to write them never affects window control.
 
-These shortcuts work whenever live control is on, with or without workspaces, and are registered only then. None of them moves a window except the nearest-empty-zone shortcut placing the selection.
+- **The debug log** (`debug_log.rs`) is opt-in: one JSON object per line with a time, a level (`warn` marks a result that differs from what was asked for), and an event from `LogEvent` (`log_event.rs`), the names tests and the live suite match records by. Records are built in closures that run only while the log is on, so they cost nothing otherwise. It starts again after 5 MB, keeping the previous file.
+- **Always-on summaries** (`diagnostics.rs`): the last 20 drags made with the drag key and how each ended (`Outcome`, in `outcome.rs`), with its settle steps; the last 30 workspace lifecycle events; and up to 120 switch timings, written at quit.
 
-### Moving focus
+## How the main features work
 
-Snappy + I, J, K, and L (`focus::focus_toward`, in `crates/engine/src/focus.rs`) focus the next window up, left, down, or right. The candidates are the visible, managed, non-minimized windows of every display (`WindowSystem::visible_windows`), leaving out windows of inactive workspaces and on the parking desktop, hidden tabs, and the focused window itself. `core::focus::focus_target` picks one, given the focused window's frame, the zones of every display's current layout (`drag::zone_slots`), and the candidates ([Behavior at a glance](#behavior-at-a-glance)). While any of those windows or the focused one is in a zone, focus moves between zones that hold a window, the way the arrows move a window between zones, and windows outside zones can't be reached; with none in a zone, it goes to the nearest window by center. The engine asks the platform to focus it (`WindowSystem::focus`, which raises it on every platform), and outlines it in the focus style for 400 ms: a one-shot timer of the engine's, which a newer focus move replaces. With no window that way, nothing moves and the quiet status says so, such as "No window to the right." The debug log records each press as `focusMove`, with the window it started from, the one it focused, the `mode` (`zones` or `windows`), and the `zone` it went to, by display and zone.
+### A drag
 
-### The selection
+1. The adapter reports a press. If live control is on, the engine (`drag.rs`) cancels any operation in flight, asks the platform for the window under the pointer, starts a `DragIntent` (`core::placement::drag`) with its frame, and turns drag monitoring on.
+2. Each pointer move or modifier change re-reads the frame. The intent decides whether this is a real move rather than a click or a resize: the window must travel a little, and a size change outside the title-bar strip cancels it until the next press.
+3. While the drag key is held and the window has moved, the engine finds the layout for the display under the pointer, hit-tests its zones, and asks the adapter to show an `OverlayScene`. Holding the swap key too reverses "When the zone is taken" for this drop, and the hovered zone is captioned "Swap" or "Stack".
+4. On release the engine checks the intent and the modifier again and finds the zone. A drop on an empty zone, or one that stacks, becomes a snap; one that swaps becomes a swap, which looks up the windows filling both zones and plans with `core::placement::swap`. Either goes through the queue and the settle loop, and the outcome is recorded in `drops.json` and the debug log.
 
-Snappy + Return (`selection::toggle`) adds the focused window to the selection, `Core::selection`, an ordered list kept in memory only; pressing it on a selected window takes it out. While workspaces run, the window must show on the active workspace. Snappy + `\` (`selection::clear`) empties the selection.
+### A shortcut
 
-- A selected window that closes leaves the selection.
-- Changing native desktops (Spaces, virtual desktops) clears it, since the windows of the desktop left behind no longer show; that is also how pausing workspaces clears it. Losing live control clears it, since its shortcuts go with live control, and so do workspaces stopping or being suspended. Quitting forgets it and moves nothing more than quitting always does.
-- A workspace switch takes the selection along and then empties it ([Taking the selection along](#taking-the-selection-along)). Snappy + `.` and `/` send the whole selection instead of the focused window, and so does a workspace's own send shortcut; the windows sent leave the selection.
-- The debug log records `selectionAdded`, `selectionSkipped` when the focused window can't be selected (with the reason), `selectionRemoved` (with the reason), `selectionCleared` (with the reason), `selectionTakenAlong` on a switch, with the hidden tabs that went along by the shown tab they sit behind (`tabs`), and `selectionPlaced`.
+1. Whenever settings, displays, or live control change, the engine works out the shortcuts the current state needs (`core::shortcuts::desired_hotkeys`) and registers them if the set differs. Each comes with its `Combo`, the concrete key and modifiers with the Snappy key already expanded, so adapters never know the Snappy key exists.
+2. The adapter reports a press by ID, and the engine maps it back to a `HotKeyAction` (`actions.rs`). Shortcuts do nothing while the settings app is recording one.
+3. Zone and arrow shortcuts find the destination zone (`core::placement::navigate` for arrows) and submit a swap or a snap, as "When the zone is taken" says. Arrow presses that arrive while the last move is still settling continue from where it was headed, so three presses move three zones even in a slow app.
+4. The nearest-empty-zone shortcut picks a zone with `core::placement::empty_zone`, or, with a selection, places every selected window into empty zones at once, pairing windows with zones so the total distance is least, as one undo step.
+5. Focus shortcuts (`focus.rs`) ask `core::placement::focus` for the next window in a direction, moving between zones that hold a window when any does and by window centers otherwise, and outline it briefly. Selection shortcuts (`selection.rs`) keep an in-memory, ordered list of windows that sends and workspace switches take along.
+6. Selected and just-focused windows are outlined on a layer of their own, apart from the zones (`marks.rs`, `Overlay::mark`), redrawn only on displays whose outlines changed.
 
-### Placing the selection
+### A workspace switch
 
-With a selection, Snappy + Space (`selection::place`) moves the selected windows that aren't in a zone into empty zones, as one operation on the queue. Once it runs, it reads the selected windows' frames, looks up the windows filling every zone as the single-window case does, and plans with `core::empty_zone::place_selection` ([Behavior at a glance](#behavior-at-a-glance)). `core::operations::snap_group` then snaps each window in turn as one step of undo; each snap is logged as an ordinary `snap`. Placed windows leave the selection. Selected windows already in a zone stay where they are and stay selected, and so do windows no empty zone was left for, with the quiet status "1 window didn't fit." or "2 windows didn't fit."
+A workspace is a group of windows, one group shown at a time. `core::workspace::Session` keeps each window's workspace, its frame, and where it waits while hidden, and makes every change all or nothing:
 
-### Marked windows
-
-Selected windows, and the window a focus shortcut just focused, are outlined inside their frames. The outlines are a layer of their own, apart from the zone scene: `Overlay::mark` takes a display and its `OverlayMarks`, the display's work area and the windows to outline, each a `MarkedWindow` with its frame and `MarkStyle`, and an empty list takes them away. The styles are:
-
-- `Selected`: the swap source's mint border.
-- `Focused`: an orange border, so a focus flash never reads as a selection. A selected window that gets the flash shows only the flash until it ends.
-
-`Core::refresh_marks` (`crates/engine/src/marks.rs`) sends each display its outlines whenever the selection or the flash changes, an outlined window moves (`WindowMoved`), or displays change, and only to displays whose outlines changed. Minimized and hidden windows get none. Every adapter draws the layer on a click-through surface of its own per display that never takes focus, so the outlines stay while zones show and hide ([platforms.md](platforms.md)).
-
-## The Snappy key
-
-The Snappy key is one held key that every default shortcut uses. It stands for modifiers the user chooses, Control+Option+Command on macOS, Ctrl+Alt+Win on Windows, and Ctrl+Alt+Super on Linux unless they choose others. Every default is the Snappy key and exactly one other key, never another modifier on top, and the defaults are the same on every platform ([Behavior at a glance](#behavior-at-a-glance)).
-
-- **What it stands for** is `Settings::snappy_key`, a `SnappyKey` (`crates/core/src/keys.rs`): at least two of Control, Option/Alt, Command/Win/Super, and Shift, written to the settings file as `"snappyKey": ["ctrl", "alt", "meta"]`. The default, `SnappyKey::DEFAULT`, is the same on every platform, and a file without the field gets it, so older files load unchanged. A file whose key has fewer than two modifiers doesn't load.
-- **Shortcuts store it as a symbol.** A `KeyChord`'s modifiers are `ChordMods`: the Snappy key or not, plus concrete modifiers, written to settings files as a list such as `["snappy", "shift"]` or `["ctrl", "alt", "meta"]`. The two are different shortcuts even when they press the same keys: the first follows the key, the second never moves.
-- **Recording decides which, once.** Holding every modifier of the current key while recording stores the Snappy key plus whatever else is held (`ChordMods::recorded`); anything else stores exactly the modifiers held. The settings UI's recorder does this through the same Rust code (`recordChord` in `crates/wasm`, given the current key). Nothing afterwards changes a chord's form: validation, saving, loading, and changing the key all keep every chord as stored, so a file reads back exactly as it was written.
-- **Files from before the Snappy key could be chosen** have no `snappyKey` field. Snappy read every chord in them that held Control, Option, and Command (Ctrl, Alt, and Win or Super) as the Snappy key plus the rest, whether written `["snappy"]` or `["ctrl", "alt", "meta"]`, so such a file still loads that way (`Settings::read_as_before_the_snappy_key`): as recording the chord with the default key would store it. A file with the field is read as written. Every file Snappy saves has the field, so this happens at most once per file.
-- **Expansion happens in `KeyChord::combo(key)`.** A `Combo` is the key and the concrete modifiers to hold. Conflicts, reserved chords, the chords the OS keeps, availability probes, and the engine's lookups compare combos expanded with the settings' key, so Snappy + 1 and the key's modifiers held with 1 are the same shortcut. `desired_hotkeys` hands the engine each `HotKey` with its combo already expanded. Adapters only ever receive combos (`HotKeys::register` and `HotKeys::is_available` take `Combo`), so no adapter knows the Snappy key exists.
-- **Labels name it "Snappy"**, never the modifiers behind it. One label serves messages, recorders, cards, help, and assistive technology (`KeyChord::long_label`): every other modifier by its name with its symbol on macOS, as keyboards print them, and by its name elsewhere: "Snappy + Shift ⇧ + 1" and "Control ⌃ + Option ⌥ + L" on macOS, "Ctrl + Alt + L" on Windows. The Snappy key has no character, so the label comes split where it ends (`KeyChord::label_parts`) for the settings app to draw it first: the word "Snappy" with the app's glyph (`assets/icon/snappy-glyph.svg`) before it in a mint pill, then a plus and the rest as plain text: "[◧ Snappy] + Shift ⇧ + 1" (`ui/Chord.tsx`). A shortcut or setting named inside a sentence is a reference, outlined on the text's line (`ui/Reference.tsx`), with the Snappy key's pill nested in it: messages find each shortcut's long label by its modifier labels and key (`splitAtShortcuts`), and the setting a refusal names by the title it carries. What the key is on the platform, as the help popover and the recorders' hint say it, comes from `SnappyKey::label`, labelled the same way.
-
-### Changing the Snappy key
-
-The settings app sends `SetSnappyKey { modifiers }`, which `commands::set_snappy_key` checks as a whole before anything changes:
-
-1. **The key itself.** Fewer than two modifiers is refused: "The Snappy key needs at least two modifiers."
-2. **Every binding with the new expansion.** `Settings::with_snappy_key` sets the key and validates as a settings change does. Conflicts compare combos, so a concrete chord that the new key's Snappy key chords land on clashes with them. A conflict is told from the side the change moved (`bindings::snappy_key_conflict`), the Snappy key chord, whichever of the two was checked first: with Undo recorded by hand as Control + Option + J and the key changed to Control+Option, "Snappy + J (Focus left) would clash with Undo window move."; also "Snappy + Z (Undo window move) would clash with a standard app command.", or, for a chord the OS keeps, "Snappy + ⌫ (Clear selection) wouldn't work." followed by why.
-3. **The OS.** `bindings::availability_probes` lists each distinct chord that holds the Snappy key, with the new modifiers, disabled layouts and workspaces included as conflicts include them, and the engine asks `HotKeys::is_available` about each with its own shortcuts unregistered, as while recording, since a probed chord can be one Snappy holds now (Snappy + Shift + 1 in one layout becomes the chord of another layout's Snappy + 1 when Shift joins the key, which layouts may share). The first chord taken refuses the change and names it and the shortcut that would have it: "Snappy + Space for Move to the nearest empty zone is already used by macOS or another app.", with that shortcut's `ShortcutId` and title in the refusal for the settings app to link to.
-
-On success the settings are saved and `settings_changed` runs; `configure_hotkeys` registers the new set at once, with no restart (each `HotKey` carries its combo, so a key change alone makes the set differ even when no chord does), and the status says "The Snappy key is now Control ⌃ + Option ⌥." On refusal nothing is saved, the current shortcuts are registered again if probing took them away, and the reply carries the refusal, which the setting shows under its toggles, linking to the shortcut it names. The debug log records `snappyKeyChanged` (`from`, `to`, modifier names) and `snappyKeyRefused` (with the `reason`).
-
-What happens to stored chords follows from their form:
-
-- **Snappy key chords follow the key.** They stay stored as `["snappy", …]` and keep reading "Snappy + X"; only their combos change. The modifiers recorded with them stay too, even one the new key includes: with Control+Shift as the key, Snappy + Shift + J presses Control + Shift + J, the same as Snappy + J, and holds Shift again once the key no longer does.
-- **Concrete chords never change.** What the user recorded is what they press, whatever the key becomes, including a key made of the chord's modifiers or some of them: the chord still reads "Control ⌃ + Option ⌥ + Shift ⇧ + U", is saved so, and keeps its keys when the key changes again. A change that would put a Snappy key chord on the same keys is refused, as above.
-
-Settings imported from a file keep the file's key, checked as a settings change is, without probing; a chord the OS refuses then fails to register and is reported as taken, as for any other shortcut.
-
-### Caps Lock as the Snappy key
-
-An opt-in setting, `Settings::caps_lock_as_snappy_key` (`"capsLockAsSnappyKey"`, off by default), lets Caps Lock stand for the Snappy key. Held, it acts as the Snappy key's modifiers, whatever they are, so every shortcut works with it as with the keys themselves and nothing about shortcuts changes; tapped alone, it still turns Caps Lock on or off. Holding it never turns Caps Lock on and never repeats.
-
-- **The platform makes the key.** `CapsLock::hold_caps_lock_as(modifiers)` asks the adapter to make Caps Lock, held, act as the Snappy key's modifiers, each with what its OS offers out of the box ([platforms.md](platforms.md)). It refuses, with a sentence for the user, when the system already remaps Caps Lock: a macOS key mapping or Modifier Keys setting, a Windows Scancode Map, an XKB option such as `caps:escape` or `ctrl:nocaps`, a keyboard layout that makes Caps Lock another key, or an `xmodmap` on X11. `restore_caps_lock` gives Caps Lock back its usual behavior.
-- **The engine decides what a press was** (`crates/engine/src/caps_lock.rs`). Adapters report `PlatformEvent::CapsLock`: Caps Lock went down, something else was used while it was down, or it came up. They may notice that another key or a mouse button was used while Caps Lock is down, to tell a tap from a hold, but never say or record which. The engine times the press with the platform's clock and asks `core::caps_lock::CapsLockPress` what it was: a tap when nothing else was used and it came up within `TAP_LIMIT` (half a second); then it calls `toggle_caps_lock`, which turns Caps Lock and its light on or off on every keyboard as the key itself would. A Snappy shortcut that fires while Caps Lock is down also makes the press a hold, for platforms that can't see every key.
-- **When it applies.** While the setting is on, permission is granted, and live control is available (`caps_lock::configure`, run from `refresh_live`, so it follows settings, permission, and live control changes). A new Snappy key holds Caps Lock again with the new modifiers. `core::caps_lock::steps` says what to do from where things stand: hold, hold again, restore, or nothing.
-- **Turning it on** (`SetCapsLockAsSnappyKey`) tries the platform first when it can apply now, so a refusal leaves the setting off and the reply, shown under the switch, says why. A refusal later, at start or after the Snappy key changes, keeps the setting, is announced once, and shows under the switch (`AppState::caps_lock_problem`) until a change makes it work.
-- **Cleaning up.** Turning the setting off, quitting, and stopping for a restart all restore Caps Lock. While a change is in place, the engine keeps what undoes it, in a form of the adapter's own (`CapsLockUndo`), in `caps-lock.json`. A run that ends without restoring, as a crash does, leaves that file behind; the next start hands it to `undo_caps_lock` before anything else, then holds Caps Lock again if the setting asks, so checking for someone else's remapping never sees Snappy's own.
-- **Losing it.** Something else can change the keyboard settings under Snappy: a keymap loaded over Snappy's change on X11, as `setxkbmap` or a layout switch does, KDE's keyboard settings saved without Snappy's option, or a Caps Lock option added in GNOME's settings. The adapter then lets go of Caps Lock and reports `PlatformEvent::CapsLockLost`; it decides nothing more. The engine (`caps_lock::lost`) forgets the undo record, since nothing of Snappy's is left, and holds Caps Lock again, quietly, as the setting still asks, which writes a fresh undo record. When the new keyboard settings remap Caps Lock themselves, that hold is refused: theirs win, and the refusal is announced and shown under the switch like any other, until a change makes it work.
-- **The debug log** records `capsLockHeld` (the modifiers), `capsLockUnsaved` (what undoes the change couldn't be saved, so a crash would leave it), `capsLockRefused` (the reason), `capsLockLost`, `capsLockRestored`, `capsLockLeftOverUndone`, `capsLockTapped` (how long it was down), `capsLockTapFailed` (the toggle the system didn't take, and why), and `capsLockReleased` for a hold (how long, and whether something else was used, never what).
-
-## How a settings change works
-
-Every `Command` lands in `commands::handle` (`crates/engine/src/commands.rs`). Changes to settings go through `commands::change`: copy the settings, apply the edit, run `Settings::validate` (which normalizes the layouts and the swap key, and checks every shortcut conflict), save atomically, then reconfigure everything that depends on settings (debug log, workspaces, live control, shortcuts, overlays, tray). A rejected change leaves the old settings in place and replies with the reason, which the settings app shows. Changing the Snappy key goes through its own checks first ([Changing the Snappy key](#changing-the-snappy-key)).
-
-### Resetting
-
-`Reset { reset }` puts settings back to their defaults through `change`, so a reset is validated, saved, and applied like any change. What it resets is a `core::reset::Reset`, and `Settings::reset` computes the result:
-
-- **A section's shortcuts** (`Shortcuts { section }`): Move between zones, Focus and selection, Workspaces (the steps and sends), or Window history, as the Settings page groups them (`ShortcutSection`). Each shortcut of the section gets its default, except one whose default chord another binding already uses, which stays unassigned, so a reset never creates a conflict. Window history has no defaults, so its reset clears it.
-- **A workspace's shortcuts** (`WorkspaceShortcuts { workspace }`): the Snappy key and its position in the list to switch, for the first nine and when free, and nothing to send.
-- **Every setting and shortcut** (`Settings`): the defaults, keeping custom layouts, which layout each display and each workspace uses, the workspaces themselves, whether workspaces are on, and the active one. Layouts are all enabled again and lose their shortcuts; workspaces switch by their position.
-- **Everything** (`Everything`): the first launch's settings. The engine stops workspaces first, bringing every parked window back, and when a window can't come back yet, resets nothing and replies saying so.
-
-No reset turns snapping on or off. The status says what was reset (`Reset::message`). In the settings app each panel of shortcuts has a Reset in its title, off while its shortcuts are the defaults (the WebAssembly `resetSettings` says whether a reset would change anything), which asks before it sends; the end of the Settings page resets every setting, or everything, after a dialog that names what goes. The editor's Clear all empties a layout's own shortcuts, whose defaults are none, as one step of the draft's undo.
-
-Reading a file (`Settings::from_json`) keeps every shortcut it has, cleared ones (`null`) included, and ignores fields it doesn't know. It reads the Snappy key first, the default when the file has none, since the defaults it fills in and the chords the OS keeps are compared with it. A shortcut field the file lacks gets its default only when no binding the file has already uses that chord, so loading never creates a conflict: a file whose zones use the Snappy key with the digits keeps them, and a workspace switch shortcut it lacks stays unassigned. A shortcut on a chord the OS keeps for itself (`chords_the_system_keeps`) never fired, so it is read as missing rather than failing the file: a macOS file from before Snappy + `\` cleared the selection, holding Snappy + Delete, loads clearing with Snappy + `\`, or with nothing when another binding has that chord, and a zone or other shortcut without a default on Snappy + Delete loads unassigned.
-
-## Workspaces
-
-A workspace is a group of windows; one group is visible at a time. Workspaces are off by default and start with three.
-
-### The session
-
-`core::workspace::Session` (`crates/core/src/workspace/session.rs`) holds each tracked window's workspace, its visible frame, and its parked position while hidden. Every change is all or nothing:
-
-1. Write the journal first (`WorkspaceIo::write_journal`), listing every window that will be parked.
+1. Write the journal of windows about to be parked first.
 2. Bring incoming windows back before parking outgoing ones, so the screen is never empty mid-switch.
-3. Check each move against its target and, on any refusal, reverse the moves already made. A window that closes during the change leaves the session instead, and the change goes on without it.
+3. Check each move, and on a refusal reverse the moves already made. A window that closes meanwhile just leaves the session.
 
-A switch refuses to start while a member window is full screen or has a sheet open. Minimized windows stay where they are.
+The engine (`workspaces/switching.rs`) refuses a switch while workspaces are paused or the target is already showing, and holds it while displays settle. Otherwise it enrolls the focused app's windows, takes the selection along, focuses the target workspace's last focused window, saves the active workspace and then membership, and refreshes shortcuts and overlays.
 
-### A switch, end to end
+How a window is hidden is the platform's `ParkingPolicy`: on macOS at an exposed lower corner with a sliver left on screen, since macOS pulls fully off-screen windows back; on Windows entirely off screen; on Linux on a native desktop of Snappy's own, frames untouched.
 
-`workspaces::request_switch` (`crates/engine/src/workspaces/switching.rs`) refuses when workspaces aren't running, are paused, or the target is already active, and defers the switch while displays are still settling. Otherwise it submits `switch_now`, which enrolls the focused app's windows, drops closed ones, learns the members' tab groups ([Tab groups](#tab-groups)), runs `Session::switch_taking_along` with the selected windows, focuses the last of those that arrived, else the target workspace's last focused window (or Snappy itself when there is none), saves only the new active workspace ID and then membership, refreshes shortcuts and overlays, and records the switch's timings. When the active workspace can't be saved, the switch is reversed, taking the selection back too, and membership is saved as things are then. Every switch goes this way: by number, by step, from the menu, from a workspace's own shortcut, after a send that follows the window, and from the settings app.
+- **Containment** (`workspaces/containment.rs`). When an app or the system brings a parked window back, it is parked again at once, tried once more a second later, and only then reported, naming its workspace.
+- **Display changes** (`workspaces/events.rs`). Displays change in bursts, as when a laptop wakes. The engine waits until 350 ms have passed without a change, then re-places every window for the final displays in one session change, retrying once after 750 ms and otherwise hiding inactive workspaces' windows one by one.
+- **Other desktops.** Workspaces belong to the native desktop (Space, virtual desktop) they started on (`DesktopGuard`), and pause on any other. When live control is lost, they're suspended without moving anything and resume when it returns.
+- **Restarts** (`workspaces/recovery.rs`). Quitting returns every parked window. Stopping for a restart (`SIGUSR2`, or `snappy --stop-for-restart` on Windows), a crash, or a panic leaves the journal and membership files as they are, and the next start puts each window back in its workspace without moving it. Windows are recognized across processes by a `RecoveryKey`: process ID, process start time, and a per-window token from the adapter, so a reused process ID never matches. `core::workspace::relaunch` decides what each journaled window becomes.
+- **Tabs.** On macOS each native tab is a window of its own; the session treats a tab group as one window, acting on the shown tab and carrying the hidden ones along.
 
-### Workspace shortcuts
+### The Snappy key and Caps Lock
 
-- **Switching by number.** Workspaces 1 to 9 switch with the Snappy key and their number by default. The shortcut is set when a workspace is made (`Workspace::numbered`, through `Settings::new_workspace` for one the user adds, which takes the lowest free "Workspace n" name), and only when no other binding uses that chord; later workspaces get none. Shortcuts belong to their workspace: reordering or deleting workspaces never changes them, so after a delete a new "Workspace 2" gets Snappy + 2 again only if that chord is free.
-- **Steps.** Snappy + `;` and `'` go to the previous or next workspace in saved order, wrapping, counting from a switch still on its way.
-- **Sending and staying.** Snappy + `.` and `/` send the focused window to the previous or next workspace (`send_and_stay`) and park it there; the active workspace stays. Focus then moves to the active workspace's most recently focused remaining window (`Session::focus_recent`, which keeps the order windows were focused in), which is its frontmost, so pressing again sends that one. With nothing left, focus is left to the system. With a selection, they send every selected window of the active workspace instead, and focus moves the same way. A workspace's own send shortcut works the same way, and its "send window to … and switch" shortcut sends the focused window, then switches, taking the selection along. The debug log records `workspaceSend` for every send, with whether it stayed, which window got focus, and the hidden tabs that went too (`tabs`). A window joining a workspace is logged as `workspaceJoin`, with `tabOf` naming the hidden tabs when it joined their group, and hidden tabs moved to their shown tab's workspace as `tabsUnified`.
+The Snappy key is one held key that stands for two or more modifiers the user chooses (`core::keys::SnappyKey`). Shortcuts store it as a symbol: a chord's `ChordMods` say "the Snappy key, plus these", or name concrete modifiers, and recording decides which once. Only `KeyChord::combo` expands it, so conflicts, reserved chords, availability probes, and registration all compare concrete combos, and labels always say "Snappy". Changing the key is checked as a whole first: every binding with the new expansion, then each moved chord against the OS (`core::shortcuts::availability_probes`), before anything is saved; then the shortcuts are registered again at once.
 
-### Taking the selection along
+Caps Lock can stand for the Snappy key. The work is split three ways:
 
-The next switch, however it is made, hands the selection ([The selection](#the-selection)) to `Session::switch_taking_along`, which moves the selected windows of the active workspace into the target workspace without moving them on screen, parks the rest, and gives focus to the last one selected. The selection is then empty. Switching to the workspace already showing is refused, so the selection stays.
-
-### Tab groups
-
-On macOS each native tab is a window of its own, and only the selected tab shows ([platforms.md](platforms.md#macos)). A tab group is one window to workspaces: it never spans two.
-
-- **What the platform says.** `WindowSystem::tab_groups` reports, for the apps owning some windows, each group with a hidden tab the platform has seen: its shown tab, as a `WindowInfo`, and its hidden tabs. Other platforms report none.
-- **What the session keeps.** `Session::update_tabs` records which members are hidden tabs and the shown tab each sits behind (`core::workspace::Tabs`), then gives every hidden tab its shown tab's workspace, frame, and parking. Switches, sends, taking the selection along, deleting a workspace, display changes, and quitting act on the shown tab and its hidden tabs follow: a tab taken along or sent, shown or hidden, takes its whole group. Hidden tabs are never placed, contained, journaled, focused, or returned on their own, since moving one changes nothing on screen and focusing one makes its app show it; the journal lists only the shown tab, which brings the group back. A group counts as one window.
-- **When the engine asks** (`sync_tabs` in `crates/engine/src/workspaces/members.rs`). Whenever an app's focus changes, for that app, since picking a tab changes which one shows; and before every switch, send, deletion, display change, resume, start, and stop, for every member's app. A shown tab Snappy hasn't met joins the workspace of the tabs behind it, where they are (`join_tab_group`), so a new tab, even one an app opens in a parked window, goes where its group is, and an activation that shows it follows like a member's. When a window is enrolled, a workspace remembered for it wins; that is how a restart puts tabs remembered apart back together, in the shown tab's workspace.
-- **Tearing out.** A tab dragged out of its group stops being reported in it and becomes an ordinary member, already in the group's workspace.
-- **Selecting.** A tab group is selected as one: the outline is drawn on the shown tab, selecting a tab of a selected group unselects it, and placing or sending the selection moves the group once. Whatever sends a group, the selection or the focused window, alone or before a switch, takes every tab of it out of the selection.
-
-### Parking
-
-How a window is hidden depends on the platform (`core::workspace::ParkingPolicy`):
-
-| Policy | Platform | How |
-|---|---|---|
-| `CornerSliver` | macOS | macOS pulls fully off-screen windows back, so the window is moved to an exposed lower corner with a 1-point sliver left on screen. |
-| `OffScreen` | Windows | The window is moved entirely outside every display: left of the leftmost one with 64 pixels to spare, level with the top of the highest. |
-| `Desktop` | X11, GNOME and KDE Plasma on Wayland | The window is moved to a native desktop of Snappy's own, named "Snappy" on X11 and KDE Plasma, and its frame is left alone. |
-
-### Containment
-
-Apps, and the system, sometimes bring a parked window back on their own. `crates/engine/src/workspaces/containment.rs` parks it again (`Session::contain`):
-
-- **When a parked window moves** (`WindowMoved`), it is parked again at once, at most once a second per window, where the current displays put parked windows.
-- **While displays settle** ([Other desktops and display changes](#other-desktops-and-display-changes)) nothing is parked again: the system is still moving windows, and the displays Snappy knows are out of date, so a park then can't land. The windows that moved meanwhile are left to the display update, which parks every window again against the final displays.
-- **A window that won't hide** is tried once more a second later, unless displays have started changing again, which leaves it to their update. Only a window still showing after that try is reported, as an error the settings app keeps until it no longer holds: "A window from Workspace 2 won't stay hidden; switch there and back to hide it." (switching there shows it and switching back parks it again). The message names the workspace, never the app, since all Snappy has of an app is an identifier such as `com.apple.Safari`. It is taken back with a quiet status as soon as no window it is about is still revealed in a workspace that isn't showing: hidden again, closed, or its workspace switched to.
-- **The debug log** records each try that moved a window or failed as `containment`, with the window, its app's identifier, the `attempt`, and the `outcome`: `hiddenAgain`, `retrying` (the first try failed), or `stillShowing` (the retry failed too), with the reason. `workspace-lifecycle.json` counts the windows parked again (`containedRevealedWindow`).
-
-### Membership, the journal, and restarts
-
-Restarting the daemon while apps keep running, to install a new build or after a crash, changes nothing on screen: every window keeps its workspace, parked windows stay parked, and the active workspace stays active. Only quitting brings parked windows back.
-
-- **Recovery keys.** Windows are recognized across daemon processes by a `RecoveryKey`: the process ID, the process's start time, and a token for the window that stays the same while it exists ([platforms.md](platforms.md) has each adapter's). The start time makes a process ID reused by a later process a different key (`RecoveryKey::same_process`, `same_window`), so nothing saved for a process that has gone is ever applied to another.
-- **What is saved, and when.** `workspace-journal.json` lists every parked window with its workspace, home frame, and parked position, and is written before every change ([The session](#the-session)); it exists only while windows are parked. `workspace-membership.json` remembers every tracked window's workspace, written after every switch, send, deletion, display change, and tab change. The active workspace is in `settings.json`, saved on every switch.
-- **Restart versus quit.** Quitting (the menu's Quit, `SIGTERM`, Ctrl+C or closing the terminal Snappy runs in, the session ending, or turning workspaces off) runs `workspaces::stop`, which returns every parked window, removes the journal, and clears the platform's parking state. A restart request (`PlatformEvent::RestartRequested`: `SIGUSR2` on macOS and Linux, `snappy --stop-for-restart` on Windows) runs `workspaces::detach` instead: it saves the journal and membership as they are and moves nothing. A crash or a forced kill leaves the files as the last change wrote them, which is the same thing. So does a panic on the engine thread: `apps/snappy/src/runtime.rs` stops the adapter however the engine thread ends, so the daemon exits instead of living on without an engine, and its next start picks up from the files.
-- **Picking up at launch** (`workspaces::start`, and `recover` in `crates/engine/src/workspaces/recovery.rs`). Each journaled window is looked for by its recovery key, else as the only window of the same process and size at its parked position, and `core::workspace::relaunch` decides what happens to it. One still hidden for a workspace that isn't showing (at a parking position, or on the parking desktop), or minimized, rejoins that workspace without moving (`rejoin`) and stays journaled. One at its parked spot whose workspace is now showing or was deleted comes back to its home frame. One found somewhere else has been brought back by the user or its app while Snappy was away; it is left alone and joins the active workspace like any visible window, rather than being hidden again. Entries whose process is gone, or whose process ID now belongs to another launch, are dropped, and so are those whose process runs on with no window left that is theirs, by key or at their parked position: the window closed while Snappy was away. Every other window joins as at any start: visible ones the active workspace, minimized ones the workspace membership remembers for them.
-- **Tabs.** Only shown tabs are journaled, so a parked group rejoins as one window. The new daemon learns hidden tabs as they are picked, as at any start, and a tab picked for the first time joins its group's workspace ([Tab groups](#tab-groups)).
-- **The selection** is never saved; a restart starts with none.
-- **After a reboot or logout** every saved process has gone, so nothing saved is applied. Apps that reopen their windows at a parked position are brought just inside the screen and join the active workspace.
-- If a journaled window can't be told apart from other windows of its process at its parked position, or can't be brought back, workspaces stay off and the entries stay for the next try. Turning workspaces off, resetting everything, and importing settings try again; while a window still can't come back, each is refused and says so.
-- The debug log's `workspacesStarted` record says what launch did: `rejoined` (windows per workspace), `returned`, `leftAlone`, `staleJournal`, `closed`, and `staleMembership`; each rejoined window also gets a `workspaceJoin` record with `"rejoined": true`. A restart request logs `workspacesDetached` with how many windows stay parked.
-
-### Other desktops and display changes
-
-Workspaces belong to the native desktop (Space, virtual desktop) that was current when they started (`DesktopGuard`). On any other desktop they pause without changing anything.
-
-When live control is lost while workspaces run, as when GNOME's extension is turned off or restarts or KWin starts over, they are suspended rather than stopped: the session is kept, nothing moves, and switches are refused. When live control comes back (`LiveControlChanged`), the engine binds the desktop again and hides, one by one, the windows of inactive workspaces that the platform showed meanwhile ([Containment](#containment)), logging `workspacesResumed` with how many were hidden again and how many wait for a retry.
-
-Displays change when one is connected, disconnected, or rearranged, and in bursts when a computer wakes: on a Mac with an external display, the displays change, the Space changes, and the displays change several more times over a few seconds while the system moves windows around. `workspaces::displays_changed` (`crates/engine/src/workspaces/events.rs`) waits until 350 ms have passed since the last change, so a burst settles once, and meanwhile containment leaves windows alone and switches wait. Then `Session::update_displays` re-places every window for the final displays without revealing parked ones: the active workspace's windows inside the new work areas, and every parked window, wherever the system moved it, at its parking position for the new displays. Windows that can't move just then, minimized, full screen, or showing a dialog, stay where they are rather than holding up the rest. A refusal undoes the update, as every session change is all or nothing, and it is tried once more 750 ms later; if that fails too, the windows of inactive workspaces are hidden one by one instead ([Containment](#containment)), so one app refusing doesn't leave every window where the system put it. Nothing is said to the user about the update itself. The debug log records each try as `displaysUpdated`, with the `attempt`, the number of `displays`, how many windows it `moved`, how many moved while the displays settled (`held`), and the `error` when it failed. Returning to the managed desktop after a display change updates windows the same way, unless a display change is still settling.
+- **The adapter makes the key**, with what its OS offers (`CapsLock::hold_caps_lock_as`): held, Caps Lock acts as the Snappy key's modifiers. It refuses when something else already remaps Caps Lock, and reports when the key goes down, when something else is used while it's down (never what), and when it comes up.
+- **Core decides what a press was** (`core::keys::caps_lock`): a tap when nothing else was used and it came up quickly, which the engine answers by toggling Caps Lock; otherwise a hold.
+- **The engine keeps it in step** (`crates/engine/src/caps_lock.rs`) with the setting, the permission, whether the platform can control the desktop, and the Snappy key. While a change is in place it keeps what undoes it in `caps-lock.json`, so a crashed run's change is undone at the next start before anything else. When the system's keyboard settings change under Snappy, the adapter reports Caps Lock lost and the engine holds it again from the new settings, unless they now remap Caps Lock themselves.
 
 ## Files
 
@@ -274,53 +160,40 @@ Displays change when one is connected, disconnected, or rearranged, and in burst
 | | macOS | Windows | Linux |
 |---|---|---|---|
 | `settings.json` | `~/Library/Application Support/Snappy/` | `%APPDATA%\Snappy\config\` | `~/.config/snappy/` |
-| State | same folder as settings | `%LOCALAPPDATA%\Snappy\data\` | `~/.local/state/snappy/` |
+| State | the settings folder | `%LOCALAPPDATA%\Snappy\data\` | `~/.local/state/snappy/` |
 | Logs | `~/Library/Logs/Snappy/` | `%LOCALAPPDATA%\Snappy\data\Logs\` | `~/.local/state/snappy/logs/` |
 
-When `SNAPPY_HOME` names a folder, everything goes there instead: `settings.json`, `state/`, and `logs/`. The live tests use it to run against scratch files.
+With `SNAPPY_HOME` set, the files go in that folder instead: `settings.json`, `state/`, and `logs/`. Linux's single-instance lock stays in `$XDG_RUNTIME_DIR`.
 
-- **State:** `workspace-journal.json`, `workspace-membership.json`, `caps-lock.json` while Caps Lock is held as the Snappy key, and on macOS the single-instance lock, `daemon.lock`. Linux keeps its lock, `snappy.lock`, in `$XDG_RUNTIME_DIR` when that is set.
-- **Logs:** `drops.json` (the last 20 modifier drags and how each ended), `workspace-lifecycle.json` (the last 30 workspace events), `workspace-performance.json` (up to 120 switch timings, written at quit), and the debug log.
+- **State:** `workspace-journal.json` (only while windows are parked), `workspace-membership.json`, `caps-lock.json` (only while Caps Lock is held as the Snappy key), and the single-instance lock on macOS. Linux keeps its lock in `$XDG_RUNTIME_DIR` when that is set.
+- **Logs:** `drops.json`, `workspace-lifecycle.json`, `workspace-performance.json`, and the debug log, `debug.jsonl`.
 
-Writes are atomic: a temporary file in the same folder, then a rename (`crates/engine/src/store.rs`). State and log files are readable only by the user. An unreadable settings file is reported, Snappy runs on defaults, and the file is never overwritten. Each state file says which version of its shape it holds (`version`, `StateFile` in `store.rs`), and files from before they had one still read. A state file that can't be read, or holds a version this Snappy doesn't know, is moved aside as `<name>.unreadable.json` and logged as `stateFileUnreadable`, and Snappy goes on as if it weren't there: without the journal, parked windows join as at any start, by the workspace membership remembers or back on screen.
+The engine's store (`crates/engine/src/store/`) writes every file whole, through a temporary file renamed into place, readable only by the user. A settings file that can't be read is reported and never overwritten; Snappy runs on defaults. Each state file records the version of its shape; one that can't be read is moved aside as `<name>.unreadable.json` and Snappy carries on without it.
 
 ## The settings app
 
-- **Tauri shell** (`apps/settings/src-tauri`). `daemon.rs` reads `ToSettings` frames from standard input on one thread and writes `ToDaemon` frames on another, relaying them to and from the web UI as Tauri events and commands. `window.rs` adds, on macOS only, the Edit menu text fields need there (elsewhere a menu would sit inside the window, and the web view handles the editing shortcuts itself), and reports which display the window is on. The content security policy allows only bundled assets, and the only plugin is the file dialog for import and export.
-- **React UI** (`apps/settings/ui/src`). Four pages: Layouts (`layouts/`), Editor (`editor/`), Workspaces (`workspaces/`), and Settings (`settings/`), inside the shell in `shell/`. `state/daemonClient.ts` sends commands and turns `State` messages into what the pages render. A command whose refusal a page shows where the change was made is sent in place (`SendOptions.inPlace`): its refusal is no toast, and the copy the daemon posts as its status is dismissed. One shortcut recorder records at a time (`recorder/recording.ts`), so the daemon's `BeginRecording` and `EndRecording` come in pairs; while it records, keys reach it from the whole window, since WebKit doesn't focus a button that is clicked. A recorder asks `recording_conflict` about its chord, naming the shortcut it records by its `ShortcutId`, never its title, which two workspaces or layouts may share; the refusal names the Snappy shortcut already holding the chord, or, for a chord the OS or another app holds, the shortcut being recorded, in the words the Snappy key's probes use (`unavailable_refusal`), by its `ShortcutId` and title. Each recorder carries its shortcut's key (`shortcutKey` in `core/shortcuts.ts`, built from the `ShortcutId`) as `data-shortcut`; the toast shows the title as a link while the recorder with that key is on the page, so two workspaces or layouts of one name never send the link to the wrong one: a click scrolls to the recorder and focuses it. The editor keeps its draft and undo history locally and sends `SaveLayout` on save.
-- **WebAssembly core** (`crates/wasm`, loaded by `src/core/snappyCore.ts`). Zone frames, editor gestures, guides, conflicts, labels, the Settings page's sections of global shortcuts with their shortcuts (`shortcutSections`), every shortcut's title (there, and in `workspaceShortcutTitles` and `layoutShortcutTitles`), the help popover's list of default shortcuts (`defaultShortcuts`, from `core::guide`, built from the defaults themselves), the most zones, workspaces, and undo steps (`limits`), and settings validation all come from `snappy-core`; the UI never computes geometry or names a shortcut itself, so a conflict message and the recorder it is about always say the same.
-- **Fake daemon** (`src/bridge/fake/`). In `pnpm dev` and in the tests, `FakeDaemon` stands in for the pipe. It speaks the same messages, applies commands with the real `snappy-core` rules through WebAssembly, records every command, and lets tests change its state (`window.snappyFake`). `src/main.tsx` picks it in development builds and the Tauri bridge in production builds.
+- **The Tauri shell** (`apps/settings/src-tauri`) relays frames between the pipes and the web UI, adds the Edit menu text fields need on macOS, and reports which display its window is on. Its content security policy allows only bundled assets; its one plugin is the file dialog for importing and exporting settings.
+- **The React UI** (`apps/settings/ui/src`) has four pages, Layouts, Editor, Workspaces, and Settings, in the shell in `shell/`. `state/daemonClient.ts` sends commands and turns each `State` into what the pages render.
+- **The WebAssembly core** (`crates/wasm`, loaded by `core/snappyCore.ts`) answers everything that is a rule: zone frames, editor gestures and guides, shortcut conflicts, titles and labels, the help list of defaults, limits, and validation. The UI never computes geometry or names a shortcut itself.
+- **The fake daemon** (`bridge/fake/`) stands in for the pipe in development and in the UI's tests. It speaks the same messages and applies commands with the real core rules through WebAssembly.
 
-### The layout editor
+The layout editor's rules are pure functions from zones to zones in `crates/core/src/editor/`: moving, resizing, drawing, cutting, merging, pasting, snapping to guides, and repairing overlaps. A property test checks that no sequence of them leaves zones overlapping, undersized, or more than 32. The UI keeps the draft, its selection, the clipboard, and undo (`editor/draft.ts`, `editor/editorStore.ts`), and sends the finished layout on save.
 
-Every editing rule is in `crates/core/src/editor`, as pure functions from zones to zones, and `crates/wasm` composes them into canvas gestures (`gestures.rs`). The UI (`apps/settings/ui/src/editor`) turns pointer and key input into calls, draws the results, and keeps the draft, the selection, the clipboard, and undo (`draft.ts`, `editorStore.ts`). Every change to the draft is one step of undo, however many zones it touches; selecting and copying are not changes.
+## Where the rules live
 
-- **Invariant.** No operation leaves zones overlapping or smaller than the minimum (`properties.rs` checks any sequence of them), and none that adds zones (cutting, pasting, duplicating) goes past 32. A draft loaded with overlaps stays as it is until "Align edges" (`repair.rs`) repairs it.
-- **Snapping** (`guides.rs`). Moves, resizes, divider drags, drawing, and cuts snap within 7 pixels to the screen's halves, thirds, and quarters (`GUIDE_FRACTIONS`) and to other zones' edges; moves also snap a zone's center. A cut also snaps to the halves, thirds, and quarters of the zone it cuts (`zone_guides`). An interior guide a gesture lands on shows as a dashed line across the canvas.
-- **Cuts** (`cutting.rs`). The cut tools split the zone under the pointer at the pointer. Holding Shift cuts through the whole layout instead: a line from one canvas edge to the other at that position (`CutScope::Through`) splits every zone it crosses, across gaps; a zone it would leave a part smaller than the minimum in stays whole. The preview shows the whole line and a cut line in each zone it will split, and pressing or letting go of Shift switches it at once. Each split zone keeps its ID and number for its first part (left or top), and its second part comes right after it in zone order. The second part of the zone clicked is selected.
-- **Selection.** Clicking a zone selects it; Shift-click adds a zone to the selection or takes it out. Only a single selected zone shows resize handles and coordinates; several show on a small map of the layout, with their numbers, instead. Delete, Duplicate, Copy, Cut, and Merge act on the whole selection; the sidebar names Merge, Duplicate, and Delete, with the keys that also run them, and says why Merge or Duplicate is off when it is; their keys, and Paste's, say why in a toast when they can't act.
-- **Resize handles** (`handles.rs`). Eight round dots, at the corners and edge midpoints, set 12 pixels in from the zone's edges (less on small zones), so they stay clear of its border. A press within 16 pixels of a handle grabs it, one within 9 pixels of an edge grabs that edge, and the middle of the zone always moves it.
-- **Merge** (`merging.rs`). Merge needs two or more selected zones that together fill a rectangle exactly, with no gaps and no overlaps; otherwise the button is disabled and says why. The merged zone is the first of them in zone order, grown: it keeps that zone's ID, number, and place, and the zones after it move up. It keeps the first zone shortcut, in zone order, among the zones merged; the other merged zones' shortcuts go with them. There is no merging by dragging, so a slip of the pointer never merges.
-- **Copy, Cut, and Paste** (`place_copies` in `creating.rs`). Copy remembers the selected zones' geometry, Cut copies and then deletes, and Paste adds same-size copies that keep their arrangement: where they were copied from when that space is free, so a cut zone pastes back where it was and zones copied from another layout keep their place, or else at the nearest free spot beside where they were, beside another zone, or against a canvas edge. Pasted zones get new IDs and no shortcuts, follow the other zones in order, and become the selection. When they can't be placed, `PlaceRefusal` says why: nothing copied, copies that overlap, more zones than a layout holds, or no spot that fits them. Duplicate places copies of the selection the same way without touching the clipboard. The clipboard lasts as long as the settings window and isn't the system clipboard; a preset's zones can be copied but not changed.
-- **Keys** (`keyboard.ts`). Command on macOS, Control on Windows and Linux: Z undoes and Shift-Z redoes anywhere on the editor page except in a text field. While the canvas has focus (a click on it gives it focus), C copies, X cuts, V pastes, D duplicates, Shift-M merges, and Delete or Backspace alone deletes. Merge takes Shift because Command-M minimizes the window on macOS. D duplicates, as in drawing apps. In text fields and other controls these keys do what they always do.
-
-## Behavior at a glance
-
-The numbers live in code; this is where to find them.
-
-- **Snapping needs a real move** (`crates/core/src/drag.rs`). The window must travel more than 2 points with the drag modifier held at the drop. Resizing outside the title-bar strip cancels the drag until the next press; inside the strip, size changes some apps make while moving are tolerated.
-- **Zones** (`crates/core/src/layout.rs`). Zones are fractions of the work area, at least 4% on each side, up to 32 per layout. Gap and padding are 12 points (scaled by the display's scale on Windows and Linux, where windows are measured in pixels). The zone under the pointer is the smallest one containing it; gaps belong to no zone.
-- **Which layout a display uses** (`Settings::layout_for_display` in `crates/core/src/settings.rs`). The active workspace's choice for that display, else the display's own, else the default layout, skipping disabled layouts.
-- **Occupancy** (`crates/core/src/swap.rs`). A window fills a zone when every edge is within 12 points, or 4% of the zone's shorter side if that's smaller.
-- **Swaps trade zones** (`SwapSource` and `plan_swap` in `crates/core/src/swap.rs`). The occupant goes to the zone the moving window fills. A floating window, filling no zone, sends the occupant to the zone of its display's layout under its original center, or to the zone it overlaps most when the center is in a gap, sized to that zone. Only when there is no such zone (the center is off the layout), that zone is the destination, or a third window already fills it does the occupant take the floating window's exact frame instead. A floating window never blocks a swap, and undo returns both windows to their exact frames.
-- **When the zone is taken** (`WhenTaken` in `crates/core/src/swap.rs`). Swap by default, or stack on top. Keyboard moves and drops both follow it; a move into an empty zone is an ordinary snap either way.
-- **Swap key** (`SwapModifier` in `crates/core/src/swap.rs`). Held during a drag, it does the opposite of "When the zone is taken" for that drop, and the overlay names that action on the hovered zone. Command on macOS and Ctrl elsewhere by default. It can't be the drag key; a clash falls back to Command or Win or Super.
-- **Settling** (`crates/core/src/bounds.rs`). Re-reads after 25, 50, and 100 ms for positions and 16 to 64 ms for sizes. A result more than 3 points off is reported as limited by the app; a size within 32 points per axis is accepted as the app's own step.
-- **Arrow navigation** (`crates/core/src/navigate.rs`). The window starts from the zone it overlaps most, moves to the nearest zone in that direction, prefers aligned neighbors, never wraps, and stops at the screen's edge. Only zones whose centers lie more than half a point past the starting zone's center count. Zones sharing more than half a point of its span across the direction are aligned and beat every other; among them the least gap wins, and among the rest the nearest center. The window's position across the direction, then zone order, settle what is left (`next_zone`, which directional focus shares).
-- **Nearest empty zone** (`crates/core/src/empty_zone.rs`). Candidates are the zones of each display's current enabled layout that no other window fills, by the occupancy rule; windows of inactive workspaces don't count, and the zone the window already fills is never one. Zones on the window's own display come first, then other displays'. The nearest is the one whose center is closest to the window's center, the earlier zone on a tie.
-- **Directional focus** (`crates/core/src/focus.rs`). While any window on the active workspace is in a zone, by the occupancy rule, focus moves between zones, on every display, choosing as arrow navigation does among the zones that hold a window other than the focused one, so empty zones are skipped and windows outside zones are never reached. A focused window in a zone starts from the zone it overlaps most of those it fills; otherwise focus starts from the point described next, which counts as aligned with a zone it lies more than half a point inside of. Of several windows in the zone chosen, the most recently focused gets focus. When no window is in a zone, focus goes by window centers: only windows whose centers lie more than half a point past the starting point in that direction count. The nearest scores least: its distance ahead plus twice its distance to the side (`SIDEWAYS_WEIGHT`), so a window straight ahead wins over one as far off to the side, and one at 45 degrees wins only when less than a third as far ahead. Scores within a thousandth of a point tie, and a tie goes to the most recently focused window while workspaces run (`Session::recently_focused`), else to the first in the platform's list of windows. Focus never wraps around.
-- **Placing the selection** (`place_selection` in `crates/core/src/empty_zone.rs`). Selected windows already filling a zone stay. The others each get an empty zone of their own, empty as for the nearest empty zone. Zones on the display under the pointer are used first; other displays' zones, in display order, only when it hasn't enough, and then every zone of the earlier displays is filled. Among the zones that may be used, windows and zones are paired so that the total distance from window centers to zone centers is least, found exactly by the Hungarian method (`crates/core/src/assignment.rs`) on distances in thousandths of a point. With more windows than empty zones every zone is filled and the windows that would add most to the total are left over. On equal totals, earlier selected windows take earlier zones and later ones are left over.
-- **Undo** (`crates/core/src/operations.rs`). 50 moves, one history per workspace or one overall. A swap undoes as one step, and so does placing the selection (`snap_group`).
-- **Shortcuts** (`crates/core/src/keys.rs`, `crates/core/src/bindings.rs`). Chords are physical keys plus at least one of Control, Option/Alt, or Command/Win/Super, counting the Snappy key's. The Snappy key is at least two of Control, Option/Alt, Command/Win/Super, and Shift, Control+Option+Command by default on every platform. Standard app commands (Command-C, Ctrl+C, Alt+F4, and others) are reserved, and so are chords the OS swallows without saying so (`chords_the_system_keeps`: Control+Option+Command+Delete on macOS), which a settings file that holds one reads as missing instead of failing to load. Two features can't share a chord, except zone chords in different layouts, and zone and layout chords with workspace chords while workspaces are off. The defaults, the same on every platform, are Snappy + arrows to move between zones, Snappy + I, J, K, and L to move focus up, left, down, and right, Snappy + Return to select or unselect the focused window, Snappy + `\` to clear the selection, Snappy + Space to move to the nearest empty zone or place the selection, Snappy + 1 to 9 to switch to workspaces 1 to 9, Snappy + `;` and `'` to step through workspaces, and Snappy + `.` and `/` to send the focused window or the selection to the previous or next workspace and stay. They are stored as `navigation` (`left`, `right`, `up`, `down`, `nearestEmpty`, `focusUp`, `focusLeft`, `focusDown`, `focusRight`, `selectWindow`, `clearSelection`) and `workspaces` (`previous`, `next`, `sendPrevious`, `sendNext`) in the settings file. Zones, layout selection, per-workspace sends, and undo and redo have none.
-- **Focus after a switch** (`crates/core/src/workspace/focus.rs`). For 0.75 seconds after a switch or send, app activations are ignored, because the switch itself causes some.
-- **Limits** (`crates/core/src/settings.rs`). 100 custom layouts, 32 workspaces, names up to 80 characters.
+| Rule | Module in `crates/core/src` |
+|---|---|
+| Zones as fractions of the work area, gaps and padding, the zone under the pointer | `layout.rs` |
+| Telling a move from a click or a resize | `placement/drag.rs` |
+| Writing a frame and waiting for it to settle | `placement/bounds.rs` |
+| Snap, swap, and undo, and their history | `placement/operations.rs` |
+| When a window fills a zone, swap planning, "When the zone is taken", the swap key | `placement/swap.rs` |
+| Moving between zones with the arrows | `placement/navigate.rs` |
+| Moving focus in a direction | `placement/focus.rs` |
+| The nearest empty zone, and placing the selection | `placement/empty_zone.rs`, `placement/assignment.rs` |
+| Which windows may be managed | `eligibility.rs` |
+| Chords, the Snappy key, reserved chords, Caps Lock presses | `keys/` |
+| Shortcut IDs and titles, conflicts, what to register, probes, help | `shortcuts/` |
+| The settings model, defaults, reading old files, validation, edits, resets | `settings/` |
+| Workspace sessions, parking, focus after a switch, relaunch | `workspace/` |
+| The layout editor | `editor/` |

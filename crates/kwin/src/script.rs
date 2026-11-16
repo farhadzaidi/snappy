@@ -12,22 +12,10 @@ use crate::protocol::SCRIPT_NAME;
 
 /// The script's files, relative to its folder.
 const FILES: &[(&str, &str)] = &[
-    (
-        "main.qml",
-        include_str!("../../../apps/kwin-script/contents/ui/main.qml"),
-    ),
-    (
-        "service.js",
-        include_str!("../../../apps/kwin-script/contents/ui/service.js"),
-    ),
-    (
-        "windows.js",
-        include_str!("../../../apps/kwin-script/contents/ui/windows.js"),
-    ),
-    (
-        "parking.js",
-        include_str!("../../../apps/kwin-script/contents/ui/parking.js"),
-    ),
+    ("main.qml", include_str!("../../../apps/kwin-script/main.qml")),
+    ("service.js", include_str!("../../../apps/kwin-script/service.js")),
+    ("windows.js", include_str!("../../../apps/kwin-script/windows.js")),
+    ("parking.js", include_str!("../../../apps/kwin-script/parking.js")),
 ];
 const MAIN: &str = "main.qml";
 const FOLDER_PREFIX: &str = "kwin-script-";

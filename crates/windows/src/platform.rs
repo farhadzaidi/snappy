@@ -7,12 +7,12 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Mods, Platform as PlatformName};
+use snappy_core::keys::{Combo, Mods, Os};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
-    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo,
-    WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
+    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu,
+    WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::dispatch::Dispatcher;
@@ -168,14 +168,16 @@ impl HotKeys for WindowsPlatform {
 
 /// The keyboard hook does it all, so nothing outlives the process and nothing needs undoing.
 impl CapsLock for WindowsPlatform {
-    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, CapsLockRefusal> {
         if caps_lock::system_remaps_caps_lock() {
             self.restore_caps_lock();
-            return Err(messages::CAPS_LOCK_REMAPPED.to_owned());
+            return Err(CapsLockRefusal::Refused(messages::CAPS_LOCK_REMAPPED.to_owned()));
         }
         match self.dispatcher.call(move |main| main.hold_caps_lock(modifiers)) {
             Some(true) => Ok(CapsLockUndo::default()),
-            _ => Err(messages::CAPS_LOCK_UNAVAILABLE.to_owned()),
+            _ => Err(CapsLockRefusal::Refused(
+                messages::CAPS_LOCK_UNAVAILABLE.to_owned(),
+            )),
         }
     }
 
@@ -280,7 +282,7 @@ impl LoginItem for WindowsPlatform {
 impl Platform for WindowsPlatform {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            platform: PlatformName::Windows,
+            platform: Os::Windows,
             parking: ParkingPolicy::OffScreen,
             needs_permission: false,
         }

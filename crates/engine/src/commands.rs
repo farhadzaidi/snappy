@@ -4,36 +4,36 @@
 use std::path::Path;
 use std::rc::Rc;
 
-use snappy_core::bindings::{Probe, Refusal, availability_probes, conflict_with_layout};
-use snappy_core::editor::is_separated;
 use snappy_core::keys::Mods;
-use snappy_core::layout::{self, DEFAULT_LAYOUT_ID, Layout};
-use snappy_core::reset::Reset;
-use snappy_core::settings::{LayoutOptions, Settings, SettingsError, Workspace};
+use snappy_core::layout::Layout;
+use snappy_core::settings::Reset;
+use snappy_core::settings::{LayoutOptions, Settings, SettingsError};
+use snappy_core::shortcuts::{Probe, Refusal, availability_probes};
 use snappy_ipc::{Command, ToSettings};
 use snappy_platform::Platform;
 
 use crate::caps_lock;
-use crate::core::Core;
-use crate::ops::Shared;
+use crate::log_event::LogEvent;
+use crate::ops::{Shared, history_scope};
+use crate::state::EngineState;
 use crate::store::SettingsStore;
 use crate::workspaces;
 
 pub(crate) fn handle<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u64, command: Command) {
     shared.core.borrow_mut().trace(
-        "command",
+        LogEvent::Command,
         || serde_json::json!({ "command": format!("{command:?}") }),
     );
     let result = run(shared, command);
     let mut core = shared.core.borrow_mut();
     if let Err(refusal) = &result {
         core.flag(
-            "commandFailed",
+            LogEvent::CommandFailed,
             || serde_json::json!({ "error": refusal.message }),
         );
         core.announce_error(&refusal.message);
     }
-    core.outbox.push(ToSettings::Reply {
+    core.send_to_settings(ToSettings::Reply {
         id,
         error: result.err(),
     });
@@ -84,7 +84,7 @@ fn run<P: Platform + 'static>(shared: &Rc<Shared<P>>, command: Command) -> Resul
     }
 }
 
-fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), Refusal> {
+fn apply<P: Platform>(core: &mut EngineState<P>, command: Command) -> Result<(), Refusal> {
     let result = match command {
         Command::SetSnapping { enabled } => set_snapping(core, enabled),
         Command::SetDragModifier { modifier } => change(core, |s| s.snapping.drag_modifier = modifier),
@@ -118,13 +118,13 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), Refusa
         }
         Command::ProbeShortcut { chord } => {
             let available = core.platform.is_available(&chord.combo(core.settings.snappy_key));
-            core.outbox.push(ToSettings::ProbeResult { available });
+            core.send_to_settings(ToSettings::ProbeResult { available });
             Ok(())
         }
         Command::SetWorkspacesEnabled { .. } => enable_workspaces(core),
         Command::AddWorkspace => add_workspace(core),
-        Command::UpdateWorkspace { workspace } => update_workspace(core, workspace),
-        Command::MoveWorkspaces { from, to } => move_workspaces(core, &from, to),
+        Command::UpdateWorkspace { workspace } => change(core, |s| s.update_workspace(workspace)),
+        Command::MoveWorkspaces { from, to } => change(core, |s| s.reorder_workspaces(&from, to)),
         Command::SetWorkspaceStepShortcut { step, chord } => {
             change(core, |s| s.workspaces.set_step(step, chord))
         }
@@ -158,7 +158,7 @@ fn apply<P: Platform>(core: &mut Core<P>, command: Command) -> Result<(), Refusa
 
 /// Validate and save a change, then reconfigure what depends on settings.
 pub(crate) fn change<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     edit: impl FnOnce(&mut Settings),
 ) -> Result<(), String> {
     let mut next = core.settings.clone();
@@ -179,7 +179,7 @@ fn refusal(error: SettingsError) -> String {
 }
 
 /// Save validated settings, then reconfigure what depends on them.
-fn commit<P: Platform>(core: &mut Core<P>, valid: Settings) -> Result<(), String> {
+fn commit<P: Platform>(core: &mut EngineState<P>, valid: Settings) -> Result<(), String> {
     if valid == core.settings {
         return Ok(());
     }
@@ -192,7 +192,7 @@ fn commit<P: Platform>(core: &mut Core<P>, valid: Settings) -> Result<(), String
     Ok(())
 }
 
-pub(crate) fn settings_changed<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn settings_changed<P: Platform>(core: &mut EngineState<P>) {
     let debug_log = core.settings.debug_log;
     core.debug.configure(debug_log);
     workspaces::configure(core);
@@ -203,7 +203,7 @@ pub(crate) fn settings_changed<P: Platform>(core: &mut Core<P>) {
 /// modifiers first: against each other and the chords the system keeps
 /// (`Settings::with_snappy_key`), then with the OS for each chord the change moves. Nothing
 /// changes when any check fails, and the reply names what clashed.
-fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<(), Refusal> {
+fn set_snappy_key<P: Platform>(core: &mut EngineState<P>, modifiers: Mods) -> Result<(), Refusal> {
     let current = core.settings.snappy_key;
     if modifiers == current.modifiers() {
         return Ok(());
@@ -231,7 +231,7 @@ fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<()
     match saved {
         Ok(key) => {
             core.trace(
-                "snappyKeyChanged",
+                LogEvent::SnappyKeyChanged,
                 || serde_json::json!({ "from": from, "to": to }),
             );
             core.announce(&format!("The Snappy key is now {}.", key.label(platform)));
@@ -241,7 +241,7 @@ fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<()
             // Probing may have taken Snappy's own shortcuts away; put the current ones back.
             core.configure_hotkeys();
             core.flag(
-                "snappyKeyRefused",
+                LogEvent::SnappyKeyRefused,
                 || serde_json::json!({ "from": from, "to": to, "reason": reason.message }),
             );
             Err(reason)
@@ -253,7 +253,7 @@ fn set_snappy_key<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<()
 /// recording: a probed chord can be one Snappy holds now, such as Snappy + Shift + 1 in one
 /// layout becoming Snappy + 1 of another once Shift joins the key, and the OS reports
 /// those as taken. Whoever calls this registers shortcuts again afterwards.
-fn probe<P: Platform>(core: &mut Core<P>, probes: &[Probe]) -> Result<(), Refusal> {
+fn probe<P: Platform>(core: &mut EngineState<P>, probes: &[Probe]) -> Result<(), Refusal> {
     core.release_hotkeys();
     match probes
         .iter()
@@ -264,7 +264,7 @@ fn probe<P: Platform>(core: &mut Core<P>, probes: &[Probe]) -> Result<(), Refusa
     }
 }
 
-fn set_snapping<P: Platform>(core: &mut Core<P>, enabled: bool) -> Result<(), String> {
+fn set_snapping<P: Platform>(core: &mut EngineState<P>, enabled: bool) -> Result<(), String> {
     change(core, |s| s.snapping.enabled = enabled)?;
     if !enabled {
         core.announce("Snapping is paused.");
@@ -286,7 +286,7 @@ fn set_snapping<P: Platform>(core: &mut Core<P>, enabled: bool) -> Result<(), St
 
 /// Ask for permission once and say what will happen, or how to grant it by hand when the
 /// request can't be made. `feature` names what starts on the grant.
-fn ask_for_access<P: Platform>(core: &mut Core<P>, feature: &str) {
+fn ask_for_access<P: Platform>(core: &mut EngineState<P>, feature: &str) {
     if !core.capabilities.needs_permission || core.has_permission() {
         return;
     }
@@ -301,7 +301,7 @@ fn ask_for_access<P: Platform>(core: &mut Core<P>, feature: &str) {
 
 /// Save the defaults and ask for permission once, so a new install needs one step to
 /// start snapping.
-pub(crate) fn first_launch<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn first_launch<P: Platform>(core: &mut EngineState<P>) {
     if let Err(error) = core.store.save(&core.settings) {
         core.announce_error(&error.to_string());
         return;
@@ -312,14 +312,12 @@ pub(crate) fn first_launch<P: Platform>(core: &mut Core<P>) {
 }
 
 /// Assign a layout to a display.
-pub(crate) fn apply_layout<P: Platform>(core: &mut Core<P>, display: &str, layout_id: &str) {
-    let Some(layout) = core.settings.layout(layout_id).cloned() else {
+pub(crate) fn apply_layout<P: Platform>(core: &mut EngineState<P>, display: &str, layout_id: &str) {
+    let mut next = core.settings.clone();
+    let Some(layout) = next.assign_layout(display, layout_id) else {
         return;
     };
-    if !core.settings.is_enabled(&layout) {
-        return;
-    }
-    let result = change(core, |s| assign(s, display, layout_id));
+    let result = change(core, |s| *s = next);
     match result {
         // A quiet update would dismiss the refused-shortcuts error the change raised.
         Ok(()) if core.shortcuts_refused() => {}
@@ -335,204 +333,72 @@ pub(crate) fn apply_layout<P: Platform>(core: &mut Core<P>, display: &str, layou
     }
 }
 
-fn assign(settings: &mut Settings, display: &str, layout_id: &str) {
-    if settings.workspaces.enabled {
-        let active = settings.workspaces.active_id.clone();
-        if let Some(item) = settings
-            .workspaces
-            .items
-            .iter_mut()
-            .find(|item| item.id == active)
-        {
-            item.displays.insert(display.to_owned(), layout_id.to_owned());
-        }
-    } else {
-        settings
-            .layouts
-            .displays
-            .insert(display.to_owned(), layout_id.to_owned());
-        settings.layouts.default_layout_id = layout_id.to_owned();
-    }
-}
-
 fn save_layout<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     requested: Layout,
     options: LayoutOptions,
     display: &str,
 ) -> Result<(), String> {
-    // Presets keep their shapes and names whatever the editor sends.
-    let layout = layout::preset(&requested.id).cloned().unwrap_or(requested);
-    if !layout.is_valid() || !layout.zones.iter().all(|zone| zone.rect.is_valid()) {
-        return Err("Give this layout a name and 1–32 valid zones.".to_owned());
-    }
-    if !is_separated(&layout.zones) {
-        return Err("Move or resize overlapping zones apart before saving.".to_owned());
-    }
-    if let Some(conflict) = conflict_with_layout(&core.settings, &layout, &options, core.platform_name()) {
-        return Err(conflict);
-    }
-    change(core, |s| {
-        if !layout.is_preset() {
-            match s
-                .layouts
-                .custom
-                .iter_mut()
-                .find(|existing| existing.id == layout.id)
-            {
-                Some(existing) => *existing = layout.clone(),
-                None => s.layouts.custom.push(layout.clone()),
-            }
-        }
-        s.layouts.options.insert(layout.id.clone(), options);
-        assign(s, display, &layout.id);
-    })?;
+    let mut next = core.settings.clone();
+    let layout = next
+        .save_layout(requested, options, display, core.platform_name())
+        .map_err(|error| error.to_string())?;
+    change(core, |s| *s = next)?;
     core.announce(&format!("{} saved.", layout.name));
     Ok(())
 }
 
-fn delete_layout<P: Platform>(core: &mut Core<P>, id: &str) -> Result<(), String> {
-    if layout::is_preset_id(id) {
+fn delete_layout<P: Platform>(core: &mut EngineState<P>, id: &str) -> Result<(), String> {
+    let mut next = core.settings.clone();
+    if !next.remove_layout(id) {
         return Ok(());
     }
-    change(core, |s| {
-        s.layouts.custom.retain(|layout| layout.id != id);
-        s.layouts.options.remove(id);
-        s.layouts.displays.retain(|_, layout| layout != id);
-        if s.layouts.default_layout_id == id {
-            s.layouts.default_layout_id = DEFAULT_LAYOUT_ID.to_owned();
-        }
-    })?;
+    change(core, |s| *s = next)?;
     core.announce("Custom layout deleted.");
     Ok(())
 }
 
-fn set_layout_enabled<P: Platform>(core: &mut Core<P>, id: &str, enabled: bool) -> Result<(), String> {
-    let layout = core.settings.layout(id).cloned().ok_or("Unknown layout.")?;
-    let mut options = core.settings.options(&layout);
-    options.enabled = enabled;
-    if let Some(conflict) = conflict_with_layout(&core.settings, &layout, &options, core.platform_name()) {
-        return Err(conflict);
-    }
-    change(core, |s| {
-        s.layouts.options.insert(id.to_owned(), options);
-    })?;
+fn set_layout_enabled<P: Platform>(core: &mut EngineState<P>, id: &str, enabled: bool) -> Result<(), String> {
+    let mut next = core.settings.clone();
+    let layout = next
+        .set_layout_enabled(id, enabled, core.platform_name())
+        .map_err(|error| error.to_string())?;
+    change(core, |s| *s = next)?;
     let state = if enabled { "enabled" } else { "disabled" };
     core.announce(&format!("{} {state}.", layout.name));
     Ok(())
 }
 
 /// Turn workspaces on, seeding per-workspace layouts the first time.
-fn enable_workspaces<P: Platform>(core: &mut Core<P>) -> Result<(), String> {
+fn enable_workspaces<P: Platform>(core: &mut EngineState<P>) -> Result<(), String> {
     let displays = core.display_ids();
-    change(core, |s| {
-        if s.workspaces.items.iter().all(|item| item.displays.is_empty()) {
-            let mut seeded = s.layouts.displays.clone();
-            for display in &displays {
-                seeded
-                    .entry(display.clone())
-                    .or_insert_with(|| s.layouts.default_layout_id.clone());
-            }
-            for item in &mut s.workspaces.items {
-                item.displays = seeded.clone();
-            }
-        }
-        s.workspaces.enabled = true;
-    })?;
+    change(core, |s| s.enable_workspaces(&displays))?;
     ask_for_access(core, "Workspaces");
     Ok(())
 }
 
-/// A new workspace with the lowest free number, switched to with the Snappy key and that
-/// number when it is a free single digit.
-fn add_workspace<P: Platform>(core: &mut Core<P>) -> Result<(), String> {
-    let items = &core.settings.workspaces.items;
-    if items.len() >= snappy_core::settings::MAX_WORKSPACES {
+/// Add a workspace, and tell the settings app which, so it can open it.
+fn add_workspace<P: Platform>(core: &mut EngineState<P>) -> Result<(), String> {
+    let mut next = core.settings.clone();
+    let Some(id) = next.add_workspace() else {
         return Ok(());
-    }
-    let number = (1..=snappy_core::settings::MAX_WORKSPACES)
-        .find(|n| !items.iter().any(|item| item.name == format!("Workspace {n}")))
-        .unwrap_or(items.len() + 1);
-    let id = new_id(core, number);
-    let mut workspace = core.settings.new_workspace(id.clone(), number);
-    workspace.displays = core
-        .settings
-        .workspaces
-        .active()
-        .map(|active| active.displays.clone())
-        .unwrap_or_default();
-    change(core, |s| s.workspaces.items.push(workspace))?;
+    };
+    change(core, |s| *s = next)?;
     core.added_workspace = Some(id);
     Ok(())
-}
-
-fn new_id<P: Platform>(core: &Core<P>, number: usize) -> String {
-    let mut id = format!("workspace-{number}");
-    let mut suffix = 1;
-    while core.settings.workspaces.item(&id).is_some() {
-        suffix += 1;
-        id = format!("workspace-{number}-{suffix}");
-    }
-    id
-}
-
-fn update_workspace<P: Platform>(core: &mut Core<P>, workspace: Workspace) -> Result<(), String> {
-    change(core, |s| {
-        if let Some(item) = s.workspaces.items.iter_mut().find(|item| item.id == workspace.id) {
-            *item = workspace;
-        }
-    })
-}
-
-/// Reorder workspace cards. Invalid moves change nothing.
-fn move_workspaces<P: Platform>(core: &mut Core<P>, from: &[usize], to: usize) -> Result<(), String> {
-    let count = core.settings.workspaces.items.len();
-    if from.is_empty() || from.iter().any(|&i| i >= count) || to > count {
-        return Ok(());
-    }
-    change(core, |s| {
-        let items = &mut s.workspaces.items;
-        let moving: Vec<Workspace> = from.iter().map(|&i| items[i].clone()).collect();
-        let before = from.iter().filter(|&&i| i < to).count();
-        let mut remaining: Vec<Workspace> = items
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !from.contains(i))
-            .map(|(_, item)| item.clone())
-            .collect();
-        let insert_at = (to - before).min(remaining.len());
-        remaining.splice(insert_at..insert_at, moving);
-        *items = remaining;
-    })
 }
 
 /// Delete a workspace, moving its windows without closing them.
 fn delete_workspace<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: &str) -> Result<(), String> {
     shared.cancel_current();
     let mut core = shared.core.borrow_mut();
-    let workspaces = &core.settings.workspaces;
-    if workspaces.items.len() < 2 || workspaces.item(id).is_none() {
+    let mut next = core.settings.clone();
+    let Some(destination) = next.remove_workspace(id) else {
         return Ok(());
-    }
-    let destination = if workspaces.active_id == id {
-        workspaces
-            .items
-            .iter()
-            .find(|item| item.id != id)
-            .map(|item| item.id.clone())
-    } else {
-        Some(workspaces.active_id.clone())
-    }
-    .unwrap_or_default();
+    };
 
     let previous = core.settings.clone();
-    change(&mut core, |s| {
-        s.workspaces.items.retain(|item| item.id != id);
-        if s.workspaces.active_id == id {
-            s.workspaces.active_id = destination.clone();
-        }
-    })
-    .map_err(|e| format!("Couldn't remove workspace: {e}"))?;
+    change(&mut core, |s| *s = next).map_err(|e| format!("Couldn't remove workspace: {e}"))?;
 
     if let Err(error) = workspaces::remove_workspace(&mut core, id, &destination) {
         let _ = core.store.save(&previous);
@@ -541,14 +407,14 @@ fn delete_workspace<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: &str) -> 
         return Err(format!("Couldn't remove workspace: {error}"));
     }
     drop(core);
-    shared.histories.borrow_mut().remove(&format!("workspace:{id}"));
+    shared.histories.borrow_mut().remove(&history_scope(Some(id)));
     Ok(())
 }
 
 /// Put settings back to their defaults as `reset` says, validated and saved as any change.
 /// Resetting everything removes the workspaces, so they stop first, bringing their windows
 /// back; when a window can't come back yet, nothing is reset.
-fn reset_settings<P: Platform>(core: &mut Core<P>, reset: &Reset) -> Result<(), String> {
+fn reset_settings<P: Platform>(core: &mut EngineState<P>, reset: &Reset) -> Result<(), String> {
     if *reset == Reset::Everything {
         workspaces::stop(core).map_err(
             |_| "A hidden window couldn't be brought back yet, so nothing was reset. Try again in a moment.",
@@ -562,7 +428,7 @@ fn reset_settings<P: Platform>(core: &mut Core<P>, reset: &Reset) -> Result<(), 
 }
 
 /// Replace settings with a file's. Never turns snapping on.
-fn import<P: Platform>(core: &mut Core<P>, path: &Path) -> Result<(), String> {
+fn import<P: Platform>(core: &mut EngineState<P>, path: &Path) -> Result<(), String> {
     let mut imported = SettingsStore::read_file(path, core.platform_name())
         .map_err(|error| format!("Import failed: {error}"))?;
     workspaces::stop(core).map_err(

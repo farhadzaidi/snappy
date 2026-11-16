@@ -1,4 +1,5 @@
-import type { Display, Layout, LayoutOptions, Settings } from "./model";
+import type { Display } from "../bridge/protocol";
+import type { Layout, LayoutOptions, Settings } from "./model";
 import { core } from "./snappyCore";
 
 let presets: Layout[] | undefined;

@@ -3,13 +3,13 @@ import { useState } from "react";
 import { modifierName, snappyKeyLabel } from "../core/labels";
 import type { Modifier, Refusal } from "../core/model";
 import { core } from "../core/snappyCore";
+import { WarningNotice } from "../shortcuts/WarningNotice";
 import { useAppState, useSend } from "../state/services";
 import { SnappyKey } from "../ui/Chord";
 import { Group, Row } from "../ui/Group";
 import { Reference } from "../ui/Reference";
 import { ResetButton } from "../ui/ResetButton";
 import { Toggle } from "../ui/Toggle";
-import { WarningNotice } from "../ui/WarningNotice";
 
 /**
  * The modifiers the Snappy key may hold, in the order its buttons show them: the three of the

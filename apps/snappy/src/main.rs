@@ -6,28 +6,23 @@ mod paths;
 mod runtime;
 mod settings_app;
 
-#[cfg(target_os = "macos")]
-use std::fs::{File, TryLockError};
 use std::process::ExitCode;
 
-/// How long `--stop-for-restart` waits for the running daemon to exit.
+use snappy_platform::launch;
+
+/// How long `launch::STOP_FOR_RESTART` waits for the running daemon to exit.
 #[cfg(windows)]
 const RESTART_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 fn main() -> ExitCode {
     #[cfg(windows)]
-    if std::env::args().any(|arg| arg == "--stop-for-restart") {
+    if std::env::args().any(|arg| arg == launch::STOP_FOR_RESTART) {
         return stop_for_restart();
     }
-    let background = std::env::args().any(|arg| arg == "--background");
+    let background = std::env::args().any(|arg| arg == launch::BACKGROUND);
     let Some(paths) = paths::snappy_paths() else {
         eprintln!("snappy: no home folder");
         return ExitCode::FAILURE;
-    };
-    #[cfg(target_os = "macos")]
-    let Some(_lock) = single_instance_lock(&paths.state_dir) else {
-        // Another daemon runs; on macOS, opening the app bundle reaches it as a reopen event.
-        return ExitCode::SUCCESS;
     };
     match platform::run(paths, !background) {
         Ok(()) => ExitCode::SUCCESS,
@@ -57,28 +52,21 @@ fn stop_for_restart() -> ExitCode {
     }
 }
 
-/// Hold an exclusive lock for the daemon's lifetime; `None` when another daemon has it.
-#[cfg(target_os = "macos")]
-fn single_instance_lock(state_dir: &std::path::Path) -> Option<File> {
-    std::fs::create_dir_all(state_dir).ok()?;
-    let file = File::create(state_dir.join("daemon.lock")).ok()?;
-    match file.try_lock() {
-        Ok(()) => Some(file),
-        Err(TryLockError::WouldBlock) => None,
-        Err(TryLockError::Error(_)) => Some(file),
-    }
-}
-
 #[cfg(target_os = "macos")]
 mod platform {
     use snappy_engine::Paths;
+    use snappy_macos::Claim;
 
     use crate::runtime::{join_engine, spawn_engine};
 
-    /// AppKit owns the main thread; the engine runs on its own.
+    /// AppKit owns the main thread; the engine runs on its own. A second launch exits;
+    /// opening the app bundle reaches the running daemon as a reopen event.
     pub fn run(paths: Paths, open_settings: bool) -> std::io::Result<()> {
+        let Claim::Primary(_instance) = snappy_macos::claim(&paths.state_dir)? else {
+            return Ok(());
+        };
         let (events, platform_events) = std::sync::mpsc::channel();
-        let app = snappy_macos::App::new(events);
+        let app = snappy_macos::App::new(events).map_err(std::io::Error::other)?;
         let platform = app.platform();
         let engine = spawn_engine(
             platform,
@@ -98,8 +86,9 @@ mod platform {
 
     use snappy_engine::Paths;
     use snappy_linux::Claim;
+    use snappy_linux::adapter::Adapter;
     use snappy_linux::session::Session;
-    use snappy_platform::{Platform, PlatformEvent};
+    use snappy_platform::PlatformEvent;
 
     use crate::runtime::{join_engine, spawn_engine};
 
@@ -116,61 +105,28 @@ mod platform {
         instance.publish(events.clone())?;
         match snappy_linux::session::current() {
             Session::GnomeWayland => {
-                let app = snappy_gnome::App::new(events.clone()).map_err(std::io::Error::other)?;
-                let (platform, stopper) = (app.platform(), app.stopper());
-                drive(
-                    paths,
-                    open_settings,
-                    events,
-                    platform_events,
-                    platform,
-                    move || stopper.stop(),
-                    || app.run().map_err(std::io::Error::other),
-                )
+                drive::<snappy_gnome::App>(paths, open_settings, events, platform_events)
             }
-            Session::KdeWayland => {
-                let app = snappy_kwin::App::new(events.clone()).map_err(std::io::Error::other)?;
-                let (platform, stopper) = (app.platform(), app.stopper());
-                drive(
-                    paths,
-                    open_settings,
-                    events,
-                    platform_events,
-                    platform,
-                    move || stopper.stop(),
-                    || app.run().map_err(std::io::Error::other),
-                )
-            }
+            Session::KdeWayland => drive::<snappy_kwin::App>(paths, open_settings, events, platform_events),
             Session::X11 | Session::OtherWayland => {
-                let app = snappy_x11::App::new(events.clone()).map_err(std::io::Error::other)?;
-                let (platform, stopper) = (app.platform(), app.stopper());
-                drive(
-                    paths,
-                    open_settings,
-                    events,
-                    platform_events,
-                    platform,
-                    move || stopper.stop(),
-                    || app.run().map_err(std::io::Error::other),
-                )
+                drive::<snappy_x11::App>(paths, open_settings, events, platform_events)
             }
         }
     }
 
-    /// Runs the engine on its own thread and the adapter's loop on this one. When the
-    /// adapter's connection fails, the engine is asked to quit too, so parked windows come
-    /// back before the daemon exits.
-    fn drive<P: Platform + Send + 'static>(
+    /// Starts the adapter, runs the engine on its own thread and the adapter's loop on this
+    /// one. When the adapter's connection fails, the engine is asked to quit too, so parked
+    /// windows come back before the daemon exits.
+    fn drive<A: Adapter>(
         paths: Paths,
         open_settings: bool,
         events: Sender<PlatformEvent>,
         platform_events: Receiver<PlatformEvent>,
-        platform: P,
-        stop_adapter: impl FnOnce() + Send + 'static,
-        run_adapter: impl FnOnce() -> std::io::Result<()>,
     ) -> std::io::Result<()> {
+        let app = A::start(events.clone()).map_err(std::io::Error::other)?;
+        let (platform, stop_adapter) = (app.platform(), app.stop_handle());
         let engine = spawn_engine(platform, paths, platform_events, open_settings, stop_adapter)?;
-        let ran = run_adapter();
+        let ran = app.run().map_err(std::io::Error::other);
         if ran.is_err() {
             let _ = events.send(PlatformEvent::QuitRequested);
         }

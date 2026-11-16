@@ -1,7 +1,7 @@
 //! Choosing another Snappy key.
 
-use snappy_core::keys::{Modifier, Mods, Platform};
-use snappy_core::navigate::Direction;
+use snappy_core::keys::{Modifier, Mods, Os};
+use snappy_core::placement::navigate::Direction;
 use snappy_core::settings::{Settings, SettingsError};
 
 use super::support::{Context, LAYOUT, floating, timed};
@@ -11,17 +11,17 @@ use super::{Outcome, PLATFORM};
 /// Option+Command on macOS, whose run chords all hold Control; Ctrl+Alt on Windows; and
 /// Ctrl+Shift on Linux, where Xfwm4 and GNOME Shell switch desktops with Ctrl+Alt and the
 /// arrows, and GNOME moves windows between displays with Shift+Super and them.
-pub fn free_snappy_key(platform: Platform) -> Mods {
+pub fn free_snappy_key(platform: Os) -> Mods {
     let held: &[Modifier] = match platform {
-        Platform::MacOs => &[Modifier::Alt, Modifier::Meta],
-        Platform::Windows => &[Modifier::Ctrl, Modifier::Alt],
-        Platform::Linux => &[Modifier::Ctrl, Modifier::Shift],
+        Os::MacOs => &[Modifier::Alt, Modifier::Meta],
+        Os::Windows => &[Modifier::Ctrl, Modifier::Alt],
+        Os::Linux => &[Modifier::Ctrl, Modifier::Shift],
     };
     held.iter().copied().collect()
 }
 
 /// The run's settings with workspaces off and the Snappy key changed to `free_snappy_key`.
-pub fn with_free_snappy_key(run: &Settings, platform: Platform) -> Result<Settings, SettingsError> {
+pub fn with_free_snappy_key(run: &Settings, platform: Os) -> Result<Settings, SettingsError> {
     let mut prepared = run.clone();
     prepared.workspaces.enabled = false;
     prepared.with_snappy_key(free_snappy_key(platform), platform)

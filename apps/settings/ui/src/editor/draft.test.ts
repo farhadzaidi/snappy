@@ -7,6 +7,7 @@ import {
   UNTITLED,
   blankDraft,
   canAddZone,
+  copyName,
   duplicateDraft,
   edit,
   emptyOptions,
@@ -109,6 +110,14 @@ describe("editor draft", () => {
     expect(copy.options.zoneShortcuts[copy.layout.zones[0]?.id ?? ""]).toEqual(chord);
     expect(copy.options.selectShortcut).toBeNull();
     expect(hasChanges(draft)).toBe(true);
+  });
+
+  it("a copy of a layout with the longest name still has a name core accepts", () => {
+    const longest = "x".repeat(coreLimits().nameLength);
+    const name = copyName(longest);
+    expect([...name]).toHaveLength(coreLimits().nameLength);
+    expect(name.endsWith(" copy")).toBe(true);
+    expect(copyName("Coding")).toBe("Coding copy");
   });
 
   it("after saving, the saved version is what was sent", () => {

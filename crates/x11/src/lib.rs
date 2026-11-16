@@ -9,20 +9,20 @@
 mod app;
 mod caps_lock;
 mod displays;
-mod eligibility;
 mod error;
 mod events;
-mod frames;
 mod hotkeys;
 mod input;
-mod keys;
+mod keymap;
 mod messages;
 mod overlay;
 mod platform;
+/// Snappy's own view of the desktop, for the tests to check against; built only for them.
+#[cfg(feature = "reference")]
 pub mod reference;
 mod shared;
 mod windows;
-mod x;
+mod xserver;
 
 pub use app::{App, Stopper};
 pub use error::X11Error;

@@ -13,11 +13,12 @@ use objc2_core_foundation::CGPoint;
 use snappy_platform::PlatformEvent;
 
 use crate::delegate::Delegate;
+use crate::error::MacError;
 use crate::platform::MacPlatform;
-use crate::registry::Shared;
+use crate::windows::registry::Shared;
 use crate::{
-    apps, ax, caps_lock, desktop_guard, events, hotkeys, main_thread, monitors, observers, overlay,
-    permissions, signals, tray,
+    apps, ax, caps_lock, desktop_guard, events, hotkeys, input, instance, main_thread, observers, overlay,
+    permissions, tray,
 };
 
 /// Owns the main-thread machinery. Create it on the main thread before anything else.
@@ -30,14 +31,9 @@ pub struct App {
 
 impl App {
     /// Sets up NSApplication with the accessory policy, so Snappy has no Dock icon, and
-    /// starts delivering events to `events`.
-    ///
-    /// # Panics
-    /// When called off the main thread.
-    pub fn new(events: Sender<PlatformEvent>) -> App {
-        let Some(mtm) = MainThreadMarker::new() else {
-            panic!("snappy_macos::App must be created on the main thread");
-        };
+    /// starts delivering events to `events`. Refuses off the main thread.
+    pub fn new(events: Sender<PlatformEvent>) -> Result<App, MacError> {
+        let mtm = MainThreadMarker::new().ok_or(MacError::NotMainThread)?;
         let application = NSApplication::sharedApplication(mtm);
         application.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         let delegate = Delegate::new(mtm);
@@ -54,13 +50,13 @@ impl App {
             observers::ax::watch_app(&apps::facts(&running));
         }
         observers::system::start();
-        signals::watch_termination();
+        instance::watch_termination();
 
-        App {
+        Ok(App {
             mtm,
             _delegate: delegate,
             windows,
-        }
+        })
     }
 
     /// The engine-thread handle. Its calls that need a value from the main thread wait
@@ -101,7 +97,7 @@ pub fn request_termination() {
 }
 
 fn teardown() {
-    monitors::remove_all();
+    input::remove_all();
     hotkeys::unregister_all();
     caps_lock::stop();
     // The engine gives Caps Lock back before quitting; this covers an engine that panicked,

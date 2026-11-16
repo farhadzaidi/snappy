@@ -3,11 +3,13 @@
 //! after a crash, and deciding what each press of Caps Lock was.
 
 use serde::{Deserialize, Serialize};
-use snappy_core::caps_lock::{CapsLockPress, CapsLockRelease, CapsLockState, CapsLockStep, steps};
 use snappy_core::keys::Mods;
-use snappy_platform::{CapsLockInput, CapsLockUndo, Platform};
+use snappy_core::keys::caps_lock::{CapsLockPress, CapsLockRelease, CapsLockState, CapsLockStep, steps};
+use snappy_platform::{CapsLockInput, CapsLockRefusal, CapsLockUndo, Platform};
 
-use crate::core::Core;
+use crate::diagnostics::millis;
+use crate::log_event::LogEvent;
+use crate::state::EngineState;
 use crate::store::{StateFile, remove_state, write_state};
 
 /// What the engine knows about Caps Lock.
@@ -68,7 +70,7 @@ impl StateFile for Saved {
 
 /// Note a change an earlier run left in place, from its state file, so that the first
 /// `configure` undoes it.
-pub(crate) fn start<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn start<P: Platform>(core: &mut EngineState<P>) {
     let path = core.paths.caps_lock();
     if let Some(saved) = core.read_state::<Saved>(&path).read() {
         core.caps_lock.state = CapsLockState::LeftOver;
@@ -78,14 +80,14 @@ pub(crate) fn start<P: Platform>(core: &mut Core<P>) {
 
 /// Caps Lock stands for the Snappy key while the setting asks for it and Snappy can
 /// control the desktop, which on macOS needs the permission that taps keys.
-fn wanted<P: Platform>(core: &Core<P>) -> Option<Mods> {
+fn wanted<P: Platform>(core: &EngineState<P>) -> Option<Mods> {
     (core.settings.caps_lock_as_snappy_key && core.has_permission() && core.live_control.is_available())
         .then(|| core.settings.snappy_key.modifiers())
 }
 
 /// Bring Caps Lock to what the settings and the platform's state ask, announcing a
 /// refusal once.
-pub(crate) fn configure<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn configure<P: Platform>(core: &mut EngineState<P>) {
     let wanted = wanted(core);
     if wanted.is_none() {
         core.caps_lock.refused = None;
@@ -93,16 +95,25 @@ pub(crate) fn configure<P: Platform>(core: &mut Core<P>) {
     } else if wanted == core.caps_lock.refused {
         return;
     }
-    if let Err(reason) = bring_to(core, wanted) {
-        core.caps_lock.refused = wanted;
-        core.caps_lock.problem = Some(reason.clone());
-        core.announce_error(&reason);
+    if let Err(refusal) = bring_to(core, wanted) {
+        note_refusal(core, wanted, &refusal);
+    }
+}
+
+/// Keep why Caps Lock isn't the Snappy key, shown beside the setting until it is. A refusal
+/// is announced; one that only waits for the next login is the setting's own notice.
+fn note_refusal<P: Platform>(core: &mut EngineState<P>, wanted: Option<Mods>, refusal: &CapsLockRefusal) {
+    core.caps_lock.refused = wanted;
+    core.caps_lock.problem = Some(refusal.message().to_owned());
+    match refusal {
+        CapsLockRefusal::Refused(reason) => core.announce_error(reason),
+        CapsLockRefusal::AfterLogin(_) => core.publish_state(),
     }
 }
 
 /// Take the steps from the current state to `wanted`. A refused hold leaves Caps Lock
 /// behaving as usual and returns the platform's reason.
-fn bring_to<P: Platform>(core: &mut Core<P>, wanted: Option<Mods>) -> Result<(), String> {
+fn bring_to<P: Platform>(core: &mut EngineState<P>, wanted: Option<Mods>) -> Result<(), CapsLockRefusal> {
     for step in steps(core.caps_lock.state, wanted) {
         match step {
             CapsLockStep::UndoLeftOver => {
@@ -110,45 +121,52 @@ fn bring_to<P: Platform>(core: &mut Core<P>, wanted: Option<Mods>) -> Result<(),
                     core.platform.undo_caps_lock(&undo);
                 }
                 forget(core);
-                core.trace("capsLockLeftOverUndone", || serde_json::json!({}));
+                core.trace(LogEvent::CapsLockLeftOverUndone, || serde_json::json!({}));
             }
             CapsLockStep::Hold(modifiers) => hold(core, modifiers)?,
             CapsLockStep::Restore => {
                 core.platform.restore_caps_lock();
                 forget(core);
-                core.trace("capsLockRestored", || serde_json::json!({}));
+                core.trace(LogEvent::CapsLockRestored, || serde_json::json!({}));
             }
         }
     }
     Ok(())
 }
 
-fn hold<P: Platform>(core: &mut Core<P>, modifiers: Mods) -> Result<(), String> {
+fn hold<P: Platform>(core: &mut EngineState<P>, modifiers: Mods) -> Result<(), CapsLockRefusal> {
     match core.platform.hold_caps_lock_as(modifiers) {
         Ok(undo) => {
             // Kept before anything else can go wrong, so a crash from here on is undone.
             if write_state(&core.paths.caps_lock(), &Saved { undo }).is_err() {
-                core.flag("capsLockUnsaved", || serde_json::json!({}));
+                core.flag(LogEvent::CapsLockUnsaved, || serde_json::json!({}));
             }
             core.caps_lock.state = CapsLockState::Held(modifiers);
             core.caps_lock.refused = None;
             core.caps_lock.problem = None;
-            core.trace("capsLockHeld", || serde_json::json!({ "modifiers": modifiers }));
+            core.trace(
+                LogEvent::CapsLockHeld,
+                || serde_json::json!({ "modifiers": modifiers }),
+            );
             Ok(())
         }
-        Err(reason) => {
+        Err(refusal) => {
             forget(core);
-            core.flag(
-                "capsLockRefused",
-                || serde_json::json!({ "modifiers": modifiers, "reason": reason }),
-            );
-            Err(reason)
+            let after_login = matches!(refusal, CapsLockRefusal::AfterLogin(_));
+            core.flag(LogEvent::CapsLockRefused, || {
+                serde_json::json!({
+                    "modifiers": modifiers,
+                    "reason": refusal.message(),
+                    "afterLogin": after_login,
+                })
+            });
+            Err(refusal)
         }
     }
 }
 
 /// Caps Lock behaves as usual again, so there is nothing to undo.
-fn forget<P: Platform>(core: &mut Core<P>) {
+fn forget<P: Platform>(core: &mut EngineState<P>) {
     core.caps_lock.state = CapsLockState::Normal;
     core.caps_lock.press = None;
     let _ = remove_state(&core.paths.caps_lock());
@@ -156,18 +174,30 @@ fn forget<P: Platform>(core: &mut Core<P>) {
 
 /// Turn Caps Lock as the Snappy key on or off. Turning it on while Snappy can apply it
 /// tries first, so a refusal leaves the setting off and says why.
-pub(crate) fn set_enabled<P: Platform>(core: &mut Core<P>, enabled: bool) -> Result<(), String> {
+pub(crate) fn set_enabled<P: Platform>(core: &mut EngineState<P>, enabled: bool) -> Result<(), String> {
     if enabled == core.settings.caps_lock_as_snappy_key {
         return Ok(());
     }
     let modifiers = core.settings.snappy_key.modifiers();
+    let mut waits_for_login = None;
     if enabled && core.has_permission() && core.live_control.is_available() {
-        bring_to(core, Some(modifiers))?;
+        match bring_to(core, Some(modifiers)) {
+            Ok(()) => {}
+            // It can be, from the next login: the setting goes on and says so until then.
+            Err(refusal @ CapsLockRefusal::AfterLogin(_)) => waits_for_login = Some(refusal),
+            Err(CapsLockRefusal::Refused(reason)) => return Err(reason),
+        }
     }
     let changed = crate::commands::change(core, |settings| settings.caps_lock_as_snappy_key = enabled);
+    if let Some(refusal) = &waits_for_login {
+        note_refusal(core, Some(modifiers), refusal);
+    }
     // A save that failed after Caps Lock changed puts it back as the settings say.
     configure(core);
     changed?;
+    if waits_for_login.is_some() {
+        return Ok(());
+    }
     if enabled {
         core.announce("Hold Caps Lock for the Snappy key. Tap it to turn Caps Lock on or off.");
     } else {
@@ -178,7 +208,7 @@ pub(crate) fn set_enabled<P: Platform>(core: &mut Core<P>, enabled: bool) -> Res
 
 /// Caps Lock went down or up, or something else was used meanwhile. A press that comes up
 /// as a tap turns Caps Lock on or off.
-pub(crate) fn input<P: Platform>(core: &mut Core<P>, input: CapsLockInput) {
+pub(crate) fn input<P: Platform>(core: &mut EngineState<P>, input: CapsLockInput) {
     if !matches!(core.caps_lock.state, CapsLockState::Held(_)) {
         return;
     }
@@ -190,18 +220,21 @@ pub(crate) fn input<P: Platform>(core: &mut Core<P>, input: CapsLockInput) {
             let Some(press) = core.caps_lock.press.take() else {
                 return;
             };
-            let held_ms = (press.held_for(now) * 1000.0).round();
+            let held_ms = millis(press.held_for(now)).round();
             let other_input = press.other_input();
             match press.release(now) {
                 CapsLockRelease::Tap => match core.platform.toggle_caps_lock() {
-                    Ok(()) => core.trace("capsLockTapped", || serde_json::json!({ "heldMs": held_ms })),
+                    Ok(()) => core.trace(
+                        LogEvent::CapsLockTapped,
+                        || serde_json::json!({ "heldMs": held_ms }),
+                    ),
                     Err(reason) => core.flag(
-                        "capsLockTapFailed",
+                        LogEvent::CapsLockTapFailed,
                         || serde_json::json!({ "heldMs": held_ms, "reason": reason }),
                     ),
                 },
                 CapsLockRelease::Hold => core.trace(
-                    "capsLockReleased",
+                    LogEvent::CapsLockReleased,
                     || serde_json::json!({ "heldMs": held_ms, "otherInput": other_input }),
                 ),
             }
@@ -214,25 +247,25 @@ pub(crate) fn input<P: Platform>(core: &mut Core<P>, input: CapsLockInput) {
 /// again, quietly, as each layout switch that reloads the keymap needs; when the new
 /// keyboard settings remap Caps Lock themselves, theirs win, and the refusal is announced
 /// and shown with the setting as any refusal is.
-pub(crate) fn lost<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn lost<P: Platform>(core: &mut EngineState<P>) {
     if !matches!(core.caps_lock.state, CapsLockState::Held(_)) {
         return;
     }
-    core.flag("capsLockLost", || serde_json::json!({}));
+    core.flag(LogEvent::CapsLockLost, || serde_json::json!({}));
     forget(core);
     configure(core);
     core.publish_state();
 }
 
 /// A Snappy shortcut fired, so a press of Caps Lock in progress isn't a tap.
-pub(crate) fn note_other_input<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn note_other_input<P: Platform>(core: &mut EngineState<P>) {
     if let Some(press) = core.caps_lock.press.as_mut() {
         press.note_other_input();
     }
 }
 
 /// Give Caps Lock back its usual behavior as Snappy stops.
-pub(crate) fn stop<P: Platform>(core: &mut Core<P>) {
+pub(crate) fn stop<P: Platform>(core: &mut EngineState<P>) {
     if matches!(core.caps_lock.state, CapsLockState::Held(_)) {
         core.platform.restore_caps_lock();
         forget(core);

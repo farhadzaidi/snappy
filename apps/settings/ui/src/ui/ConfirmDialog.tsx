@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 
 import { Button } from "./Button";
 
@@ -12,7 +12,19 @@ interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
-/** Focus starts on Cancel, Escape cancels, and the action looks destructive. */
+/** Tab and Shift-Tab wrap around the dialog's buttons, as a modal dialog keeps focus. */
+function keepFocusInside(event: KeyboardEvent<HTMLElement>) {
+  const buttons = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled)")];
+  const first = buttons[0];
+  const last = buttons.at(-1);
+  const at = document.activeElement;
+  if (event.shiftKey ? at === first || !buttons.includes(at as HTMLElement) : at === last) {
+    event.preventDefault();
+    (event.shiftKey ? last : first)?.focus();
+  }
+}
+
+/** Focus starts on Cancel and stays in the dialog, Escape cancels, and the action looks destructive. */
 export function ConfirmDialog({
   title,
   message,
@@ -40,6 +52,8 @@ export function ConfirmDialog({
           if (event.key === "Escape") {
             event.stopPropagation();
             onCancel();
+          } else if (event.key === "Tab") {
+            keepFocusInside(event);
           }
         }}
       >

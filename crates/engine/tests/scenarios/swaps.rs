@@ -4,17 +4,17 @@ use std::time::Duration;
 
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::{Modifier, Mods};
-use snappy_core::swap::WhenTaken;
-use snappy_engine::Engine;
+use snappy_core::placement::swap::WhenTaken;
+use snappy_engine::{Engine, LogEvent, file_names};
 use snappy_fake::{FakePlatform, FakeWindow, OverlayCall};
 use snappy_ipc::Command;
 use snappy_platform::{Caption, OverlayScene, PlatformEvent, WindowId};
 
 use crate::support::{
-    FLOATING, LEFT_ZONE, RIGHT_ZONE, click_away, command, drag, drop_outcomes, event,
+    FLOATING, LEFT_ZONE, RIGHT_ZONE, click_away, command, drag, drop_outcomes, drop_records, event,
     floating_over_the_left_zone, frame_of, frozen, hotkey_id, inactive_window_in_the_right_zone, live_engine,
-    logged, paths_kept, place, press, release, scenario, settle, shift, side_display, side_third, snappy,
-    status_text, thirds_on_the_side, two_zoned_windows, undo, with_window,
+    logged, paths_kept, place, press, press_on, release, scenario, settle, shift, side_display, side_third,
+    snappy, status_text, thirds_on_the_side, two_zoned_windows, undo, with_window,
 };
 
 #[test]
@@ -131,7 +131,7 @@ fn the_swap_key_makes_a_drop_swap_when_moves_stack() {
 
 /// The source kinds of the swaps in the debug log, oldest first.
 fn swap_sources(name: &str) -> Vec<String> {
-    logged(name, "swap")
+    logged(name, LogEvent::Swap)
         .iter()
         .map(|record| record["source"].as_str().unwrap_or_default().to_owned())
         .collect()
@@ -240,14 +240,7 @@ fn the_overlay_names_only_the_swap_keys_reversal_and_outlines_the_source_only_fo
         let engine = live_engine("swap-overlay", two_zoned_windows());
         engine.force_debug_log();
         stack_on_top(&engine);
-        event(
-            &engine,
-            PlatformEvent::PointerDown {
-                at: Point::new(212.0, 52.0),
-                mods: shift(),
-                window: None,
-            },
-        );
+        press(&engine, Point::new(212.0, 52.0), shift());
         let dragged = LEFT_ZONE.with_origin(Point::new(800.0, 385.0));
         engine.with_platform(|p| p.windows.get_mut(&WindowId(1)).unwrap().frame = dragged);
         let at = Point::new(1000.0, 400.0);
@@ -281,14 +274,7 @@ fn the_overlay_names_only_the_swap_keys_reversal_and_outlines_the_source_only_fo
                 choice: WhenTaken::Swap,
             },
         );
-        event(
-            &engine,
-            PlatformEvent::PointerDown {
-                at: Point::new(1000.0, 52.0),
-                mods: shift(),
-                window: Some(WindowId(2)),
-            },
-        );
+        press_on(&engine, Point::new(1000.0, 52.0), shift(), WindowId(2));
         engine.with_platform(|p| p.windows.get_mut(&WindowId(2)).unwrap().frame = dragged);
         event(&engine, PlatformEvent::PointerDragged { at, mods: shift() });
         assert!(unmarked(&scene()), "swapping is the setting's own action");
@@ -297,11 +283,61 @@ fn the_overlay_names_only_the_swap_keys_reversal_and_outlines_the_source_only_fo
         assert_eq!(stacking.zones[1].caption, Some(Caption::Stack));
         assert!(stacking.zones.iter().all(|zone| !zone.swap_source));
 
-        let captions: Vec<serde_json::Value> = logged("swap-overlay", "overlayCaption")
+        let captions: Vec<serde_json::Value> = logged("swap-overlay", LogEvent::OverlayCaption)
             .iter()
             .map(|record| record["caption"].clone())
             .collect();
         assert_eq!(captions, [serde_json::json!("Swap"), serde_json::json!("Stack")]);
+    });
+}
+
+#[test]
+fn a_press_reported_once_the_move_began_swaps_with_the_frame_from_before_it() {
+    scenario(|| async {
+        // As on KDE: the press, low in the title bar, arrives once the move is under way and
+        // names where the pointer and the window were as it began; by the time it is read,
+        // the window has moved on with the pointer.
+        let engine = live_engine("swap-pressed-frame", floating_over_the_left_zone(LEFT_ZONE));
+        let moved = FLOATING.with_origin(Point::new(FLOATING.x - 100.0, FLOATING.y + 40.0));
+        engine.with_platform(|p| p.windows.get_mut(&WindowId(1)).unwrap().frame = moved);
+        event(
+            &engine,
+            PlatformEvent::PointerDown {
+                at: Point::new(FLOATING.x + 200.0, FLOATING.y + 40.0),
+                mods: shift(),
+                window: Some(WindowId(1)),
+                frame: Some(FLOATING),
+            },
+        );
+        let to = Point::new(300.0, 400.0);
+        engine.with_platform(|p| {
+            p.windows.get_mut(&WindowId(1)).unwrap().frame = FLOATING.with_origin(Point::new(100.0, 360.0))
+        });
+        event(
+            &engine,
+            PlatformEvent::PointerDragged {
+                at: to,
+                mods: shift(),
+            },
+        );
+        event(
+            &engine,
+            PlatformEvent::PointerUp {
+                at: to,
+                mods: shift(),
+            },
+        );
+        settle(&engine).await;
+        assert_eq!(
+            (frame_of(&engine, 1), frame_of(&engine, 2)),
+            (LEFT_ZONE, FLOATING),
+            "the occupant takes the frame the window had before the move"
+        );
+        let drops = drop_records("swap-pressed-frame");
+        assert_eq!(
+            drops[0]["startedInMoveArea"], true,
+            "the press is placed on the window as it was, inside the title bar"
+        );
     });
 }
 
@@ -359,7 +395,7 @@ fn a_click_elsewhere_during_an_exchange_moves_both_windows_back() {
             "a cancelled swap is not a failure"
         );
 
-        let drops = std::fs::read(paths_kept("swap-click-away").log_dir.join("drops.json")).unwrap();
+        let drops = std::fs::read(paths_kept("swap-click-away").log_dir.join(file_names::DROPS)).unwrap();
         let drops: Vec<serde_json::Value> = serde_json::from_slice(&drops).unwrap();
         assert_eq!(drops.last().unwrap()["outcome"], "swapInterrupted");
     });

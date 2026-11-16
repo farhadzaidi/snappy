@@ -20,6 +20,8 @@ export function SnappingButton() {
       type="button"
       className="snapping-button"
       data-live={snapping.live}
+      // A toggle for assistive technology, except while it checks access, which is an action.
+      aria-pressed={snapping.waitingForPermission ? undefined : snapping.live}
       disabled={snapping.unavailableReason !== null}
       title={snapping.unavailableReason ?? undefined}
       onClick={() => void send({ kind: "setSnapping", enabled: !snapping.live })}

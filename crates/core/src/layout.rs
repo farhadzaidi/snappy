@@ -132,7 +132,7 @@ static PRESETS: LazyLock<Vec<Layout>> = LazyLock::new(|| {
             ],
         ),
         preset_layout(
-            "focus",
+            DEFAULT_LAYOUT_ID,
             "Center stage",
             &[
                 (0.0, 0.0, 0.25, 1.0),
@@ -167,7 +167,7 @@ static PRESETS: LazyLock<Vec<Layout>> = LazyLock::new(|| {
                 .map(|i| (f64::from(i % 3) / 3.0, f64::from(i / 3) / 2.0, third, 0.5))
                 .collect::<Vec<_>>(),
         ),
-        preset_layout("full", "Full workspace", &[(0.0, 0.0, 1.0, 1.0)]),
+        preset_layout(FALLBACK_LAYOUT_ID, "Full workspace", &[(0.0, 0.0, 1.0, 1.0)]),
     ]
 });
 
@@ -474,7 +474,7 @@ mod tests {
             name: "Mine".into(),
             zones: vec![Zone::new("z", UnitRect::new(0.0, 0.0, 1.0, 1.0))],
         };
-        let mut settings = crate::settings::Settings::defaults(crate::keys::Platform::MacOs);
+        let mut settings = crate::settings::Settings::defaults(crate::keys::Os::MacOs);
         settings.layouts.custom.push(custom);
         let listed: Vec<&str> = settings.layouts().map(|layout| layout.id.as_str()).collect();
         assert_eq!(

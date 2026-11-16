@@ -1,8 +1,8 @@
 //! The runner's side of the fixture app.
 //!
-//! On GNOME on Wayland, windows can't place or read their own frames, so the fixture only
-//! opens and closes them and the test helper in GNOME Shell places and reads them, finding
-//! each by its title.
+//! On Wayland, windows can't place or read their own frames, so the fixture only opens and
+//! closes them and the desktop shell places and reads them (`desktop::wayland`), finding each by
+//! its title.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -18,12 +18,12 @@ pub const DISPLAY_SERVER: &str = "SNAPPY_LIVE_FIXTURE_DISPLAY";
 #[cfg(target_os = "linux")]
 const APPEAR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Where frames come from: the fixture's own windows, or GNOME Shell.
+/// Where frames come from: the fixture's own windows, or the Wayland desktop shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Frames {
     Own,
     #[cfg(target_os = "linux")]
-    Gnome,
+    Shell(crate::desktop::wayland::Shell),
 }
 
 pub struct Fixture {
@@ -58,14 +58,14 @@ impl Fixture {
     /// Where frames come from, and whether windows open through Wayland.
     #[cfg(target_os = "linux")]
     fn display_server(command: &mut Command) -> (Frames, bool) {
-        if !crate::gnome::is_session() {
+        let Some(shell) = crate::desktop::wayland::Shell::current() else {
             return (Frames::Own, false);
-        }
+        };
         if std::env::var(DISPLAY_SERVER).is_ok_and(|server| server == "x11") {
             command.env_remove("WAYLAND_DISPLAY");
-            (Frames::Gnome, false)
+            (Frames::Shell(shell), false)
         } else {
-            (Frames::Gnome, true)
+            (Frames::Shell(shell), true)
         }
     }
 
@@ -130,29 +130,31 @@ impl Fixture {
         match self.frames {
             Frames::Own => Ok(opened),
             #[cfg(target_os = "linux")]
-            Frames::Gnome => Self::place(&Self::title(id), content),
+            Frames::Shell(shell) => Self::place(shell, &Self::title(id), content),
         }
     }
 
-    /// Waits for the window to appear in GNOME Shell, then moves its frame to `content`'s
-    /// origin and waits until it is there.
+    /// Waits for the window to appear, then moves its frame to `content`'s origin and waits
+    /// until it is there.
     #[cfg(target_os = "linux")]
-    fn place(title: &str, content: Rect) -> Result<Rect, String> {
+    fn place(shell: crate::desktop::wayland::Shell, title: &str, content: Rect) -> Result<Rect, String> {
         use crate::input::pause;
         let started = std::time::Instant::now();
-        while crate::gnome::window_frame(title)?.is_none_or(|frame| frame.width <= 1.0) {
+        while shell.window_frame(title)?.is_none_or(|frame| frame.width <= 1.0) {
             if started.elapsed() > APPEAR_TIMEOUT {
                 return Err(format!("{title} never appeared"));
             }
             pause(20);
         }
-        // GNOME Shell places a new window itself when it first shows it, so placing is
-        // repeated until the window stays where it was put.
+        // The shell places a new window itself when it first shows it, so placing is repeated
+        // until the window stays where it was put.
         let origin = content.origin();
         let at_origin = |frame: Rect| (frame.x - origin.x).abs() < 1.0 && (frame.y - origin.y).abs() < 1.0;
         let mut settled = 0;
         loop {
-            let frame = crate::gnome::window_frame(title)?.ok_or_else(|| format!("{title} closed"))?;
+            let frame = shell
+                .window_frame(title)?
+                .ok_or_else(|| format!("{title} closed"))?;
             if at_origin(frame) {
                 settled += 1;
                 if settled >= 5 {
@@ -160,7 +162,7 @@ impl Fixture {
                 }
             } else {
                 settled = 0;
-                crate::gnome::place_window(title, origin)?;
+                shell.place_window(title, origin)?;
             }
             if started.elapsed() > APPEAR_TIMEOUT {
                 return Err(format!("{title} stayed at ({:.0}, {:.0})", frame.x, frame.y));
@@ -173,9 +175,9 @@ impl Fixture {
         match self.frames {
             Frames::Own => self.framed(&Request::Frame { id: id.to_owned() }),
             #[cfg(target_os = "linux")]
-            Frames::Gnome => {
-                crate::gnome::window_frame(&Self::title(id))?.ok_or_else(|| format!("no window {id}"))
-            }
+            Frames::Shell(shell) => shell
+                .window_frame(&Self::title(id))?
+                .ok_or_else(|| format!("no window {id}")),
         }
     }
 
@@ -184,7 +186,7 @@ impl Fixture {
         match self.frames {
             Frames::Own => Ok(()),
             #[cfg(target_os = "linux")]
-            Frames::Gnome => crate::gnome::focus_window(&Self::title(id)),
+            Frames::Shell(shell) => shell.focus_window(&Self::title(id)),
         }
     }
 

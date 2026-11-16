@@ -13,11 +13,11 @@ import { ServicesProvider } from "./state/services";
 import { createSession } from "./state/session";
 import "./styles/theme.css";
 import "./styles/controls.css";
-import "./styles/shell.css";
-import "./styles/layouts.css";
-import "./styles/editor.css";
-import "./styles/workspaces.css";
-import "./styles/settings.css";
+import "./shell/shell.css";
+import "./layouts/layouts.css";
+import "./editor/editor.css";
+import "./workspaces/workspaces.css";
+import "./settings/settings.css";
 
 /** `pnpm dev` and the end-to-end tests run against the in-browser fake daemon. */
 async function fakeDaemonBridge(): Promise<Bridge> {

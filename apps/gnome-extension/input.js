@@ -15,10 +15,10 @@ import Meta from 'gi://Meta';
 import {KEYBOARD_GRAB, UNCONSTRAINED_GRAB} from './compat.js';
 
 /** About one sample per frame at 60 Hz. */
-const SAMPLE_INTERVAL_MS = 16;
+export const SAMPLE_INTERVAL_MS = 16;
 
 /** Mouse button bits, which aren't modifiers. */
-const BUTTON_MASK =
+export const BUTTON_MASK =
     Clutter.ModifierType.BUTTON1_MASK | Clutter.ModifierType.BUTTON2_MASK |
     Clutter.ModifierType.BUTTON3_MASK | Clutter.ModifierType.BUTTON4_MASK |
     Clutter.ModifierType.BUTTON5_MASK;

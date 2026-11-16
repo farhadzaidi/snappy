@@ -6,7 +6,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 
-use snappy_ipc::{Command, PROTOCOL_VERSION, ToDaemon, ToSettings, read_message, write_message};
+use snappy_ipc::{
+    Command, DAEMON_ARGUMENT, PROTOCOL_VERSION, ToDaemon, ToSettings, read_message, write_message,
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::window;
@@ -80,10 +82,13 @@ pub struct Link {
     receiver: Receiver<ToDaemon>,
 }
 
-/// Open the link when standard input is the daemon's pipe. Run any other way, the app
-/// shows its window against no daemon.
+/// Open the link when the daemon started the app. Run any other way, the app shows its
+/// window against no daemon.
 pub fn open() -> (Outbox, Option<Link>) {
-    if !stdin_is_pipe() {
+    if !std::env::args()
+        .skip(1)
+        .any(|argument| argument == DAEMON_ARGUMENT)
+    {
         return (Outbox { sender: None }, None);
     }
     let (sender, receiver) = mpsc::channel();
@@ -140,24 +145,4 @@ fn handle(app: &AppHandle, message: ToSettings) {
         ToSettings::Focus => window::focus(app),
         other => app.state::<Inbox>().deliver(app, other),
     }
-}
-
-#[cfg(unix)]
-fn stdin_is_pipe() -> bool {
-    use std::os::fd::AsFd;
-    use std::os::unix::fs::FileTypeExt;
-
-    io::stdin()
-        .as_fd()
-        .try_clone_to_owned()
-        .map(std::fs::File::from)
-        .and_then(|file| file.metadata())
-        .is_ok_and(|metadata| metadata.file_type().is_fifo())
-}
-
-#[cfg(not(unix))]
-fn stdin_is_pipe() -> bool {
-    use std::io::IsTerminal;
-
-    !io::stdin().is_terminal()
 }

@@ -67,7 +67,7 @@ for display in wayland x11; do
     name="$display"
     [[ "$display" == x11 ]] && name=xwayland
     echo "== $name windows"
-    SNAPPY_LIVE_FIXTURE_DISPLAY="$display" "$bin/snappy-live" --app "$bin/snappy" --fixture "$bin/snappy-fixture" \
+    SNAPPY_LIVE_SANDBOX=1 SNAPPY_LIVE_FIXTURE_DISPLAY="$display" "$bin/snappy-live" --app "$bin/snappy" --fixture "$bin/snappy-fixture" \
         --out "$out/$name" ${only:+--only "$only"} || status=1
 done
 cp "$SNAPPY_GNOME_LOGS/gnome-shell.log" "$out/"

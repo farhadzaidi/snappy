@@ -1,26 +1,27 @@
-//! Bringing windows into the session, and keeping each tab group in one workspace.
+//! Bringing windows into the session and dropping closed ones, and keeping each tab group
+//! in one workspace.
 
 use std::collections::BTreeSet;
 
-use snappy_core::bounds::fitted_origin;
 use snappy_core::geometry::Rect;
+use snappy_core::placement::bounds::fitted_origin;
 use snappy_core::workspace::{Member, Session, Tabs, is_parked};
 use snappy_platform::{Platform, WindowId, WindowInfo};
 
-use crate::core::Core;
+use crate::log_event::LogEvent;
+use crate::state::EngineState;
 
-use super::CoreIo;
+use super::core_io::{CoreIo, save_journal};
 use super::recovery::{remembered_entry, save_membership};
-use super::save_journal;
 
 /// Add a window to the session: back to its remembered workspace, or the active one.
-pub(super) fn enroll<P: Platform>(core: &mut Core<P>, session: &mut Session, info: &WindowInfo) {
+pub(super) fn enroll<P: Platform>(core: &mut EngineState<P>, session: &mut Session, info: &WindowInfo) {
     if session.member(info.id).is_some() {
         return;
     }
-    let skipped = |core: &mut Core<P>, reason: &str| {
+    let skipped = |core: &mut EngineState<P>, reason: &str| {
         core.trace(
-            "workspaceJoinSkipped",
+            LogEvent::WorkspaceJoinSkipped,
             || serde_json::json!({ "window": info.id.0, "app": info.app, "reason": reason }),
         );
     };
@@ -66,7 +67,7 @@ pub(super) fn enroll<P: Platform>(core: &mut Core<P>, session: &mut Session, inf
         (true, _) => {
             let area = core.display_of(info.frame).map(|display| display.work_area);
             let rescued = fitted_origin(info.frame.origin(), info.frame.size(), area);
-            core.flag("workspaceRescued", || {
+            core.flag(LogEvent::WorkspaceRescued, || {
                 serde_json::json!({ "window": info.id.0, "app": info.app, "from": info.frame, "to": rescued })
             });
             rescued
@@ -76,7 +77,7 @@ pub(super) fn enroll<P: Platform>(core: &mut Core<P>, session: &mut Session, inf
 
     core.workspaces.keys.insert(info.id, key);
     let active = session.active().to_owned();
-    core.trace("workspaceJoin", || {
+    core.trace(LogEvent::WorkspaceJoin, || {
         serde_json::json!({ "window": info.id.0, "app": info.app, "workspace": owner, "frame": visible_frame })
     });
     // Already parked for an inactive workspace: join it there, keeping its home frame, and
@@ -116,7 +117,7 @@ pub(super) fn enroll<P: Platform>(core: &mut Core<P>, session: &mut Session, inf
 /// they are: in their workspace, with their frame and parking. False when none of them is a
 /// member.
 fn join_tab_group<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     session: &mut Session,
     info: &WindowInfo,
     hidden: &[WindowId],
@@ -141,7 +142,7 @@ fn join_tab_group<P: Platform>(
     }
     core.workspaces.keys.insert(info.id, key);
     let tabs: Vec<u64> = hidden.iter().map(|window| window.0).collect();
-    core.trace("workspaceJoin", || {
+    core.trace(LogEvent::WorkspaceJoin, || {
         serde_json::json!({
             "window": info.id.0,
             "app": info.app,
@@ -163,7 +164,7 @@ fn join_tab_group<P: Platform>(
 }
 
 /// Learn the tab groups of every member's app.
-pub(super) fn sync_all_tabs<P: Platform>(core: &mut Core<P>, session: &mut Session) {
+pub(super) fn sync_all_tabs<P: Platform>(core: &mut EngineState<P>, session: &mut Session) {
     let members: Vec<WindowId> = session.members().keys().copied().collect();
     sync_tabs(core, session, &members);
 }
@@ -171,7 +172,7 @@ pub(super) fn sync_all_tabs<P: Platform>(core: &mut Core<P>, session: &mut Sessi
 /// Learn from the platform which members of the apps owning `windows` are tabs of one
 /// window, and keep each group in its shown tab's workspace. A shown tab Snappy hasn't met
 /// joins the tabs behind it.
-pub(super) fn sync_tabs<P: Platform>(core: &mut Core<P>, session: &mut Session, windows: &[WindowId]) {
+pub(super) fn sync_tabs<P: Platform>(core: &mut EngineState<P>, session: &mut Session, windows: &[WindowId]) {
     let groups = core.platform.tab_groups(windows);
     for group in &groups {
         if session.member(group.shown.id).is_none() {
@@ -214,7 +215,22 @@ pub(super) fn sync_tabs<P: Platform>(core: &mut Core<P>, session: &mut Session, 
             serde_json::json!({ "shown": group.shown.0, "hidden": hidden, "workspace": workspace })
         })
         .collect();
-    core.trace("tabsUnified", || serde_json::json!({ "groups": unified }));
+    core.trace(LogEvent::TabsUnified, || serde_json::json!({ "groups": unified }));
     save_journal(core, session);
     save_membership(core, session);
+}
+
+/// Stop tracking members that closed without the platform saying so, then learn every
+/// remaining member's tab groups, as every change to all of them starts.
+pub(super) fn refresh_members<P: Platform>(core: &mut EngineState<P>, session: &mut Session) {
+    let closed: Vec<WindowId> = session
+        .members()
+        .keys()
+        .copied()
+        .filter(|window| core.platform.is_closed(*window))
+        .collect();
+    for window in closed {
+        session.discard(window);
+    }
+    sync_all_tabs(core, session);
 }

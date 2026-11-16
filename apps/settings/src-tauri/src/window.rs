@@ -30,7 +30,7 @@ pub fn menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     Menu::with_items(app, &[&application, &edit])
 }
 
-/// A display frame in the platform's window units, the shape `AppState.displays` uses.
+/// A display frame in the units and shape `AppState.displays` uses.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct Frame {
     pub x: f64,
@@ -43,8 +43,11 @@ pub struct Frame {
 pub fn current_display_frame(app: &AppHandle) -> Option<Frame> {
     let window = app.get_webview_window(MAIN_WINDOW)?;
     let monitor = window.current_monitor().ok().flatten()?;
-    // macOS windows are measured in points; Windows and X11 use physical pixels.
-    let pixels_per_unit = if cfg!(target_os = "macos") {
+    // Tauri measures monitors in physical pixels. The daemon's frames are logical on macOS
+    // (points) and on Wayland, as GNOME Shell and KWin report them, and physical on Windows
+    // and X11. On Linux Tauri scales GDK's logical geometry up by this same factor, so
+    // dividing by it gives the logical frame back exactly.
+    let pixels_per_unit = if daemon_frames_are_logical() {
         monitor.scale_factor()
     } else {
         1.0
@@ -56,6 +59,37 @@ pub fn current_display_frame(app: &AppHandle) -> Option<Frame> {
         width: f64::from(size.width) / pixels_per_unit,
         height: f64::from(size.height) / pixels_per_unit,
     })
+}
+
+#[cfg(target_os = "macos")]
+fn daemon_frames_are_logical() -> bool {
+    true
+}
+
+#[cfg(target_os = "linux")]
+fn daemon_frames_are_logical() -> bool {
+    let variable = |name: &str| std::env::var(name).ok();
+    is_wayland(
+        variable("XDG_SESSION_TYPE").as_deref(),
+        variable("WAYLAND_DISPLAY").as_deref(),
+    )
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn daemon_frames_are_logical() -> bool {
+    false
+}
+
+/// A Wayland session, by the rule the daemon's Linux adapters use
+/// (`snappy_linux::session::is_wayland`): `XDG_SESSION_TYPE` says so, or `WAYLAND_DISPLAY`
+/// is set and the session doesn't declare itself X11.
+#[cfg(any(target_os = "linux", test))]
+fn is_wayland(session_type: Option<&str>, wayland_display: Option<&str>) -> bool {
+    match session_type.map(str::to_ascii_lowercase).as_deref() {
+        Some("wayland") => true,
+        Some("x11") => false,
+        _ => wayland_display.is_some_and(|display| !display.is_empty()),
+    }
 }
 
 pub fn focus(app: &AppHandle) {
@@ -95,5 +129,14 @@ mod tests {
         assert_eq!(window["hiddenTitle"], true);
         assert_eq!(window["titleBarStyle"], "Transparent");
         assert_eq!(window["backgroundColor"], "#0E1115");
+    }
+
+    #[test]
+    fn a_wayland_session_is_told_by_its_type_or_else_by_its_display() {
+        assert!(super::is_wayland(Some("wayland"), None));
+        assert!(!super::is_wayland(Some("x11"), Some("wayland-0")));
+        assert!(super::is_wayland(Some("tty"), Some("wayland-0")));
+        assert!(!super::is_wayland(None, Some("")));
+        assert!(!super::is_wayland(None, None));
     }
 }

@@ -1,4 +1,5 @@
-import type { Command, Refusal } from "../core/model";
+import type { Command } from "../bridge/protocol";
+import type { Refusal } from "../core/model";
 import { Observable } from "../state/observable";
 
 /** Where the begin and end of recording go: the daemon client. */

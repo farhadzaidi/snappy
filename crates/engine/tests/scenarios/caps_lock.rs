@@ -1,10 +1,10 @@
 //! Caps Lock as the Snappy key.
 
 use snappy_core::keys::{Mods, SnappyKey};
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent};
 use snappy_fake::FakePlatform;
 use snappy_ipc::Command;
-use snappy_platform::{CapsLockInput, CapsLockUndo, PlatformEvent};
+use snappy_platform::{CapsLockInput, CapsLockRefusal, CapsLockUndo, PlatformEvent};
 
 use crate::support::{
     FLOATING, app_state, command, control_option, event, hotkey_id, live_engine, logged, paths_kept,
@@ -66,7 +66,7 @@ fn a_caps_lock_the_system_already_remaps_is_refused_and_the_setting_stays_off() 
     scenario(|| async {
         let name = "caps-lock-refused";
         let mut fake = with_window(FLOATING);
-        fake.caps_lock_refusal = Some(REMAPPED.to_owned());
+        fake.caps_lock_refusal = Some(CapsLockRefusal::Refused(REMAPPED.to_owned()));
         let engine = live_engine(name, fake);
 
         assert_eq!(turn_on(&engine).as_deref(), Some(REMAPPED));
@@ -74,6 +74,36 @@ fn a_caps_lock_the_system_already_remaps_is_refused_and_the_setting_stays_off() 
         assert_eq!(held_as(&engine), None);
         assert!(!undo_kept(name));
         assert_eq!(app_state(&engine).caps_lock_problem, None, "the reply says why");
+    });
+}
+
+#[test]
+fn a_caps_lock_that_waits_for_a_new_login_stays_on_and_says_so_until_it_works() {
+    scenario(|| async {
+        let name = "caps-lock-after-login";
+        let after_login = "Caps Lock becomes the Snappy key after you log out and back in.";
+        let mut fake = with_window(FLOATING);
+        fake.caps_lock_refusal = Some(CapsLockRefusal::AfterLogin(after_login.to_owned()));
+        let engine = live_engine(name, fake);
+
+        assert_eq!(turn_on(&engine), None, "turning it on is accepted");
+        assert!(engine.settings().caps_lock_as_snappy_key);
+        assert_eq!(held_as(&engine), None, "not yet");
+        assert_eq!(
+            app_state(&engine).caps_lock_problem.as_deref(),
+            Some(after_login),
+            "the notice stays beside the setting"
+        );
+        let status = engine.status().map(|status| status.is_error);
+        assert_ne!(status, Some(true), "waiting for a login is no error");
+
+        // The next login starts Snappy again, and the desktop now takes the change.
+        let mut system = engine.with_platform(|p| p.clone());
+        drop(engine);
+        system.caps_lock_refusal = None;
+        let engine = relaunched(name, system);
+        assert!(held_as(&engine).is_some());
+        assert_eq!(app_state(&engine).caps_lock_problem, None);
     });
 }
 
@@ -105,9 +135,9 @@ fn a_quick_tap_alone_toggles_caps_lock_and_a_hold_never_does() {
         event(&engine, PlatformEvent::CapsLock(CapsLockInput::Released));
         assert_eq!(toggles(&engine), 1, "a release without its press");
 
-        let tapped = logged(name, "capsLockTapped");
+        let tapped = logged(name, LogEvent::CapsLockTapped);
         assert_eq!(tapped.len(), 1);
-        let released = logged(name, "capsLockReleased");
+        let released = logged(name, LogEvent::CapsLockReleased);
         assert_eq!(released.len(), 3);
         assert_eq!(released[0]["otherInput"], true);
         assert!(released.iter().all(|record| record.get("key").is_none()));
@@ -124,8 +154,8 @@ fn a_tap_the_system_doesnt_take_is_logged_as_failed_not_as_a_tap() {
         engine.with_platform(|p| p.caps_lock_toggle_failure = Some("no keyboard".to_owned()));
         press_for(&engine, 0.1);
 
-        assert!(logged(name, "capsLockTapped").is_empty());
-        let failed = logged(name, "capsLockTapFailed");
+        assert!(logged(name, LogEvent::CapsLockTapped).is_empty());
+        let failed = logged(name, LogEvent::CapsLockTapFailed);
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0]["reason"], "no keyboard");
     });
@@ -276,7 +306,7 @@ fn a_refusal_at_start_is_shown_with_the_setting_and_tried_again_when_the_key_cha
         let mut system = engine.with_platform(|p| p.clone());
         event(&engine, PlatformEvent::QuitRequested);
         drop(engine);
-        system.caps_lock_refusal = Some(REMAPPED.to_owned());
+        system.caps_lock_refusal = Some(CapsLockRefusal::Refused(REMAPPED.to_owned()));
 
         let engine = relaunched(name, system);
         assert!(engine.settings().caps_lock_as_snappy_key, "the setting is kept");
@@ -321,7 +351,7 @@ fn recording_a_shortcut_keeps_caps_lock_as_the_snappy_key() {
 fn lose_caps_lock(engine: &Engine<FakePlatform>, refusal: Option<&str>) {
     engine.with_platform(|p| {
         p.caps_lock_held_as = None;
-        p.caps_lock_refusal = refusal.map(str::to_owned);
+        p.caps_lock_refusal = refusal.map(|reason| CapsLockRefusal::Refused(reason.to_owned()));
         p.caps_lock_undo = CapsLockUndo("after the loss".into());
     });
     event(engine, PlatformEvent::CapsLockLost);
@@ -343,7 +373,7 @@ fn caps_lock_lost_to_a_reloaded_keymap_is_held_again_with_a_fresh_undo_record() 
             kept["undo"], "after the loss",
             "a crash from here undoes the new hold"
         );
-        assert_eq!(logged(name, "capsLockLost").len(), 1);
+        assert_eq!(logged(name, LogEvent::CapsLockLost).len(), 1);
         assert_eq!(app_state(&engine).caps_lock_problem, None);
         press_for(&engine, 0.1);
         assert_eq!(toggles(&engine), 1, "taps work as before");

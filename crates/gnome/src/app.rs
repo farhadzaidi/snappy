@@ -6,11 +6,13 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use snappy_core::geometry::Point;
+use snappy_linux::adapter::Adapter;
 use snappy_linux::clients::ClientTracker;
+use snappy_linux::dbus;
 use snappy_linux::journal;
+use snappy_linux::names::{DBUS_NAME, NAME_OWNER_CHANGED};
 use snappy_platform::{PlatformEvent, WindowId};
 use zbus::MatchRule;
-use zbus::blocking::MessageIterator;
 use zbus::message::Type;
 
 use crate::bus::{Bus, DISPLAY_CONFIG_NAME, DISPLAY_CONFIG_PATH, ExtensionInfo};
@@ -19,7 +21,9 @@ use crate::error::GnomeError;
 use crate::extension::{self, Installed};
 use crate::keys::mods;
 use crate::platform::GnomePlatform;
-use crate::protocol::{EXTENSION_UUID, Event, INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME, WindowRecord};
+use crate::protocol::{
+    EVENT_SIGNAL, EXTENSION_UUID, Event, INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME, WindowRecord,
+};
 use crate::shared::Shared;
 
 /// What the listening threads hand the event loop.
@@ -55,17 +59,15 @@ impl Stopper {
 }
 
 impl App {
-    /// Connects to the session bus, installs or updates the extension, and starts listening.
+    /// Connects to the session bus, starts listening, installs or updates the extension, and
+    /// asks whether it answers. Listening comes first, so a `ready` sent before the answer
+    /// still reaches the event loop.
     pub fn new(events: Sender<PlatformEvent>) -> Result<App, GnomeError> {
         let bus = Bus::session()?;
-        let installed = install_extension();
-        let live_control = extension::live_control(&bus, installed);
-        let shared = Arc::new(Shared::new(bus, installed, live_control));
-
         let (sender, incoming) = mpsc::channel();
         listen(
-            &shared.bus,
-            signal_rule(INTERFACE, "Event", Some(OBJECT_PATH))?,
+            &bus,
+            signal_rule(INTERFACE, EVENT_SIGNAL, Some(OBJECT_PATH))?,
             sender.clone(),
             |message| {
                 let (json,): (String,) = message.body().deserialize().ok()?;
@@ -73,7 +75,7 @@ impl App {
             },
         )?;
         listen(
-            &shared.bus,
+            &bus,
             signal_rule("org.gnome.Shell.Extensions", "ExtensionStateChanged", None)?,
             sender.clone(),
             |message| {
@@ -92,12 +94,12 @@ impl App {
         )?;
         let shell_owner = MatchRule::builder()
             .msg_type(Type::Signal)
-            .sender("org.freedesktop.DBus")?
-            .interface("org.freedesktop.DBus")?
-            .member("NameOwnerChanged")?
+            .sender(DBUS_NAME)?
+            .interface(DBUS_NAME)?
+            .member(NAME_OWNER_CHANGED)?
             .arg(0, SHELL_BUS_NAME)?
             .build();
-        listen(&shared.bus, shell_owner, sender.clone(), |_| {
+        listen(&bus, shell_owner, sender.clone(), |_| {
             Some(Incoming::ExtensionChanged)
         })?;
         let monitors = MatchRule::builder()
@@ -107,10 +109,13 @@ impl App {
             .interface(DISPLAY_CONFIG_NAME)?
             .member("MonitorsChanged")?
             .build();
-        listen(&shared.bus, monitors, sender.clone(), |_| {
+        listen(&bus, monitors, sender.clone(), |_| {
             Some(Incoming::MonitorsChanged)
         })?;
 
+        let installed = install_extension();
+        let live_control = extension::live_control(&bus, installed);
+        let shared = Arc::new(Shared::new(bus, installed, live_control));
         Ok(App {
             shared,
             events,
@@ -199,6 +204,7 @@ impl App {
                 at: point(x, y),
                 mods: mods(mask),
                 window: Some(WindowId(window)),
+                frame: None,
             }],
             Event::PointerDragged { x, y, mods: mask } => vec![PlatformEvent::PointerDragged {
                 at: point(x, y),
@@ -251,6 +257,28 @@ impl App {
         for event in translated {
             self.emit(event);
         }
+    }
+}
+
+impl Adapter for App {
+    type Platform = GnomePlatform;
+    type Error = GnomeError;
+
+    fn start(events: Sender<PlatformEvent>) -> Result<App, GnomeError> {
+        App::new(events)
+    }
+
+    fn platform(&self) -> GnomePlatform {
+        App::platform(self)
+    }
+
+    fn stop_handle(&self) -> impl FnOnce() + Send + 'static {
+        let stopper = self.stopper();
+        move || stopper.stop()
+    }
+
+    fn run(self) -> Result<(), GnomeError> {
+        App::run(self)
     }
 }
 
@@ -320,7 +348,7 @@ fn install_extension() -> bool {
             journal::warn(format_args!(
                 "couldn't install the GNOME Shell extension: {error}"
             ));
-            folder.join("metadata.json").exists()
+            folder.join(extension::METADATA).exists()
         }
     }
 }
@@ -337,27 +365,19 @@ fn signal_rule(interface: &str, member: &str, path: Option<&str>) -> Result<Matc
     Ok(rule.build())
 }
 
-/// Forwards each matching signal, in order, from a thread of its own, and reports the bus
-/// going away. Blocking reads can't be interrupted, so the threads end with the process.
+/// Forwards each matching signal from a thread of its own, and reports the bus going away.
 fn listen(
     bus: &Bus,
     rule: MatchRule<'static>,
     sender: Sender<Incoming>,
     translate: impl Fn(&zbus::Message) -> Option<Incoming> + Send + 'static,
 ) -> Result<(), GnomeError> {
-    let messages = MessageIterator::for_match_rule(rule, bus.connection(), None)?;
-    std::thread::Builder::new()
-        .name("snappy-gnome-signals".into())
-        .spawn(move || {
-            for message in messages {
-                let Ok(message) = message else { break };
-                if let Some(incoming) = translate(&message)
-                    && sender.send(incoming).is_err()
-                {
-                    return;
-                }
-            }
-            let _ = sender.send(Incoming::BusLost);
-        })?;
-    Ok(())
+    dbus::forward_signals(
+        bus.connection(),
+        rule,
+        "snappy-gnome-signals",
+        sender,
+        Incoming::BusLost,
+        translate,
+    )
 }

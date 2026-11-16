@@ -16,9 +16,16 @@ pub const EXTENSION_UUID: &str = "snappy@farhadzaidi.github.io";
 pub const SHELL_BUS_NAME: &str = "org.gnome.Shell";
 pub const OBJECT_PATH: &str = "/io/github/farhadzaidi/Snappy/Shell";
 pub const INTERFACE: &str = "io.github.farhadzaidi.Snappy.Shell";
+/// The interface's members: the method requests go through, the signal events come on, and
+/// the property holding the protocol version.
+pub const CALL_METHOD: &str = "Call";
+pub const EVENT_SIGNAL: &str = "Event";
+pub const VERSION_PROPERTY: &str = "Version";
 
 /// The refusal `park` returns for a window GNOME shows on every workspace.
 pub const REFUSED_ALL_WORKSPACES: &str = "allWorkspaces";
+/// The refusal `park` returns when GNOME didn't move the window to Snappy's workspace.
+pub const REFUSED_NOT_MOVED: &str = "notMoved";
 /// The error a request names a window with when the window is gone.
 pub const GONE: &str = "gone";
 /// The error Caps Lock requests fail with on a GNOME Shell whose keyboard manager lacks the
@@ -335,12 +342,189 @@ mod tests {
         );
     }
 
+    /// The names in `source` that follow each `prefix`, up to the closing quote.
+    fn quoted_after<'a>(source: &'a str, prefix: &str) -> Vec<&'a str> {
+        source
+            .split(prefix)
+            .skip(1)
+            .filter_map(|rest| rest.split('\'').next())
+            .collect()
+    }
+
+    /// One request of each kind. The match stops compiling when a kind is added, as a
+    /// reminder to list it here too.
+    fn one_of_each_request() -> Vec<Request> {
+        let scene = OverlayScene {
+            work_area: Frame::default(),
+            zones: Vec::new(),
+        };
+        let marks = OverlayMarks {
+            work_area: Frame::default(),
+            outlines: Vec::new(),
+        };
+        let display = String::new();
+        let all = vec![
+            Request::Windows,
+            Request::Window { id: 0 },
+            Request::Focused,
+            Request::Follow { ids: Vec::new() },
+            Request::SetPosition {
+                id: 0,
+                x: 0.0,
+                y: 0.0,
+            },
+            Request::SetSize {
+                id: 0,
+                width: 0.0,
+                height: 0.0,
+            },
+            Request::Unmaximize { id: 0 },
+            Request::Activate { id: 0 },
+            Request::ClearFocus,
+            Request::Pointer,
+            Request::Monitors,
+            Request::Monitoring {
+                press: false,
+                drag: false,
+                follow: 0,
+            },
+            Request::Register { keys: Vec::new() },
+            Request::UnregisterAll,
+            Request::IsFree {
+                accelerator: String::new(),
+            },
+            Request::KeyboardOptions,
+            Request::CapsLockHold {
+                modifiers: String::new(),
+                mask: 0,
+                keycodes: Vec::new(),
+            },
+            Request::CapsLockRestore,
+            Request::CapsLockToggle,
+            Request::OverlayPrepare {
+                display: display.clone(),
+                scene: scene.clone(),
+            },
+            Request::OverlayShow {
+                display: display.clone(),
+                scene,
+            },
+            Request::OverlayHide,
+            Request::OverlayRetain { displays: Vec::new() },
+            Request::OverlayMark { display, marks },
+            Request::Menu {
+                name: String::new(),
+                generation: 0,
+                entries: Vec::new(),
+            },
+            Request::Bind,
+            Request::OnBoundWorkspace,
+            Request::ClearWorkspaces,
+            Request::Park { id: 0 },
+            Request::Unpark { id: 0 },
+        ];
+        for request in &all {
+            match request {
+                Request::Windows
+                | Request::Window { .. }
+                | Request::Focused
+                | Request::Follow { .. }
+                | Request::SetPosition { .. }
+                | Request::SetSize { .. }
+                | Request::Unmaximize { .. }
+                | Request::Activate { .. }
+                | Request::ClearFocus
+                | Request::Pointer
+                | Request::Monitors
+                | Request::Monitoring { .. }
+                | Request::Register { .. }
+                | Request::UnregisterAll
+                | Request::IsFree { .. }
+                | Request::KeyboardOptions
+                | Request::CapsLockHold { .. }
+                | Request::CapsLockRestore
+                | Request::CapsLockToggle
+                | Request::OverlayPrepare { .. }
+                | Request::OverlayShow { .. }
+                | Request::OverlayHide
+                | Request::OverlayRetain { .. }
+                | Request::OverlayMark { .. }
+                | Request::Menu { .. }
+                | Request::Bind
+                | Request::OnBoundWorkspace
+                | Request::ClearWorkspaces
+                | Request::Park { .. }
+                | Request::Unpark { .. } => {}
+            }
+        }
+        all
+    }
+
+    /// Every file of the extension, for the names they share with the daemon.
+    const EXTENSION: [&str; 10] = [
+        include_str!("../../../apps/gnome-extension/service.js"),
+        include_str!("../../../apps/gnome-extension/windows.js"),
+        include_str!("../../../apps/gnome-extension/input.js"),
+        include_str!("../../../apps/gnome-extension/capsLock.js"),
+        include_str!("../../../apps/gnome-extension/parking.js"),
+        include_str!("../../../apps/gnome-extension/shortcuts.js"),
+        include_str!("../../../apps/gnome-extension/menu.js"),
+        include_str!("../../../apps/gnome-extension/overlay.js"),
+        include_str!("../../../apps/gnome-extension/compat.js"),
+        include_str!("../../../apps/gnome-extension/extension.js"),
+    ];
+
+    #[test]
+    fn the_extension_handles_every_request_and_reports_only_known_events() {
+        let service = EXTENSION[0];
+        let handled = quoted_after(service, "case '");
+        for request in one_of_each_request() {
+            let json = serde_json::to_value(&request).unwrap();
+            let op = json["op"].as_str().unwrap();
+            assert!(handled.contains(&op), "the extension doesn't handle {op}");
+        }
+        assert_eq!(handled.len(), one_of_each_request().len(), "{handled:?}");
+        for source in EXTENSION {
+            for kind in quoted_after(source, "type: '") {
+                let event = serde_json::from_value::<Event>(serde_json::json!({ "type": kind }));
+                assert!(
+                    !matches!(event, Ok(Event::Unknown)),
+                    "the daemon doesn't know {kind}"
+                );
+            }
+            for phase in quoted_after(source, "phase: '") {
+                let input = serde_json::from_value::<CapsLockInput>(serde_json::json!(phase));
+                assert!(
+                    input.is_ok(),
+                    "the daemon doesn't know the Caps Lock phase {phase}"
+                );
+            }
+        }
+        let option = snappy_linux::xkb::OPTION;
+        assert!(
+            EXTENSION[3].contains(&format!("const OPTION = '{option}';")),
+            "{option}"
+        );
+        for (name, source) in [(GONE, EXTENSION[0]), (UNSUPPORTED, EXTENSION[3])] {
+            assert!(source.contains(&format!("'{name}'")), "{name}");
+        }
+    }
+
     /// The extension's source declares the same protocol version.
     #[test]
     fn the_extension_speaks_this_protocol_version() {
         let service = include_str!("../../../apps/gnome-extension/service.js");
         assert!(service.contains(&format!("export const PROTOCOL_VERSION = {PROTOCOL_VERSION};")));
+        assert_eq!(OBJECT_PATH, snappy_linux::names::object_path("Shell"));
+        assert_eq!(INTERFACE, format!("{}.Shell", snappy_linux::names::APP_ID));
         assert!(service.contains(OBJECT_PATH));
         assert!(service.contains(&format!("<interface name=\"{INTERFACE}\">")));
+        assert!(service.contains(&format!("<method name=\"{CALL_METHOD}\">")));
+        assert!(service.contains(&format!("<signal name=\"{EVENT_SIGNAL}\">")));
+        assert!(service.contains(&format!("<property name=\"{VERSION_PROPERTY}\"")));
+        let parking = include_str!("../../../apps/gnome-extension/parking.js");
+        for refusal in [REFUSED_ALL_WORKSPACES, REFUSED_NOT_MOVED] {
+            assert!(parking.contains(&format!("'{refusal}'")), "{refusal}");
+        }
     }
 }

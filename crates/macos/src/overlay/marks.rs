@@ -11,8 +11,9 @@ use objc2_core_graphics::CGPath;
 use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction};
 use snappy_core::geometry::Rect;
 use snappy_platform::OverlayMarks;
+use snappy_platform::overlay_style::{MARK_BORDER_WIDTH, mark_border};
 
-use super::style::{MARK_BORDER_WIDTH, MARK_CORNER_RADIUS, mark_border, mark_path};
+use super::style::{MARK_CORNER_RADIUS, mark_path};
 use super::surface::{color, layer_rect, make_panel};
 use crate::coords::flip_rect;
 use crate::displays::to_cg_rect;

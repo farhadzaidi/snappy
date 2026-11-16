@@ -6,9 +6,8 @@ use std::collections::BTreeSet;
 use x11rb::connection::Connection;
 use x11rb::protocol::xinput::{self, ConnectionExt as _, XIEventMask};
 
-use crate::keys::ModifierKeys;
-use crate::shared::Shared;
-use crate::x::lock;
+use crate::keymap::ModifierKeys;
+use crate::shared::{Shared, lock};
 
 /// The primary button's raw button number.
 pub const PRIMARY_BUTTON: u32 = 1;

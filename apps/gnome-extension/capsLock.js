@@ -11,24 +11,20 @@ import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 
 import {keyboardManager, rebuildKeymap} from './compat.js';
+import {BUTTON_MASK, SAMPLE_INTERVAL_MS} from './input.js';
 import {grab, ungrab} from './shortcuts.js';
 
-/** The app's XKB option, in `crates/linux/src/xkb.rs`. */
+/** The app's XKB option, in `crates/linux/src/xkb/`. */
 const OPTION = 'snappy:caps';
+/** The error when this GNOME Shell has no keyboard manager to change the keymap through. */
+const UNSUPPORTED = 'unsupported';
 /** Caps Lock's keycode with nothing held, so a Shift + Caps Lock still reaches the real one. */
 const CAPS_LOCK = '0x42';
-/** About one sample per frame at 60 Hz, as during drags. */
-const SAMPLE_INTERVAL_MS = 16;
 /**
  * A press whose modifiers never show, as with a keymap that lacks the app's option, ends after
  * this long, so its grabs and sampler don't stay. Longer than a tap, so it never counts as one.
  */
 const UNSEEN_PRESS_LIMIT_US = 1000 * 1000;
-
-const BUTTON_MASK =
-    Clutter.ModifierType.BUTTON1_MASK | Clutter.ModifierType.BUTTON2_MASK |
-    Clutter.ModifierType.BUTTON3_MASK | Clutter.ModifierType.BUTTON4_MASK |
-    Clutter.ModifierType.BUTTON5_MASK;
 
 export class CapsLock {
     constructor(emit) {
@@ -53,7 +49,7 @@ export class CapsLock {
     _manager() {
         const manager = keyboardManager();
         if (manager === null)
-            throw new Error('unsupported');
+            throw new Error(UNSUPPORTED);
         return manager;
     }
 

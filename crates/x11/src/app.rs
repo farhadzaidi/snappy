@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread::JoinHandle;
 
+use snappy_linux::adapter::Adapter;
 use snappy_platform::PlatformEvent;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::randr::{self, ConnectionExt as _};
@@ -24,7 +25,7 @@ use crate::input::{self, Monitoring};
 use crate::overlay::{self, UiCommand};
 use crate::platform::X11Platform;
 use crate::shared::Shared;
-use crate::x::{Atoms, ScreenInfo};
+use crate::xserver::{Atoms, ScreenInfo};
 
 /// XInput 2.2: raw events keep arriving while another client grabs the pointer.
 const XINPUT_VERSION: (u16, u16) = (2, 2);
@@ -154,6 +155,28 @@ impl Stopper {
             cookie.ignore_error();
         }
         let _ = shared.conn.flush();
+    }
+}
+
+impl Adapter for App {
+    type Platform = X11Platform;
+    type Error = X11Error;
+
+    fn start(events: Sender<PlatformEvent>) -> Result<App, X11Error> {
+        App::new(events)
+    }
+
+    fn platform(&self) -> X11Platform {
+        App::platform(self)
+    }
+
+    fn stop_handle(&self) -> impl FnOnce() + Send + 'static {
+        let stopper = self.stopper();
+        move || stopper.stop()
+    }
+
+    fn run(self) -> Result<(), X11Error> {
+        App::run(self)
     }
 }
 

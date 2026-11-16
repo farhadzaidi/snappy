@@ -2,10 +2,8 @@
 //! situation is the same.
 
 use snappy_core::error::WindowError;
+pub use snappy_linux::messages::NOT_STANDARD;
 
-pub const FULL_SCREEN: &str = "Leave full screen before tiling this window.";
-pub const NOT_STANDARD: &str = "Choose a standard application window.";
-pub const NOT_MOVABLE: &str = "This window does not allow moving and resizing.";
 pub const NO_FOCUSED_WINDOW: &str = "No movable window is focused.";
 pub const WINDOW_GONE: &str = "The window is no longer available.";
 pub const SHELL_UNREACHABLE: &str = "Snappy can't reach GNOME right now. Try again in a moment.";

@@ -1,5 +1,6 @@
-import type { AppState, Display, PlatformName } from "../../core/model";
+import type { PlatformName } from "../../core/model";
 import { core } from "../../core/snappyCore";
+import type { AppState, Display } from "../protocol";
 
 export const FAKE_DISPLAYS: Display[] = [
   {

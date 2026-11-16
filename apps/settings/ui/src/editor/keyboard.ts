@@ -2,7 +2,7 @@
 // platform's standard keys where there are some.
 
 import type { KeyChord, Modifier, PlatformName } from "../core/model";
-import type { KeyPress } from "../ui/keyPress";
+import { DELETE_KEY, isDeleting, type KeyPress } from "../ui/keyPress";
 
 export type EditorCommand = "undo" | "redo" | "copy" | "cut" | "paste" | "duplicate" | "delete" | "merge";
 
@@ -35,7 +35,7 @@ export function commandChord(command: ButtonCommand, platform: PlatformName): Ke
     case "duplicate":
       return { code: DUPLICATE_KEY, mods: [held] };
     case "delete":
-      return { code: "Backspace", mods: [] };
+      return { code: DELETE_KEY, mods: [] };
   }
 }
 
@@ -56,8 +56,7 @@ export function editorCommand(press: KeyPress, platform: PlatformName): EditorCo
     return null;
   }
   if (!command) {
-    const deleting = press.code === "Backspace" || press.code === "Delete";
-    return deleting && !press.shiftKey ? "delete" : null;
+    return isDeleting(press) && !press.shiftKey ? "delete" : null;
   }
   const key = COMMAND_KEYS[press.code];
   return key && key.shift === press.shiftKey ? key.command : null;

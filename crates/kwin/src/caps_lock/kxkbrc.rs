@@ -212,11 +212,7 @@ fn drop_empty_group(lines: &mut Vec<String>) {
 
 /// `$XDG_CONFIG_HOME/kxkbrc`, defaulting to `~/.config`, where KConfig keeps it.
 pub fn path() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .map(|config| config.join("kxkbrc"))
+    snappy_linux::xdg::config_home().map(|config| config.join("kxkbrc"))
 }
 
 /// The file's text; a missing file reads as empty.

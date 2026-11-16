@@ -4,8 +4,8 @@
 #
 #   tools/live/kwin/kwin-session.sh <command> [args...]
 #
-# It uses the machine's own KWin, so the KWin under test is the one Snappy will meet, and
-# nothing has to be built first. Bubblewrap gives it a private /tmp, /run, and /var, its own
+# On a machine with KWin 6 and Bubblewrap it uses the machine's own KWin, so the KWin under
+# test is the one Snappy will meet. Bubblewrap gives it a private /tmp, /run, and /var, its own
 # network namespace (so no abstract socket, including X11's, is shared), only /usr, /etc,
 # and the repository (read-only), a minimal /dev without GPU nodes, and an empty
 # environment. Inside, KWin gets a D-Bus session of its own, two side-by-side 1920×1080
@@ -14,12 +14,27 @@
 # the tests read frames, never pixels. The desktop's own KWin, session bus, Wayland socket,
 # and home folder can't be reached.
 #
+# In the KWin test image (tools/live/kwin/Dockerfile) the container is the seal instead, and
+# the same session starts inside it.
+#
 # Results go to target/live/kwin/out/ (writable inside), KWin's log to kwin.log there.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
 out="$root/target/live/kwin/out"
+
+if [[ "${SNAPPY_KWIN_SANDBOX:-}" != 1 && "${SNAPPY_KWIN_CONTAINER:-}" == 1 ]]; then
+    if [[ ! -e /.dockerenv && ! -e /run/.containerenv ]]; then
+        echo "kwin-session.sh: SNAPPY_KWIN_CONTAINER is set outside a container; refusing to start KWin." >&2
+        exit 2
+    fi
+    mkdir -p "$out"
+    exec env -i PATH=/usr/bin:/usr/sbin LANG=C.UTF-8 HOME=/tmp/home XDG_RUNTIME_DIR=/tmp/xdg \
+        SNAPPY_KWIN_SANDBOX=1 SNAPPY_KWIN_CONTAINER=1 SNAPPY_KWIN_OUT="$out" \
+        ${SNAPPY_KWIN_TEST:+SNAPPY_KWIN_TEST="$SNAPPY_KWIN_TEST"} \
+        "$0" "$@"
+fi
 
 if [[ "${SNAPPY_KWIN_SANDBOX:-}" != 1 ]]; then
     mkdir -p "$out"
@@ -37,13 +52,21 @@ if [[ "${SNAPPY_KWIN_SANDBOX:-}" != 1 ]]; then
 fi
 
 if [[ "${SNAPPY_KWIN_IN_SESSION:-}" != 1 ]]; then
-    # Inside the sandbox, before its own bus: nothing of the desktop's may be visible.
-    if [[ -e /run/user || -n "${DBUS_SESSION_BUS_ADDRESS:-}${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
+    # Inside the sandbox, before its own bus: nothing of the desktop's may be visible. A
+    # container's own /run/user holds nothing of the desktop's; Bubblewrap's has no /run/user.
+    if [[ ( -e /run/user && "${SNAPPY_KWIN_CONTAINER:-}" != 1 ) ||
+        -n "${DBUS_SESSION_BUS_ADDRESS:-}${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
         echo "kwin-session.sh: not sealed off from the desktop; refusing to start KWin." >&2
         exit 2
     fi
     mkdir -p -m 700 "$XDG_RUNTIME_DIR"
     mkdir -p "$HOME/.config"
+    # KWin searches the user's XKB folder only if it exists as KWin starts. The live suite runs
+    # as after the login that follows first turning on Caps Lock as the Snappy key; the adapter
+    # tests start without it, as before that login.
+    if [[ -z "${SNAPPY_KWIN_TEST:-}" ]]; then
+        mkdir -p "$HOME/.config/xkb"
+    fi
     mkdir -p -m 1777 /tmp/.X11-unix
     export SNAPPY_KWIN_IN_SESSION=1
     exec dbus-run-session -- "$0" "$@"
@@ -60,8 +83,9 @@ AnimationDurationFactor=0
 CONFIG
 
 socket=wayland-snappy
-# KWin's messages, and the scripts', go to the log rather than the journal.
-QT_FORCE_STDERR_LOGGING=1 \
+# KWin's messages, and the scripts', go to the log rather than the journal. Without GPU
+# nodes, a GPU driver's EGL library crashes Xwayland as it starts, so EGL here is Mesa's alone.
+QT_FORCE_STDERR_LOGGING=1 __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
     QT_LOGGING_RULES="js.debug=true;qml.debug=true;kwin_scripting.debug=true" \
     kwin_wayland --virtual --xwayland --width 1920 --height 1080 --output-count 2 --no-lockscreen \
     --socket "$socket" >>"$log" 2>&1 &

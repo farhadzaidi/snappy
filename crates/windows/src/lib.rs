@@ -13,13 +13,11 @@ mod class;
 mod desktop_guard;
 mod dispatch;
 mod displays;
-mod eligibility;
 mod error;
 mod events;
-mod frames;
+mod handle;
 mod hotkeys;
-mod identity;
-mod input_hooks;
+mod input;
 mod instance;
 mod keys;
 mod login_item;
@@ -28,7 +26,8 @@ mod managed;
 mod messages;
 mod overlay;
 mod platform;
-mod process;
+/// Snappy's own view of the desktop, for the tests to check against; built only for them.
+#[cfg(feature = "reference")]
 pub mod reference;
 mod shared;
 mod tray;

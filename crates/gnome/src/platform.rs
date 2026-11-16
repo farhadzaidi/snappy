@@ -5,14 +5,15 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Modifier, Mods, Platform as PlatformName};
+use snappy_core::keys::{Combo, Modifier, Mods, Os};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_linux::journal;
+use snappy_linux::windows::ReportedWindow;
 use snappy_linux::{login_item, scene};
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
-    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Remedy, Tray, TrayMenu, WindowId, WindowInfo,
-    WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
+    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Remedy, Tray,
+    TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::bus::CallError;
@@ -21,7 +22,8 @@ use crate::messages::{
     UNEXPECTED_REPLY, WINDOW_GONE, unavailable,
 };
 use crate::protocol::{
-    Accelerator, GONE, Monitor, PointerPosition, REFUSED_ALL_WORKSPACES, Request, WindowRecord,
+    Accelerator, GONE, Monitor, PointerPosition, REFUSED_ALL_WORKSPACES, REFUSED_NOT_MOVED, Request,
+    WindowRecord,
 };
 use crate::shared::Shared;
 use crate::{caps_lock, displays, extension, keys, menu, windows};
@@ -252,7 +254,13 @@ impl WindowSystem for GnomePlatform {
         match refusal.as_deref() {
             None => Ok(()),
             Some(REFUSED_ALL_WORKSPACES) => Err(unavailable(ON_ALL_WORKSPACES)),
-            Some(_) => Err(unavailable(HIDE_REFUSED)),
+            Some(REFUSED_NOT_MOVED) => Err(unavailable(HIDE_REFUSED)),
+            Some(other) => {
+                journal::warn(format_args!(
+                    "GNOME Shell refused parking for a reason Snappy doesn't know: {other}"
+                ));
+                Err(unavailable(HIDE_REFUSED))
+            }
         }
     }
 
@@ -330,18 +338,7 @@ impl HotKeys for GnomePlatform {
                 None => grabs.push(Accelerator { id: *id, accelerator }),
             }
         }
-        let refused_grabs: Vec<u32> = match self.call(&Request::Register { keys: grabs.clone() }) {
-            Ok(ids) => ids,
-            // GNOME isn't answering, which says nothing about the chords: keep them and grab
-            // them when the extension is back, rather than report them as taken.
-            Err(CallError::Unreachable(_)) => {
-                let mut state = self.shared.state();
-                state.registered = grabs;
-                state.replay_needed = true;
-                return refused;
-            }
-            Err(_) => grabs.iter().map(|grab| grab.id).collect(),
-        };
+        let refused_grabs = self.shared.register(grabs.clone());
         for grab in &grabs {
             if refused_grabs.contains(&grab.id) {
                 refused.extend(
@@ -352,10 +349,6 @@ impl HotKeys for GnomePlatform {
                 );
             }
         }
-        self.shared.state().registered = grabs
-            .into_iter()
-            .filter(|grab| !refused_grabs.contains(&grab.id))
-            .collect();
         refused.sort_unstable();
         refused.dedup();
         refused
@@ -387,8 +380,10 @@ impl HotKeys for GnomePlatform {
 /// Caps Lock through an XKB option of Snappy's own, which the extension adds to the keymap
 /// GNOME Shell builds (`caps_lock`).
 impl CapsLock for GnomePlatform {
-    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
-        caps_lock::hold(&self.shared, modifiers).map(|()| CapsLockUndo::default())
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, CapsLockRefusal> {
+        caps_lock::hold(&self.shared, modifiers)
+            .map(|()| CapsLockUndo::default())
+            .map_err(CapsLockRefusal::Refused)
     }
 
     fn restore_caps_lock(&mut self) {
@@ -553,7 +548,7 @@ impl LoginItem for GnomePlatform {
 impl Platform for GnomePlatform {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            platform: PlatformName::Linux,
+            platform: Os::Linux,
             parking: ParkingPolicy::Desktop,
             needs_permission: false,
         }

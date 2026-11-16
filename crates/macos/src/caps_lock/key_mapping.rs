@@ -5,6 +5,8 @@
 /// HID usages: keyboard page 7 in the upper bits, the key's usage in the lower ones.
 pub const CAPS_LOCK: u64 = 0x7_0000_0039;
 pub const F18: u64 = 0x7_0000_006D;
+/// The W3C code of the key `F18` is, which the tap watches for Caps Lock.
+pub const F18_CODE: &str = "F18";
 
 /// One key arriving as another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -12,7 +12,7 @@ mod swaps;
 mod tabs;
 mod workspaces;
 
-use snappy_core::keys::Platform;
+use snappy_core::keys::Os;
 
 use caps_lock::caps_lock_as_snappy_key;
 use focus::{focus_directions, focus_zones};
@@ -37,12 +37,12 @@ use workspaces::{
 };
 
 /// The platform the scenarios run on, for names and the chords it keeps.
-pub const PLATFORM: Platform = if cfg!(target_os = "macos") {
-    Platform::MacOs
+pub const PLATFORM: Os = if cfg!(target_os = "macos") {
+    Os::MacOs
 } else if cfg!(windows) {
-    Platform::Windows
+    Os::Windows
 } else {
-    Platform::Linux
+    Os::Linux
 };
 
 /// What a passing scenario measured.

@@ -20,6 +20,8 @@ mod menu;
 mod messages;
 mod platform;
 pub mod protocol;
+/// Snappy's own view of the desktop, for the tests to check against; built only for them.
+#[cfg(feature = "reference")]
 pub mod reference;
 mod shared;
 mod windows;

@@ -14,36 +14,29 @@ mod coords;
 mod delegate;
 mod desktop_guard;
 mod displays;
-mod eligibility;
+mod error;
 mod events;
 mod ffi;
 mod hotkeys;
-mod keycodes;
+mod input;
+mod instance;
+mod keys;
 mod login_item;
 mod main_thread;
 mod messages;
-mod monitors;
 mod observers;
-mod occupancy;
 mod overlay;
 mod permissions;
 mod platform;
-mod registry;
-mod signals;
+/// Snappy's own view of the desktop, for the tests to check against; built only for them.
+#[cfg(feature = "reference")]
+pub mod reference;
 mod system_shortcuts;
-mod tab_matching;
 mod thresholds;
 mod tray;
 mod windows;
 
 pub use app::{App, request_termination};
+pub use error::MacError;
+pub use instance::{Claim, InstanceLock, claim};
 pub use platform::MacPlatform;
-
-/// Read by the live-test harness, so its expectations use Snappy's own view of displays
-/// and keys.
-pub mod reference {
-    pub use crate::displays::read as displays;
-    pub use crate::keycodes::virtual_key_code;
-    pub use crate::occupancy::ServerWindow;
-    pub use crate::windows::server::on_screen_windows;
-}

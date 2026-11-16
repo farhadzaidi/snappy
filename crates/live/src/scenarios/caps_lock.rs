@@ -2,9 +2,10 @@
 
 use std::time::Instant;
 
-use snappy_core::keys::{Mods, Platform};
-use snappy_core::navigate::Direction;
+use snappy_core::keys::{Mods, Os};
+use snappy_core::placement::navigate::Direction;
 use snappy_core::settings::Settings;
+use snappy_engine::LogEvent;
 
 use super::support::{Context, SETTLE_TIMEOUT, floating, timed};
 use super::{Outcome, PLATFORM};
@@ -35,8 +36,8 @@ pub(super) fn caps_lock_as_snappy_key(context: &mut Context) -> Result<Outcome, 
 }
 
 fn hold_and_tap(context: &mut Context, chosen: &Settings) -> Result<Outcome, String> {
-    if context.logged("capsLockHeld").is_empty() {
-        let refused = context.logged("capsLockRefused");
+    if context.logged(LogEvent::CapsLockHeld).is_empty() {
+        let refused = context.logged(LogEvent::CapsLockRefused);
         return Err(format!("the daemon didn't take Caps Lock: {refused:?}"));
     }
     if context.input.caps_lock_on()? {
@@ -74,11 +75,11 @@ fn hold_and_tap(context: &mut Context, chosen: &Settings) -> Result<Outcome, Str
     wait_caps_lock(context, false, "tapping Caps Lock alone again")?;
     // The daemon logs a tap just after turning Caps Lock on or off.
     let started = Instant::now();
-    while context.logged("capsLockTapped").len() != 2 {
+    while context.logged(LogEvent::CapsLockTapped).len() != 2 {
         if started.elapsed() > SETTLE_TIMEOUT {
             return Err(format!(
                 "the daemon logged {} taps, not 2",
-                context.logged("capsLockTapped").len()
+                context.logged(LogEvent::CapsLockTapped).len()
             ));
         }
         pause(20);
@@ -90,7 +91,7 @@ fn hold_and_tap(context: &mut Context, chosen: &Settings) -> Result<Outcome, Str
 /// macOS can only be checked for the remap being gone: posted keys join the event stream
 /// past the point where macOS remaps keys, so they never pass through it.
 fn usual_again(context: &mut Context) -> Result<(), String> {
-    if PLATFORM == Platform::MacOs {
+    if PLATFORM == Os::MacOs {
         return Ok(());
     }
     tap(context)?;

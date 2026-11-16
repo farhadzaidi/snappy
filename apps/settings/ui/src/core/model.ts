@@ -1,5 +1,5 @@
-// The settings model and the daemon protocol, mirroring the serde shapes of `snappy-core`
-// and `snappy-ipc`.
+// The settings model, mirroring the serde shapes of `snappy-core`. The daemon protocol is in
+// `bridge/protocol.ts`.
 
 export type Modifier = "shift" | "ctrl" | "alt" | "meta";
 /** A modifier as a shortcut stores it: a concrete one, or the Snappy key. */
@@ -111,58 +111,6 @@ export type NavigationShortcut = Direction | "nearestEmpty" | FocusShortcut;
 export type FocusShortcut =
   "focusUp" | "focusLeft" | "focusDown" | "focusRight" | "selectWindow" | "clearSelection";
 
-export interface Display {
-  id: string;
-  name: string;
-  frame: Rect;
-  workArea: Rect;
-  scale: number;
-}
-
-export interface SnappingState {
-  live: boolean;
-  waitingForPermission: boolean;
-  permissionGranted: boolean;
-  needsPermission: boolean;
-  previewVisible: boolean;
-  unavailableReason: string | null;
-  /** What Snappy can do about it when asked. */
-  unavailableRemedy: Remedy | null;
-}
-
-/** Something the platform can do to make live control available. */
-export type Remedy = "logOut";
-
-export interface WorkspacesState {
-  running: boolean;
-  pauseMessage: string | null;
-  windowCounts: Record<string, number>;
-}
-
-/** A message for the toast. `notify` false means a quiet update. */
-export interface Status {
-  id: number;
-  message: string;
-  isError: boolean;
-  notify: boolean;
-}
-
-export interface AppState {
-  settings: Settings;
-  displays: Display[];
-  platform: PlatformName;
-  snapping: SnappingState;
-  workspaces: WorkspacesState;
-  /** Notes about the desktop, such as another tool that also snaps windows. */
-  platformNotes: string[];
-  loginItemEnabled: boolean;
-  debugLogPath: string;
-  status: Status | null;
-  addedWorkspace: string | null;
-  /** Why Caps Lock isn't the Snappy key though the setting asks for it. */
-  capsLockProblem: string | null;
-}
-
 /**
  * Why a change was refused: the message, and the shortcut it names, when it names one of
  * Snappy's, which the app points to.
@@ -177,48 +125,6 @@ export interface NamedShortcut {
   id: ShortcutId;
   title: string;
 }
-
-export type ToSettings =
-  | { type: "hello"; protocolVersion: number }
-  | ({ type: "state" } & AppState)
-  | { type: "reply"; id: number; error: Refusal | null }
-  | { type: "probeResult"; available: boolean }
-  | { type: "previewHidden" }
-  | { type: "focus" };
-
-export type Command =
-  | { kind: "setSnapping"; enabled: boolean }
-  | { kind: "setDragModifier"; modifier: DragModifier }
-  | { kind: "setSwapModifier"; modifier: SwapModifier }
-  | { kind: "setWhenTaken"; choice: WhenTaken }
-  | { kind: "setShortcutsEnabled"; enabled: boolean }
-  | { kind: "setSnappyKey"; modifiers: Modifier[] }
-  | { kind: "setCapsLockAsSnappyKey"; enabled: boolean }
-  | { kind: "setNavigationShortcut"; shortcut: NavigationShortcut; chord: KeyChord | null }
-  | { kind: "applyLayout"; display: string; layout: string }
-  | { kind: "saveLayout"; layout: Layout; options: LayoutOptions; display: string }
-  | { kind: "deleteLayout"; layout: string }
-  | { kind: "setLayoutEnabled"; layout: string; enabled: boolean }
-  | { kind: "showPreview"; display: string; layout: string }
-  | { kind: "hidePreview" }
-  | { kind: "beginRecording" }
-  | { kind: "endRecording" }
-  | { kind: "probeShortcut"; chord: KeyChord }
-  | { kind: "setWorkspacesEnabled"; enabled: boolean }
-  | { kind: "addWorkspace" }
-  | { kind: "updateWorkspace"; workspace: Workspace }
-  | { kind: "moveWorkspaces"; from: number[]; to: number }
-  | { kind: "deleteWorkspace"; workspace: string }
-  | { kind: "setWorkspaceStepShortcut"; step: WorkspaceStep; chord: KeyChord | null }
-  | { kind: "setHistoryShortcut"; step: HistoryStep; chord: KeyChord | null }
-  | { kind: "setLoginItem"; enabled: boolean }
-  | { kind: "setDebugLog"; enabled: boolean }
-  | { kind: "openPermissionSettings" }
-  | { kind: "applyRemedy"; remedy: Remedy }
-  | { kind: "reset"; reset: Reset }
-  | { kind: "importSettings"; path: string }
-  | { kind: "exportSettings"; path: string }
-  | { kind: "dismissStatus" };
 
 export type WorkspaceStep = "previous" | "next" | "sendPrevious" | "sendNext";
 
@@ -250,3 +156,5 @@ export type ShortcutId =
   | { kind: "zone"; layout: string; zone: string };
 
 export const DIRECTIONS: readonly Direction[] = ["left", "right", "up", "down"];
+export const PLATFORMS: readonly PlatformName[] = ["macos", "windows", "linux"];
+export const MODIFIERS: readonly Modifier[] = ["ctrl", "alt", "shift", "meta"];

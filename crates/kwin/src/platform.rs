@@ -6,13 +6,14 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Mods, Platform as PlatformName};
+use snappy_core::keys::{Combo, Mods, Os};
 use snappy_core::workspace::ParkingPolicy;
+use snappy_linux::windows::ReportedWindow;
 use snappy_linux::{journal, login_item};
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
-    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu, WindowId, WindowInfo,
-    WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
+    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu,
+    WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::bus::CallError;
@@ -21,9 +22,11 @@ use crate::messages::{
     WINDOW_GONE, unavailable,
 };
 use crate::overlay::{Command, Target};
-use crate::protocol::{GONE, Monitor, PointerPosition, REFUSED_ALL_DESKTOPS, Request, WindowRecord};
+use crate::protocol::{
+    GONE, Monitor, PointerPosition, REFUSED_ALL_DESKTOPS, REFUSED_NOT_MOVED, Request, WindowRecord,
+};
 use crate::shared::{Grab, Incoming, Shared};
-use crate::{caps_lock, displays, keys, shortcuts, windows};
+use crate::{caps_lock, displays, hotkeys, keys, windows};
 
 /// How long showing a parked window waits for its saved position to apply before bringing it
 /// back, and how often it looks. Wayland apps confirm moves asynchronously.
@@ -256,7 +259,13 @@ impl WindowSystem for KWinPlatform {
         match refusal.as_deref() {
             None => Ok(()),
             Some(REFUSED_ALL_DESKTOPS) => Err(unavailable(ON_ALL_DESKTOPS)),
-            Some(_) => Err(unavailable(HIDE_REFUSED)),
+            Some(REFUSED_NOT_MOVED) => Err(unavailable(HIDE_REFUSED)),
+            Some(other) => {
+                journal::warn(format_args!(
+                    "KWin's script refused parking for a reason Snappy doesn't know: {other}"
+                ));
+                Err(unavailable(HIDE_REFUSED))
+            }
         }
     }
 
@@ -320,7 +329,7 @@ impl HotKeys for KWinPlatform {
             }
         }
         let previous = std::mem::take(&mut self.shared.state().registered);
-        let (registered, refused_keys) = shortcuts::register(&self.shared.bus, &previous, &wanted);
+        let (registered, refused_keys) = hotkeys::register(&self.shared.bus, &previous, &wanted);
         for key in refused_keys {
             refused.extend(
                 sharing
@@ -337,7 +346,7 @@ impl HotKeys for KWinPlatform {
 
     fn unregister_all(&mut self) {
         let previous = std::mem::take(&mut self.shared.state().registered);
-        shortcuts::unregister(&self.shared.bus, &previous);
+        hotkeys::unregister(&self.shared.bus, &previous);
     }
 
     /// Snappy's own registrations count as free; anything else is asked about.
@@ -349,13 +358,13 @@ impl HotKeys for KWinPlatform {
         if self.shared.state().registered.iter().any(held) {
             return true;
         }
-        shortcuts::is_free(&self.shared.bus, key)
+        hotkeys::is_free(&self.shared.bus, key)
     }
 }
 
 /// Caps Lock through Snappy's XKB option in KDE's keyboard settings (`caps_lock`).
 impl CapsLock for KWinPlatform {
-    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, CapsLockRefusal> {
         caps_lock::hold(&self.shared, modifiers)
     }
 
@@ -372,7 +381,7 @@ impl CapsLock for KWinPlatform {
     }
 }
 
-/// Overlays are drawn by the overlay thread (`overlay.rs`); the engine never waits for them.
+/// Overlays are drawn by the overlay thread (`overlay/`); the engine never waits for them.
 impl Overlay for KWinPlatform {
     /// Makes the display's overlay surface ahead of the first drag, invisibly, so KWin's
     /// effects never see it appear while it shows anything.
@@ -498,7 +507,7 @@ impl LoginItem for KWinPlatform {
 impl Platform for KWinPlatform {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            platform: PlatformName::Linux,
+            platform: Os::Linux,
             parking: ParkingPolicy::Desktop,
             needs_permission: false,
         }

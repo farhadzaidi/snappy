@@ -1,80 +1,33 @@
-//! How a zone looks and where its parts sit. Sizes are given in points and drawn in
-//! pixels, multiplied by the display's scale.
+//! The overlays' shared style in Windows' colors and pixels: sizes are given in points and
+//! drawn in pixels, multiplied by the display's scale.
 
 use snappy_core::geometry::{Point, Rect};
-use snappy_platform::{MarkStyle, OverlayZone};
+use snappy_platform::OverlayZone;
+use snappy_platform::overlay_style::{
+    Paint, TEXT, TEXT_SHADOW, Tint, ZONE_CORNER_RADIUS, place_zone, zone_style,
+};
 
 use super::canvas::Color;
 
 /// The documented accent when the system's can't be read.
-pub const DEFAULT_ACCENT: u32 = 0x007AFF;
-const MINT: u32 = 0x00C7BE;
-/// macOS's system orange.
-const ORANGE: u32 = 0xFF9F0A;
-const WHITE: u32 = 0xFFFFFF;
-
-pub const CORNER_RADIUS: f64 = 16.0;
-const ZONE_INSET: f64 = 1.0;
-const NUMBER_HEIGHT_FRACTION: f64 = 0.14;
-const NUMBER_MIN_SIZE: f64 = 12.0;
-const NUMBER_MAX_SIZE: f64 = 24.0;
-const NUMBER_RAISE_FOR_CAPTION: f64 = 8.0;
-const CAPTION_SIZE: f64 = 13.0;
-const CAPTION_BELOW_CENTER: f64 = 14.0;
-pub const SHADOW_COLOR: Color = Color::rgb(0x000000, 0.7);
-pub const SHADOW_BLUR: f64 = 8.0;
-pub const TEXT_COLOR: Color = Color::rgb(WHITE, 1.0);
+pub const DEFAULT_ACCENT: u32 = Tint::Accent.rgb().hex();
 /// Font weights: medium for numbers, semibold for the caption.
 pub const NUMBER_WEIGHT: u32 = 500;
 pub const CAPTION_WEIGHT: u32 = 600;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZoneStyle {
-    pub fill: Color,
-    pub border: Color,
-    /// In points.
-    pub border_width: f64,
-}
-
-pub fn zone_style(zone: &OverlayZone, accent: u32) -> ZoneStyle {
-    if zone.highlighted {
-        return ZoneStyle {
-            fill: Color::rgb(MINT, 0.30),
-            border: Color::rgb(MINT, 1.0),
-            border_width: 4.0,
-        };
-    }
-    let fill = Color::rgb(accent, 0.12);
-    if zone.swap_source {
-        return ZoneStyle {
-            fill,
-            border: Color::rgb(MINT, 1.0),
-            border_width: 3.0,
-        };
-    }
-    ZoneStyle {
-        fill,
-        border: Color::rgb(WHITE, 0.60),
-        border_width: 1.5,
-    }
-}
-
-/// A selected window's outline: the swap source's border, drawn inside the window's frame.
-pub const SELECTED_BORDER: Color = Color::rgb(MINT, 1.0);
-/// The brief outline of a window a focus shortcut just focused, in a color of its own so
-/// it never reads as selected.
-pub const FOCUSED_BORDER: Color = Color::rgb(ORANGE, 1.0);
-
-pub fn mark_border(style: MarkStyle) -> Color {
-    match style {
-        MarkStyle::Selected => SELECTED_BORDER,
-        MarkStyle::Focused => FOCUSED_BORDER,
-    }
-}
-
-pub const MARK_BORDER_WIDTH: f64 = 3.0;
 /// Close to Windows 11's own window corners.
 pub const MARK_CORNER_RADIUS: f64 = 8.0;
+
+pub const TEXT_COLOR: Color = color(TEXT, DEFAULT_ACCENT);
+pub const SHADOW_COLOR: Color = color(TEXT_SHADOW, DEFAULT_ACCENT);
+
+/// `paint` as a canvas color, with `accent` standing in for the accent tint.
+pub const fn color(paint: Paint, accent: u32) -> Color {
+    let hex = match paint.tint {
+        Tint::Accent => accent,
+        tint => tint.rgb().hex(),
+    };
+    Color::rgb(hex, paint.alpha as f32)
+}
 
 /// Where a zone's shape, number, and caption go, in pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -88,39 +41,27 @@ pub struct Placement {
     pub caption: Option<(Point, f64)>,
 }
 
-/// The number's font size for a zone `height` pixels tall.
-pub fn number_size(height: f64, scale: f64) -> f64 {
-    (height / scale * NUMBER_HEIGHT_FRACTION).clamp(NUMBER_MIN_SIZE, NUMBER_MAX_SIZE) * scale
-}
-
-/// `frame` is the zone relative to the overlay's top left.
-pub fn placement(zone: &OverlayZone, frame: Rect, style: &ZoneStyle, scale: f64) -> Placement {
-    let shape = frame.inset(ZONE_INSET * scale, ZONE_INSET * scale);
-    let center = shape.center();
-    let caption = zone.caption.map(|_| {
-        (
-            Point::new(center.x, center.y + CAPTION_BELOW_CENTER * scale),
-            CAPTION_SIZE * scale,
-        )
-    });
-    let raise = if caption.is_some() {
-        NUMBER_RAISE_FOR_CAPTION * scale
-    } else {
-        0.0
-    };
+/// Places a zone whose global frame lies in an overlay covering `work_area`.
+pub fn placement(zone: &OverlayZone, work_area: Rect, scale: f64) -> Placement {
+    let placed = place_zone(zone, work_area, scale);
+    let center = placed.shape.center();
     Placement {
-        shape,
-        corner_radius: CORNER_RADIUS * scale,
-        border_width: style.border_width * scale,
-        number_center: Point::new(center.x, center.y - raise),
-        number_size: number_size(shape.height, scale),
-        caption,
+        shape: placed.shape,
+        corner_radius: ZONE_CORNER_RADIUS * scale,
+        border_width: zone_style(zone).border_width * scale,
+        number_center: placed.number_center,
+        number_size: placed.number_size,
+        // Centered on the line the other platforms hang the caption from.
+        caption: placed
+            .caption
+            .map(|caption| (Point::new(center.x, caption.top), caption.size)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use snappy_platform::Caption;
+    use snappy_platform::overlay_style::mark_border;
+    use snappy_platform::{Caption, MarkStyle};
 
     use super::*;
 
@@ -135,42 +76,31 @@ mod tests {
     }
 
     #[test]
-    fn highlight_and_swap_source_styles() {
-        let plain = zone_style(&zone(false, false, false), DEFAULT_ACCENT);
-        assert_eq!(plain.border_width, 1.5);
-        assert_eq!(plain.fill, Color::rgb(DEFAULT_ACCENT, 0.12));
-        assert_eq!(
-            zone_style(&zone(true, false, false), DEFAULT_ACCENT).border_width,
-            4.0
-        );
-        assert_eq!(
-            zone_style(&zone(false, false, true), DEFAULT_ACCENT).border_width,
-            3.0
-        );
-    }
-
-    #[test]
-    fn selected_windows_are_outlined_like_the_swap_source_and_focused_ones_apart() {
-        let source = zone_style(&zone(false, false, true), DEFAULT_ACCENT);
-        assert_eq!(mark_border(MarkStyle::Selected), source.border);
-        assert_eq!(MARK_BORDER_WIDTH, source.border_width);
-        let focused = mark_border(MarkStyle::Focused);
-        assert_ne!(focused, source.border);
+    fn the_accent_tint_takes_the_systems_accent_and_the_others_keep_their_colors() {
+        let plain = zone_style(&zone(false, false, false));
+        assert_eq!(color(plain.fill, 0x123456), Color::rgb(0x123456, 0.12));
+        assert_eq!(color(plain.border, 0x123456), Color::rgb(0xFFFFFF, 0.60));
+        let selected = color(mark_border(MarkStyle::Selected), DEFAULT_ACCENT);
+        assert_eq!(selected, Color::rgb(0x00C7BE, 1.0));
+        let focused = color(mark_border(MarkStyle::Focused), DEFAULT_ACCENT);
+        assert_ne!(focused, selected);
         assert_ne!(focused, Color::rgb(DEFAULT_ACCENT, 1.0));
+        assert_eq!(DEFAULT_ACCENT, 0x007AFF);
     }
 
     #[test]
-    fn numbers_scale_with_the_zone_within_limits() {
-        assert!((number_size(100.0, 1.0) - 14.0).abs() < 1e-9);
-        assert_eq!(number_size(50.0, 1.0), 12.0);
-        assert_eq!(number_size(1000.0, 2.0), 48.0);
+    fn zones_are_placed_in_pixels_with_corners_and_borders_scaled() {
+        let placed = placement(&zone(true, false, false), Rect::new(0.0, 0.0, 1000.0, 800.0), 2.0);
+        assert_eq!(placed.shape, Rect::new(2.0, 2.0, 396.0, 296.0));
+        assert_eq!(placed.corner_radius, 32.0);
+        assert_eq!(placed.border_width, 8.0);
+        assert_eq!(placed.number_size, 48.0);
     }
 
     #[test]
     fn a_caption_sits_below_and_raises_the_number() {
         let zone = zone(true, true, false);
-        let style = zone_style(&zone, DEFAULT_ACCENT);
-        let placed = placement(&zone, zone.frame, &style, 1.0);
+        let placed = placement(&zone, Rect::new(0.0, 0.0, 1000.0, 800.0), 1.0);
         assert_eq!(placed.number_center.y, 150.0 - 8.0);
         assert_eq!(placed.caption.map(|(at, size)| (at.y, size)), Some((164.0, 13.0)));
     }

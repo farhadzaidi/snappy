@@ -1,5 +1,6 @@
+import type { AppState } from "../bridge/protocol";
 import { currentLayout, isEnabled, presetLayouts } from "../core/layouts";
-import type { AppState, Layout } from "../core/model";
+import type { Layout } from "../core/model";
 import { selectedDisplay, type Collection, type Session } from "../state/session";
 
 export interface Library {
@@ -8,10 +9,9 @@ export interface Library {
   browsed: Layout | undefined;
   /** The selected display's layout. */
   inUse: Layout | undefined;
-  displayId: string | undefined;
 }
 
-export function collectionLayouts(app: AppState, collection: Collection): Layout[] {
+function collectionLayouts(app: AppState, collection: Collection): Layout[] {
   return collection === "presets" ? presetLayouts() : app.settings.layouts.custom;
 }
 
@@ -29,7 +29,7 @@ export function library(app: AppState, session: Session): Library {
     layouts.find((layout) => layout.id === session.browsedLayoutId) ??
     layouts.find((layout) => layout.id === inUse?.id) ??
     layouts[0];
-  return { layouts, browsed, inUse, displayId: display?.id };
+  return { layouts, browsed, inUse };
 }
 
 /** In use on the selected display, disabled, or neither. */

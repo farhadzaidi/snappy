@@ -1,9 +1,7 @@
 import { useState } from "react";
 
+import { coreLimits } from "../core/limits";
 import type { Workspace } from "../core/model";
-
-/** Workspace names are 1 to 80 characters and not blank. */
-const MAX_NAME_LENGTH = 80;
 
 /**
  * The name commits on Enter or on leaving the field, trimmed; an invalid name
@@ -24,7 +22,7 @@ export function WorkspaceName({
     }
     const name = typed.trim();
     setTyped(null);
-    if (name !== "" && [...name].length <= MAX_NAME_LENGTH && name !== workspace.name) {
+    if (name !== "" && [...name].length <= coreLimits().nameLength && name !== workspace.name) {
       onRename(name);
     }
   };
@@ -34,6 +32,7 @@ export function WorkspaceName({
       className="workspace-name"
       aria-label="Workspace name"
       value={typed ?? workspace.name}
+      maxLength={coreLimits().nameLength}
       onChange={(event) => setTyped(event.target.value)}
       onBlur={commit}
       onKeyDown={(event) => {

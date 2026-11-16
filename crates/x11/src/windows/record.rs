@@ -12,9 +12,9 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::rust_connection::RustConnection;
 
-use crate::eligibility::{WindowFacts, WindowType};
-use crate::frames::{Extents, FrameGeometry};
-use crate::x::Atoms;
+use super::eligibility::{WindowFacts, WindowType};
+use super::frames::{Extents, FrameGeometry};
+use crate::xserver::Atoms;
 use snappy_linux::process;
 
 /// `_NET_WM_DESKTOP` for windows shown on every desktop.

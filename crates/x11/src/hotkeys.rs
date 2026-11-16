@@ -9,8 +9,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt, GrabMode, ModMask};
 use x11rb::wrapper::ConnectionExt as _;
 
-use crate::shared::Shared;
-use crate::x::lock;
+use crate::shared::{Shared, lock};
 
 /// A key as grabbed: keycode and modifier mask without lock bits.
 type Grab = (u8, u16);

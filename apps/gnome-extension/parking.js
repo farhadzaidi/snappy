@@ -12,6 +12,8 @@ import * as WorkspaceThumbnail from 'resource:///org/gnome/shell/ui/workspaceThu
 
 /** Why a window can't be parked, as the app's protocol names it. */
 export const REFUSED_ALL_WORKSPACES = 'allWorkspaces';
+/** GNOME didn't move the window to the parking workspace. */
+export const REFUSED_NOT_MOVED = 'notMoved';
 
 export class Parking {
     constructor(emit) {
@@ -120,9 +122,9 @@ export class Parking {
         const parking = this._ensureParking();
         if (window.get_workspace() !== parking)
             window.change_workspace(parking);
-        if (window.is_on_all_workspaces() || window.get_workspace() !== parking)
+        if (window.is_on_all_workspaces())
             return REFUSED_ALL_WORKSPACES;
-        return null;
+        return window.get_workspace() === parking ? null : REFUSED_NOT_MOVED;
     }
 
     /** Brings a window back to where shown windows belong. */

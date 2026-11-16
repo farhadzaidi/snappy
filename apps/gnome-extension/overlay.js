@@ -8,6 +8,9 @@ import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+/** What the overlay's actors are called; the live tests' helper finds them by it. */
+const ACTOR_NAME = 'snappy-overlay';
+
 /** A text's box is this many times its font size tall, room for the shadow too. */
 const TEXT_BOX_PER_SIZE = 2;
 
@@ -85,7 +88,7 @@ export class Overlays {
         if (!actor) {
             if (marks.outlines.length === 0)
                 return;
-            actor = new St.Widget({name: 'snappy-overlay', reactive: false, visible: false});
+            actor = new St.Widget({name: ACTOR_NAME, reactive: false, visible: false});
             Main.layoutManager.uiGroup.add_child(actor);
             this._marks.set(display, actor);
         }
@@ -110,7 +113,7 @@ export class Overlays {
     _container(display, workArea) {
         let entry = this._displays.get(display);
         if (!entry) {
-            const actor = new St.Widget({name: 'snappy-overlay', reactive: false, visible: false});
+            const actor = new St.Widget({name: ACTOR_NAME, reactive: false, visible: false});
             Main.layoutManager.uiGroup.add_child(actor);
             entry = {actor, scene: null};
             this._displays.set(display, entry);
@@ -137,9 +140,11 @@ export class Overlays {
         return entry;
     }
 
-    /** Shows one display's overlay, hiding any other. */
+    /** Shows one display's overlay, hiding any other; never on the lock screen. */
     show(display, scene) {
         const entry = this.prepare(display, scene);
+        if (this._locked)
+            return;
         if (this._visible !== display)
             this.hide();
         Main.layoutManager.uiGroup.set_child_above_sibling(entry.actor, null);

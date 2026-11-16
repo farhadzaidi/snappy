@@ -1,7 +1,8 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 import type { FakeDaemon } from "../src/bridge/fake/fakeDaemon";
-import type { Command, KeyChord } from "../src/core/model";
+import type { Command } from "../src/bridge/protocol";
+import type { KeyChord } from "../src/core/model";
 
 declare global {
   interface Window {
@@ -51,10 +52,18 @@ export async function expectRecordersLinedUp(
   return recorders[0].right - recorders[0].left;
 }
 
+/**
+ * How long the app may take to first appear: the dev server compiles the WebAssembly core on
+ * first use, which a busy machine running many tests at once can take well past the default.
+ */
+const FIRST_LOAD_TIMEOUT_MS = 30_000;
+
 /** Open the settings app against a fresh fake daemon. */
 export async function openApp(page: Page, platform = "macos"): Promise<void> {
   await page.goto(`/?platform=${platform}`);
-  await expect(page.getByRole("heading", { name: "Layouts", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Layouts", exact: true })).toBeVisible({
+    timeout: FIRST_LOAD_TIMEOUT_MS,
+  });
 }
 
 export async function showPage(

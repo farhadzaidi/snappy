@@ -178,9 +178,9 @@ pub(super) fn menu_bar_menu_opens(_context: &mut Context) -> Result<Outcome, Str
 /// on Wayland, Snappy's extension puts the item in the top bar.
 #[cfg(target_os = "linux")]
 pub(super) fn menu_bar_item(context: &mut Context) -> Result<Outcome, String> {
-    if crate::gnome::is_session() {
+    if crate::desktop::gnome::is_session() {
         let started = Instant::now();
-        while !crate::gnome::indicator_shown()? {
+        while !crate::desktop::gnome::indicator_shown()? {
             if started.elapsed() > SETTLE_TIMEOUT {
                 return Err("Snappy's item isn't in the top bar".to_owned());
             }

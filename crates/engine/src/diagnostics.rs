@@ -5,10 +5,15 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use snappy_core::bounds::BoundsStep;
 use snappy_core::geometry::{Point, Rect};
+use snappy_core::placement::bounds::BoundsStep;
 
-use crate::store::{append_log, write_log};
+use crate::store::{append_log, file_names, write_log};
+
+/// `seconds` in milliseconds, as diagnostics record durations.
+pub(crate) fn millis(seconds: f64) -> f64 {
+    seconds * 1000.0
+}
 
 const DROPS_KEPT: usize = 20;
 const LIFECYCLE_KEPT: usize = 30;
@@ -82,14 +87,14 @@ impl PhaseClock {
     /// End the current phase at `now`, returning how long it took in milliseconds; the
     /// next phase begins then.
     pub fn lap(&mut self, now: f64) -> f64 {
-        let elapsed = (now - self.phase_began) * 1000.0;
+        let elapsed = millis(now - self.phase_began);
         self.phase_began = now;
         elapsed
     }
 
     /// Milliseconds from the request to `now`.
     pub fn total(&self, now: f64) -> f64 {
-        (now - self.requested_at) * 1000.0
+        millis(now - self.requested_at)
     }
 }
 
@@ -120,7 +125,7 @@ impl Diagnostics {
     }
 
     pub fn record_drop(&self, record: DropRecord) {
-        append_log(&self.folder.join("drops.json"), record, DROPS_KEPT);
+        append_log(&self.folder.join(file_names::DROPS), record, DROPS_KEPT);
     }
 
     pub fn record_lifecycle(
@@ -138,11 +143,7 @@ impl Diagnostics {
             active,
             windows,
         };
-        append_log(
-            &self.folder.join("workspace-lifecycle.json"),
-            record,
-            LIFECYCLE_KEPT,
-        );
+        append_log(&self.folder.join(file_names::LIFECYCLE), record, LIFECYCLE_KEPT);
     }
 
     pub fn record_switch(&mut self, timing: SwitchTiming) {
@@ -159,7 +160,7 @@ impl Diagnostics {
     /// Write switch timings at quit; nothing when there are none.
     pub fn export_timings(&self) {
         if !self.timings.is_empty() {
-            let _ = write_log(&self.folder.join("workspace-performance.json"), &self.timings);
+            let _ = write_log(&self.folder.join(file_names::PERFORMANCE), &self.timings);
         }
     }
 }
@@ -184,7 +185,7 @@ mod tests {
             );
         }
 
-        let bytes = std::fs::read(folder.join("workspace-lifecycle.json")).unwrap();
+        let bytes = std::fs::read(folder.join(file_names::LIFECYCLE)).unwrap();
         let records: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(records.len(), LIFECYCLE_KEPT);
         assert_eq!(LIFECYCLE_KEPT, 30);
@@ -214,7 +215,7 @@ mod tests {
     fn the_last_120_switch_timings_stay_in_memory_until_exported() {
         let folder = std::env::temp_dir().join(format!("snappy-timings-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
-        let file = folder.join("workspace-performance.json");
+        let file = folder.join(file_names::PERFORMANCE);
         let mut diagnostics = Diagnostics::new(folder);
         diagnostics.export_timings();
         assert!(!file.exists(), "nothing is written without switches");

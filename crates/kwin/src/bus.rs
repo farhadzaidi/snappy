@@ -1,29 +1,34 @@
 //! The session bus: the daemon's own name, which the script calls with events and to collect
 //! requests; the requests waiting for it; and calls to KWin and KDE's shortcut service.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::mpsc::{self, Sender};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
+use snappy_linux::dbus::BusThread;
+pub use snappy_linux::dbus::CallError;
 use zbus::blocking::{Connection, MessageIterator};
 use zbus::fdo::RequestNameFlags;
 use zbus::message::Type;
 use zbus::{MatchRule, Message};
 
 use crate::error::KWinError;
-use crate::protocol::{Answer, BUS_NAME, DOORBELL, Event, INTERFACE, Numbered, OBJECT_PATH, Request};
+use crate::protocol::{
+    ANSWER_METHOD, Answer, BUS_NAME, DOORBELL, EVENT_METHOD, Event, INTERFACE, Numbered, OBJECT_PATH,
+    Request, TAKE_METHOD,
+};
 use snappy_linux::journal;
+use snappy_linux::names::{DBUS_NAME, DBUS_PATH};
 
 /// How long a request may take before the engine gives up on it. KWin answers from its main
 /// loop, normally within a frame.
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const KWIN_NAME: &str = "org.kde.KWin";
-const SCRIPTING_PATH: &str = "/Scripting";
-const SCRIPTING_INTERFACE: &str = "org.kde.kwin.Scripting";
-const SCRIPT_INTERFACE: &str = "org.kde.kwin.Script";
+pub const SCRIPTING_PATH: &str = "/Scripting";
+pub const SCRIPTING_INTERFACE: &str = "org.kde.kwin.Scripting";
+pub const SCRIPT_INTERFACE: &str = "org.kde.kwin.Script";
 pub const GLOBAL_ACCEL_NAME: &str = "org.kde.kglobalaccel";
 const GLOBAL_ACCEL_PATH: &str = "/kglobalaccel";
 const GLOBAL_ACCEL_INTERFACE: &str = "org.kde.KGlobalAccel";
@@ -36,43 +41,22 @@ pub const KXKBRC_PATH: &str = "/kxkbrc";
 pub const CONFIG_NOTIFY_INTERFACE: &str = "org.kde.kconfig.notify";
 pub const CONFIG_CHANGED: &str = "ConfigChanged";
 pub const SCREEN_SAVER_INTERFACE: &str = "org.freedesktop.ScreenSaver";
-const DBUS_NAME: &str = "org.freedesktop.DBus";
-const DBUS_PATH: &str = "/org/freedesktop/DBus";
 
-/// Why a request didn't succeed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CallError {
-    /// The bus, KWin, or the script didn't answer.
-    Unreachable(String),
-    /// The script answered with an error, such as `gone` for a closed window.
-    Refused(String),
-    /// A reply that doesn't have the shape this version expects.
-    Malformed(String),
+/// Where KWin offers the script it numbered `id`.
+pub fn script_path(id: i32) -> String {
+    format!("{SCRIPTING_PATH}/Script{id}")
 }
 
-impl CallError {
-    /// Logs what went wrong for the daemon's output, once, where it happened.
-    fn logged(self) -> CallError {
-        if let CallError::Malformed(detail) = &self {
-            journal::warn(format_args!("unexpected reply from KWin: {detail}"));
-        }
-        self
-    }
-
-    pub fn is_refusal(&self, reason: &str) -> bool {
-        matches!(self, CallError::Refused(refused) if refused == reason)
-    }
-}
+/// Who answers requests, as the daemon's output names it.
+const REPLIER: &str = "KWin";
 
 /// What the serving thread hands the event loop.
 pub enum Served {
     Event(Event),
-    /// A call that didn't come from KWin, or a body that didn't parse; logged and dropped.
+    /// A call that didn't come from KWin, which is refused, or an event that didn't parse,
+    /// which is logged; either is dropped.
     Ignored,
 }
-
-/// Work for the bus thread.
-type Job = Box<dyn FnOnce(&Connection) + Send>;
 
 /// The requests waiting for the script, and the answers waiting for whoever asked.
 #[derive(Default)]
@@ -85,6 +69,8 @@ struct Exchange {
 struct ExchangeState {
     next_seq: u64,
     waiting: VecDeque<String>,
+    /// The requests someone still waits on; a late answer to one that timed out is dropped.
+    pending: HashSet<u64>,
     answers: HashMap<u64, Answer>,
     /// The script was rung and hasn't yet been told there is nothing more, so requests
     /// queued meanwhile reach it without another ring.
@@ -110,19 +96,20 @@ impl Exchange {
     fn answer(&self, answers: Vec<Answer>) {
         let mut state = self.state();
         for answer in answers {
-            state.answers.insert(answer.seq, answer);
+            if state.pending.contains(&answer.seq) {
+                state.answers.insert(answer.seq, answer);
+            }
         }
         self.answered.notify_all();
     }
 }
 
 /// The session bus connection the adapter shares between its threads. Calls to other
-/// services run on a bus thread of their own: the engine thread drives an async runtime,
-/// inside which zbus can't block, so it waits for the bus thread's answer instead.
+/// services run on the bus thread.
 #[derive(Clone)]
 pub struct Bus {
     conn: Connection,
-    jobs: Sender<Job>,
+    thread: BusThread,
     exchange: Arc<Exchange>,
 }
 
@@ -140,18 +127,10 @@ impl Bus {
         if reply != zbus::fdo::RequestNameReply::PrimaryOwner {
             return Err(KWinError::NameTaken);
         }
-        let (jobs, queue) = mpsc::channel::<Job>();
-        let worker = conn.clone();
-        std::thread::Builder::new()
-            .name("snappy-kwin-bus".into())
-            .spawn(move || {
-                for job in queue {
-                    job(&worker);
-                }
-            })?;
+        let thread = BusThread::spawn(&conn, "snappy-kwin-bus")?;
         Ok(Bus {
             conn,
-            jobs,
+            thread,
             exchange: Arc::default(),
         })
     }
@@ -163,16 +142,6 @@ impl Bus {
     /// Gives the daemon's name back, as quitting does.
     pub fn release_name(&self) {
         let _ = self.conn.release_name(BUS_NAME);
-    }
-
-    /// Runs `job` on the bus thread and waits for its result; `None` if the thread is gone.
-    fn run<T: Send + 'static>(&self, job: impl FnOnce(&Connection) -> T + Send + 'static) -> Option<T> {
-        let (answer, answered) = mpsc::channel();
-        let job: Job = Box::new(move |conn| {
-            let _ = answer.send(job(conn));
-        });
-        self.jobs.send(job).ok()?;
-        answered.recv().ok()
     }
 
     /// Calls a method of another service and reads its reply's body.
@@ -188,16 +157,15 @@ impl Bus {
         B: serde::Serialize + zbus::zvariant::DynamicType + Send + 'static,
         R: for<'d> zbus::zvariant::DynamicDeserialize<'d> + Send + 'static,
     {
-        self.run(move |conn| {
+        self.thread.call(move |conn| {
             let reply = conn
                 .call_method(Some(destination), path.as_str(), Some(interface), method, &body)
                 .map_err(|error| CallError::Unreachable(error.to_string()))?;
             reply
                 .body()
                 .deserialize::<R>()
-                .map_err(|error| CallError::Malformed(error.to_string()).logged())
+                .map_err(|error| CallError::Malformed(error.to_string()).logged(REPLIER))
         })
-        .unwrap_or_else(|| Err(CallError::Unreachable("the bus thread stopped".to_owned())))
     }
 
     /// Sends a request to the script and reads the `ok` value of its answer.
@@ -207,8 +175,9 @@ impl Bus {
             let seq = state.next_seq;
             state.next_seq += 1;
             let json = serde_json::to_string(&Numbered { seq, request })
-                .map_err(|error| CallError::Malformed(error.to_string()).logged())?;
+                .map_err(|error| CallError::Malformed(error.to_string()).logged(REPLIER))?;
             state.waiting.push_back(json);
+            state.pending.insert(seq);
             (seq, !std::mem::replace(&mut state.collecting, true))
         };
         if ring {
@@ -218,7 +187,8 @@ impl Bus {
         if let Some(error) = answer.error {
             return Err(CallError::Refused(error));
         }
-        serde_json::from_value(answer.ok).map_err(|error| CallError::Malformed(error.to_string()).logged())
+        serde_json::from_value(answer.ok)
+            .map_err(|error| CallError::Malformed(error.to_string()).logged(REPLIER))
     }
 
     /// A request whose answer carries nothing.
@@ -231,6 +201,7 @@ impl Bus {
         let mut state = self.exchange.state();
         loop {
             if let Some(answer) = state.answers.remove(&seq) {
+                state.pending.remove(&seq);
                 return Ok(answer);
             }
             let left = deadline.saturating_duration_since(Instant::now());
@@ -239,6 +210,7 @@ impl Bus {
                 // for the next one.
                 let tag = format!("{{\"seq\":{seq},");
                 state.waiting.retain(|json| !json.starts_with(&tag));
+                state.pending.remove(&seq);
                 state.collecting = false;
                 return Err(CallError::Unreachable("KWin's script didn't answer".to_owned()));
             }
@@ -253,7 +225,7 @@ impl Bus {
 
     /// Triggers the script's doorbell through KDE's shortcut service, without waiting.
     fn ring(&self) {
-        let job: Job = Box::new(|conn| {
+        self.thread.post(|conn| {
             let rung = conn.call_method(
                 Some(GLOBAL_ACCEL_NAME),
                 KWIN_COMPONENT_PATH,
@@ -265,7 +237,6 @@ impl Bus {
                 journal::warn(format_args!("couldn't reach KWin's script: {error}"));
             }
         });
-        let _ = self.jobs.send(job);
     }
 
     /// Answers the script's calls until the bus closes, passing each event to `deliver` in
@@ -345,21 +316,26 @@ impl Bus {
             .map(|member| member.as_str().to_owned())
             .unwrap_or_default();
         match member.as_str() {
-            "Event" => {
+            EVENT_METHOD => {
                 let _ = self.conn.reply(&header, &());
-                let served = message
+                let event = message
                     .body()
                     .deserialize::<String>()
                     .ok()
-                    .and_then(|json| serde_json::from_str::<Event>(&json).ok())
-                    .map_or(Served::Ignored, Served::Event);
-                Some(served)
+                    .and_then(|json| serde_json::from_str::<Event>(&json).ok());
+                Some(event.map_or_else(
+                    || {
+                        journal::warn("KWin's script sent an event Snappy can't read");
+                        Served::Ignored
+                    },
+                    Served::Event,
+                ))
             }
-            "Take" => {
+            TAKE_METHOD => {
                 let _ = self.conn.reply(&header, &(self.exchange.take(),));
                 None
             }
-            "Answer" => {
+            ANSWER_METHOD => {
                 match message
                     .body()
                     .deserialize::<String>()
@@ -424,13 +400,7 @@ impl Bus {
         if id < 0 {
             return Err(CallError::Refused("KWin didn't load the script".to_owned()));
         }
-        self.call_method::<_, ()>(
-            KWIN_NAME,
-            format!("{SCRIPTING_PATH}/Script{id}"),
-            SCRIPT_INTERFACE,
-            "run",
-            (),
-        )
+        self.call_method::<_, ()>(KWIN_NAME, script_path(id), SCRIPT_INTERFACE, "run", ())
     }
 
     /// Registers a shortcut action with KDE's shortcut service: component, action, and their
@@ -484,7 +454,7 @@ impl Bus {
             crate::caps_lock::CHANGED_GROUP.to_owned(),
             keys.iter().map(|key| key.as_bytes().to_vec()).collect(),
         )]);
-        self.run(move |conn| {
+        self.thread.call(move |conn| {
             conn.emit_signal(
                 None::<&str>,
                 KXKBRC_PATH,
@@ -494,7 +464,6 @@ impl Bus {
             )
             .map_err(|error| CallError::Unreachable(error.to_string()))
         })
-        .unwrap_or_else(|| Err(CallError::Unreachable("the bus thread stopped".to_owned())))
     }
 
     /// Every action holding exactly this key sequence, as `(component, action)`.
@@ -551,10 +520,12 @@ mod tests {
     }
 
     #[test]
-    fn answers_wait_for_whoever_asked() {
+    fn answers_wait_for_whoever_asked_and_late_ones_are_dropped() {
         let exchange = Exchange::default();
-        exchange.answer(vec![answer(4), answer(2)]);
+        exchange.state().pending.extend([2, 4]);
+        exchange.answer(vec![answer(4), answer(2), answer(3)]);
         let state = exchange.state();
         assert!(state.answers.contains_key(&2) && state.answers.contains_key(&4));
+        assert!(!state.answers.contains_key(&3), "no one waits for 3 any more");
     }
 }

@@ -14,8 +14,7 @@ const MOD1: u32 = 1 << 3;
 const MOD4: u32 = 1 << 6;
 const SUPER: u32 = 1 << 26;
 
-/// Caps Lock's evdev keycode.
-const CAPS_LOCK: u8 = 66;
+use snappy_linux::key_codes::CAPS_LOCK;
 /// The evdev keycodes of both hands' Shift, Control, Alt, and Super keys.
 const MODIFIER_KEYS: [u8; 8] = [50, 62, 37, 105, 64, 108, 133, 134];
 

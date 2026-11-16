@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use crate::identity::{Owner, Registry};
-use crate::process;
+use crate::managed::identity::{Owner, Registry};
+use crate::managed::process;
 
 /// What the engine asked to observe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -38,6 +38,10 @@ pub struct Shared {
     processes: Mutex<HashMap<Owner, ProcessFacts>>,
 }
 
+/// Processes whose facts are kept at once. Facts are read again when needed, so the cache
+/// starts over past this rather than growing with every process that ever showed a window.
+const MAX_CACHED_PROCESSES: usize = 256;
+
 /// Locks a mutex, recovering from a panic on another thread.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -60,7 +64,11 @@ impl Shared {
             app: process::executable(owner.pid).unwrap_or_else(|| format!("pid-{}", owner.pid)),
             elevated: process::is_elevated_above_self(owner.pid),
         };
-        lock(&self.processes).insert(owner, facts.clone());
+        let mut processes = lock(&self.processes);
+        if processes.len() >= MAX_CACHED_PROCESSES {
+            processes.clear();
+        }
+        processes.insert(owner, facts.clone());
         facts
     }
 

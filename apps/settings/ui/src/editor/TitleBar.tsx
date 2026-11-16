@@ -1,4 +1,5 @@
 import { optionsFor } from "../core/layouts";
+import { coreLimits } from "../core/limits";
 import { useObservable } from "../state/observable";
 import { useAppState, useSelectedDisplay, useServices } from "../state/services";
 import { Button } from "../ui/Button";
@@ -31,6 +32,7 @@ export function TitleBar() {
           aria-label="Layout name"
           title="Click the title to rename this layout."
           value={layout.name}
+          maxLength={coreLimits().nameLength}
           onFocus={() => editor.beginStep()}
           onChange={(event) => editor.previewName(event.target.value)}
           onBlur={() => editor.endStep()}

@@ -2,9 +2,8 @@
 
 use snappy_core::error::WindowError;
 
-pub const FULL_SCREEN: &str = "Leave full screen before tiling this window.";
-pub const NOT_STANDARD: &str = "Choose a standard application window.";
-pub const NOT_MOVABLE: &str = "This window does not allow moving and resizing.";
+pub use snappy_core::eligibility::NOT_STANDARD;
+
 pub const ELEVATED: &str = "Snappy can't move windows of apps running as administrator.";
 pub const NO_FOCUSED_WINDOW: &str = "No movable window is focused.";
 pub const WINDOW_GONE: &str = "The window is no longer available.";

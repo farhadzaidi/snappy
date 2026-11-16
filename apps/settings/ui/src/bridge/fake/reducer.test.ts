@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { AppState, Command, KeyChord, Layout } from "../../core/model";
+import { PLATFORMS, type KeyChord, type Layout } from "../../core/model";
+import type { AppState, Command } from "../protocol";
 import { initialState } from "./fixtures";
-import { applyCommand, moveItems } from "./reducer";
+import { applyCommand } from "./reducer";
 
 const freeSystem = { isAvailable: () => true };
 
@@ -105,6 +106,21 @@ describe("fake daemon", () => {
     expect(state.status?.message).toBe("Custom layout deleted.");
   });
 
+  it("deleting a custom layout clears it from every workspace, and presets stay", () => {
+    const { state } = run(
+      initialState("macos"),
+      { kind: "setWorkspacesEnabled", enabled: true },
+      { kind: "saveLayout", layout: custom, options: noOptions, display: "display-1" },
+      { kind: "deleteLayout", layout: "custom-1" },
+    );
+    const assigned = state.settings.workspaces.items.flatMap((item) => Object.values(item.displays));
+    expect(assigned).not.toContain("custom-1");
+
+    const preset = run(state, { kind: "deleteLayout", layout: "halves" });
+    expect(preset.state.settings).toEqual(state.settings);
+    expect(preset.state.status).toEqual(state.status);
+  });
+
   it("enabling and disabling report the layout", () => {
     const disabled = run(initialState("macos"), { kind: "setLayoutEnabled", layout: "rows", enabled: false });
     expect(disabled.state.settings.layouts.options["rows"]?.enabled).toBe(false);
@@ -135,7 +151,7 @@ describe("fake daemon", () => {
   });
 
   it("every platform moves to the nearest empty zone with Snappy + Space", () => {
-    for (const platform of ["macos", "windows", "linux"] as const) {
+    for (const platform of PLATFORMS) {
       expect(initialState(platform).settings.navigation.nearestEmpty).toEqual(snappy("Space"));
     }
   });
@@ -210,7 +226,7 @@ describe("fake daemon", () => {
   });
 
   it("every platform starts with the same Snappy-key workspace shortcuts and no undo or redo", () => {
-    for (const platform of ["macos", "windows", "linux"] as const) {
+    for (const platform of PLATFORMS) {
       const { workspaces, history } = initialState(platform).settings;
       expect(workspaces.previous).toMatchObject(snappy("Semicolon"));
       expect(workspaces.next).toMatchObject(snappy("Quote"));
@@ -227,7 +243,7 @@ describe("fake daemon", () => {
   });
 
   it("every platform focuses with Snappy + I J K L, selects with Return, and clears with backslash", () => {
-    for (const platform of ["macos", "windows", "linux"] as const) {
+    for (const platform of PLATFORMS) {
       const { navigation } = initialState(platform).settings;
       expect(navigation.focusUp).toMatchObject(snappy("KeyI"));
       expect(navigation.focusLeft).toMatchObject(snappy("KeyJ"));
@@ -321,7 +337,6 @@ describe("fake daemon", () => {
       "workspace-1",
     ]);
     expect(state.settings.workspaces.items[2]?.switchShortcut).toEqual(switchOne);
-    expect(moveItems(["a", "b", "c"], [2], 0)).toEqual(["c", "a", "b"]);
   });
 
   it("deleting the active workspace activates the first other one", () => {

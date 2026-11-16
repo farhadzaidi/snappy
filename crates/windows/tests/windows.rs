@@ -1,6 +1,7 @@
 //! The adapter against a real Windows desktop: real windows in another process, real
 //! hotkeys, hooks, and input. These tests run only when `SNAPPY_WINDOWS_TEST=1`, which
-//! `tools/live/windows/test.sh` sets inside the test VM's desktop session. Anywhere else
+//! `tools/live/windows/desktop.sh` sets inside the test VM's desktop session, where
+//! `tools/live/windows/test.sh` runs them. Anywhere else
 //! they print "skipped" and pass, so `cargo test` never touches a desktop.
 //!
 //! Windows to act on come from this test binary run again as a helper process, because
@@ -15,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, KeyChord, Modifier, Mods, Platform, SnappyKey};
+use snappy_core::keys::{Combo, KeyChord, Modifier, Mods, Os, SnappyKey};
 use snappy_core::settings::{Settings, Workspace};
 use snappy_core::workspace::{ParkingPolicy, parking_origin};
 use snappy_platform::{
@@ -527,7 +528,7 @@ fn tool_and_fixed_size_windows_are_refused() {
     let fixed = Host::open(Kind::Fixed, Rect::new(150.0, 150.0, 500.0, 400.0));
     assert_eq!(
         message(session.platform.window_at(fixed.frame().center())),
-        "This window does not allow moving and resizing."
+        "This window doesn't allow moving and resizing."
     );
 }
 
@@ -708,7 +709,7 @@ fn caps_lock_held_fires_snappy_shortcuts_and_never_turns_itself_on() {
 fn the_windows_default_shortcuts_are_free() {
     require_desktop!();
     let mut session = Session::start();
-    let settings = Settings::defaults(Platform::Windows);
+    let settings = Settings::defaults(Os::Windows);
     let mut chords: Vec<KeyChord> = settings
         .navigation
         .chords()
@@ -730,7 +731,7 @@ fn the_windows_default_shortcuts_are_free() {
                 .platform
                 .is_available(&chord.combo(snappy_core::keys::SnappyKey::DEFAULT))
         })
-        .map(|chord| chord.long_label(Platform::Windows))
+        .map(|chord| chord.long_label(Os::Windows))
         .collect();
     assert!(taken.is_empty(), "Windows holds {taken:?}");
 }

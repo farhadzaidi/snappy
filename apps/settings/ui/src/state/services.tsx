@@ -1,7 +1,8 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 import type { Bridge } from "../bridge/bridge";
-import type { AppState, Command, PlatformName, Refusal } from "../core/model";
+import type { AppState, Command } from "../bridge/protocol";
+import type { PlatformName, Refusal } from "../core/model";
 import type { EditorStore } from "../editor/editorStore";
 import type { Recording } from "../recorder/recording";
 import type { DaemonClient, SendOptions } from "./daemonClient";

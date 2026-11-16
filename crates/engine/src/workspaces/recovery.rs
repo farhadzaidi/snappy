@@ -4,14 +4,15 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use snappy_core::bounds::fitted_origin;
 use snappy_core::geometry::{Point, Rect};
+use snappy_core::placement::bounds::fitted_origin;
 use snappy_core::workspace::{
     Found, Journaled, Member, Relaunch, Session, is_parked, reachable, relaunch, sits_at,
 };
 use snappy_platform::{Platform, RecoveryKey, WindowInfo, WindowState};
 
-use crate::core::Core;
+use crate::log_event::LogEvent;
+use crate::state::EngineState;
 use crate::store::{StateFile, remove_state, write_state};
 
 /// One window's saved workspace state on disk, in the journal and membership files.
@@ -42,7 +43,7 @@ impl StateFile for SavedWindows {
 }
 
 /// The journal's or membership's windows; none when the file is missing or was unreadable.
-pub(super) fn read_windows<P: Platform>(core: &mut Core<P>, path: &Path) -> Option<Vec<SavedWindow>> {
+pub(super) fn read_windows<P: Platform>(core: &mut EngineState<P>, path: &Path) -> Option<Vec<SavedWindow>> {
     core.read_state::<SavedWindows>(path)
         .read()
         .map(|file| file.windows)
@@ -58,7 +59,7 @@ pub(super) fn write_windows(path: &Path, windows: &[SavedWindow]) -> std::io::Re
 /// A window a previous run left parked for a workspace that isn't showing joins it again,
 /// keeping its home frame, and stays where it is.
 pub(super) fn rejoin<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     session: &mut Session,
     info: &WindowInfo,
     entry: &SavedWindow,
@@ -88,7 +89,7 @@ pub(super) fn rejoin<P: Platform>(
             entry.parked_origin.or(Some(info.frame.origin()))
         },
     };
-    core.trace("workspaceJoin", || {
+    core.trace(LogEvent::WorkspaceJoin, || {
         serde_json::json!({
             "window": info.id.0,
             "app": info.app,
@@ -101,7 +102,7 @@ pub(super) fn rejoin<P: Platform>(
     session.enroll(info.id, member);
 }
 
-pub(super) fn remembered_entry<P: Platform>(core: &Core<P>, info: &WindowInfo) -> Option<SavedWindow> {
+pub(super) fn remembered_entry<P: Platform>(core: &EngineState<P>, info: &WindowInfo) -> Option<SavedWindow> {
     let key = info.recovery_key.as_ref()?;
     core.workspaces
         .remembered
@@ -137,7 +138,7 @@ pub(super) enum LeftParked {
 }
 
 /// Go through the windows a previous run left parked.
-pub(super) fn recover<P: Platform>(core: &mut Core<P>, left_parked: LeftParked) -> Recovered {
+pub(super) fn recover<P: Platform>(core: &mut EngineState<P>, left_parked: LeftParked) -> Recovered {
     let path = core.paths.journal();
     // Without a readable journal, windows found parked join as at any start: the workspace
     // membership remembers, or brought back on screen.
@@ -194,7 +195,7 @@ pub(super) fn recover<P: Platform>(core: &mut Core<P>, left_parked: LeftParked) 
                     .filter_map(|w| w.recovery_key.as_ref())
                     .filter(|key| key.pid == entry.key.pid)
                     .collect();
-                core.flag("workspaceWindowNotFound", || {
+                core.flag(LogEvent::WorkspaceWindowNotFound, || {
                     serde_json::json!({ "key": entry.key, "sameProcess": process, "atParkedSpot": by_position.len() })
                 });
                 remaining.push(entry);
@@ -260,7 +261,7 @@ pub(super) fn recover<P: Platform>(core: &mut Core<P>, left_parked: LeftParked) 
 /// remembered window is dropped when it closes or its app quits, and an entry whose process
 /// went without saying so is dropped at the next start, which never applies it to another
 /// process, so saving needn't list every window to check.
-pub(super) fn save_membership<P: Platform>(core: &mut Core<P>, session: &Session) {
+pub(super) fn save_membership<P: Platform>(core: &mut EngineState<P>, session: &Session) {
     let tracked: Vec<SavedWindow> = session
         .members()
         .iter()

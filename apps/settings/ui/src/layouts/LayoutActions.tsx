@@ -1,9 +1,9 @@
 import { useRef, useState, type MouseEvent, type RefObject } from "react";
 
+import type { Display } from "../bridge/protocol";
 import { isEnabled, isPreset, optionsFor } from "../core/layouts";
-import type { Display, Layout } from "../core/model";
+import type { Layout } from "../core/model";
 import { useAppState, useSelectedDisplay, useSend, useServices } from "../state/services";
-import { ActionBar, type BarAction } from "../ui/ActionBar";
 import { ToolButton } from "../ui/Button";
 import { ConfirmPopover } from "../ui/ConfirmPopover";
 import {
@@ -15,6 +15,7 @@ import {
   PowerIcon,
   TrashIcon,
 } from "../ui/icons";
+import { ActionBar, type BarAction } from "./ActionBar";
 
 /** Groups of layout actions: viewing and editing, then managing. */
 const VIEW = 0;

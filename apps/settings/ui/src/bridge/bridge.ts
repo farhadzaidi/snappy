@@ -1,4 +1,5 @@
-import type { Command, Rect, ToSettings } from "../core/model";
+import type { Rect } from "../core/model";
+import type { Command, ToSettings } from "./protocol";
 
 /** The pipe to the daemon: daemon messages in, commands out. */
 export interface Transport {

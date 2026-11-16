@@ -1,4 +1,4 @@
-//! Native tab groups, read through Accessibility. `crate::tab_matching` says how macOS shows them
+//! Native tab groups, read through Accessibility. `tab_matching` says how macOS shows them
 //! and how hidden tabs are matched to their group.
 
 use std::collections::{BTreeSet, HashMap};
@@ -7,11 +7,11 @@ use snappy_core::geometry::Rect;
 use snappy_platform::{TabGroup, WindowId};
 
 use super::enumerate::{app_windows, is_minimized};
-use super::{Windows, window_facts};
+use super::registry;
+use super::tab_matching::{MaybeTab, ShownTab};
+use super::tracked::{Windows, window_facts};
 use crate::apps;
 use crate::ax::{self, AxElement, names};
-use crate::registry;
-use crate::tab_matching::{MaybeTab, ShownTab};
 use crate::thresholds::AX_ENUMERATION_TIMEOUT;
 
 impl Windows {

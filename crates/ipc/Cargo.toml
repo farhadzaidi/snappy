@@ -3,6 +3,10 @@ name = "snappy-ipc"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Messages between Snappy's daemon and its settings app."
 
 [dependencies]
 snappy-core = { path = "../core" }

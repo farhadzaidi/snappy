@@ -6,15 +6,16 @@ use snappy_core::keys::{KeyCode, Modifier};
 use snappy_platform::Display;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN};
 use windows::Win32::UI::Shell::{NOTIFYICONIDENTIFIER, Shell_NotifyIconGetRect};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowExW, GWL_EXSTYLE, GetWindowLongW, IsIconic, IsWindowVisible, PostMessageW,
     WM_CLOSE, WS_EX_TOPMOST,
 };
-use windows::core::{BOOL, w};
+use windows::core::BOOL;
 
 use crate::managed::record::{is_cloaked, pid, visible_frame as frame_of};
-use crate::{displays as display_list, keys};
+use crate::{app, displays as display_list, keys, tray};
 
 /// Use physical pixels everywhere, as the daemon does. Call before creating windows.
 pub fn set_dpi_aware() {
@@ -35,7 +36,13 @@ pub fn scan_code(code: &KeyCode) -> Option<(u16, bool)> {
 
 /// The virtual key of the left-hand key for `modifier`.
 pub fn modifier_key(modifier: Modifier) -> u16 {
-    keys::modifier_key(modifier).0
+    let key = match modifier {
+        Modifier::Shift => VK_LSHIFT,
+        Modifier::Ctrl => VK_LCONTROL,
+        Modifier::Alt => VK_LMENU,
+        Modifier::Meta => VK_LWIN,
+    };
+    key.0
 }
 
 /// A window's visible frame, as Snappy measures it.
@@ -88,7 +95,7 @@ fn daemon_window(daemon_pid: u32) -> Option<HWND> {
     let mut after: Option<HWND> = None;
     loop {
         // SAFETY: finds top-level windows of Snappy's class one after another.
-        let window = unsafe { FindWindowExW(None, after, w!("Snappy.Daemon"), None) }.ok()?;
+        let window = unsafe { FindWindowExW(None, after, app::CLASS, None) }.ok()?;
         if pid(window) == Some(daemon_pid) {
             return Some(window);
         }
@@ -104,7 +111,7 @@ pub fn has_tray_icon(daemon_pid: u32) -> bool {
     let icon = NOTIFYICONIDENTIFIER {
         cbSize: size_of::<NOTIFYICONIDENTIFIER>() as u32,
         hWnd: window,
-        uID: 1,
+        uID: tray::ICON_ID,
         ..NOTIFYICONIDENTIFIER::default()
     };
     // SAFETY: the identifier names that window's icon.

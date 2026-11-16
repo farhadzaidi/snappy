@@ -3,6 +3,10 @@ name = "snappy-live"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Snappy's live tests: the runner and the fixture app that drive the real daemon in a sandbox."
 
 [[bin]]
 name = "snappy-live"
@@ -14,13 +18,14 @@ path = "src/bin/snappy-fixture.rs"
 
 [dependencies]
 snappy-core = { path = "../core" }
+snappy-engine = { path = "../engine" }
 snappy-platform = { path = "../platform" }
 serde.workspace = true
 serde_json.workspace = true
 winit = "0.30"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-snappy-macos = { path = "../macos" }
+snappy-macos = { path = "../macos", features = ["reference"] }
 objc2 = "0.6"
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = [
@@ -34,16 +39,17 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-snappy-gnome = { path = "../gnome" }
+snappy-gnome = { path = "../gnome", features = ["reference"] }
+snappy-kwin = { path = "../kwin", features = ["reference"] }
 snappy-linux = { path = "../linux" }
-snappy-x11 = { path = "../x11" }
+snappy-x11 = { path = "../x11", features = ["reference"] }
 # Wayland shows a window only once it has drawn, so fixture windows paint a plain frame.
 softbuffer = { version = "0.4", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "x11-dlopen"] }
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 x11rb = { version = "0.14", default-features = false, features = ["res", "xtest"] }
 
 [target.'cfg(windows)'.dependencies]
-snappy-windows = { path = "../windows" }
+snappy-windows = { path = "../windows", features = ["reference"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

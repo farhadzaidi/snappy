@@ -5,9 +5,10 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use snappy_linux::journal;
 use snappy_platform::{LiveControl, PlatformEvent};
 
-use crate::bus::Bus;
+use crate::bus::{Bus, CallError};
 use crate::protocol::{Accelerator, MenuEntry, OverlayMarks, OverlayScene, Request};
 
 pub struct Shared {
@@ -87,20 +88,37 @@ impl Shared {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Asks the extension to hold `grabs`, and keeps the ones it holds to send again when it
+    /// starts over. Returns the IDs of those another program holds. When it doesn't answer,
+    /// which says nothing about the chords, every grab is kept for when it is back.
+    pub fn register(&self, grabs: Vec<Accelerator>) -> Vec<u32> {
+        let refused: Vec<u32> = match self.bus.call(&Request::Register { keys: grabs.clone() }) {
+            Ok(ids) => ids,
+            Err(CallError::Unreachable(_)) => {
+                let mut state = self.state();
+                state.registered = grabs;
+                state.replay_needed = true;
+                return Vec::new();
+            }
+            Err(_) => grabs.iter().map(|grab| grab.id).collect(),
+        };
+        self.state().registered = grabs
+            .into_iter()
+            .filter(|grab| !refused.contains(&grab.id))
+            .collect();
+        refused
+    }
+
     /// Tells a freshly started extension everything it was asked to keep before. Whatever it
-    /// had on screen is gone, so overlays are sent again on next use.
+    /// had on screen is gone, so overlays are sent again on next use. A shortcut another
+    /// program took meanwhile is let go, as registering refuses it.
     pub fn replay(&self) {
-        let requests = {
+        let (monitoring, registered, requests) = {
             let mut state = self.state();
             state.replay_needed = false;
             state.overlay_shown = None;
             state.overlay_prepared.clear();
-            let mut requests = vec![state.monitoring()];
-            if !state.registered.is_empty() {
-                requests.push(Request::Register {
-                    keys: state.registered.clone(),
-                });
-            }
+            let mut requests = Vec::new();
             if !state.followed.is_empty() {
                 requests.push(Request::Follow {
                     ids: state.followed.iter().copied().collect(),
@@ -120,8 +138,17 @@ impl Shared {
                 });
             }
             requests.extend(state.caps_lock.clone());
-            requests
+            (state.monitoring(), state.registered.clone(), requests)
         };
+        let _ = self.bus.send(&monitoring);
+        if !registered.is_empty() {
+            let taken = self.register(registered).len();
+            if taken > 0 {
+                journal::warn(format_args!(
+                    "{taken} of Snappy's shortcuts were taken while GNOME Shell's extension started over"
+                ));
+            }
+        }
         for request in requests {
             let _ = self.bus.send(&request);
         }

@@ -1,8 +1,8 @@
+import { MessageText } from "../shortcuts/MessageText";
 import { useObservable } from "../state/observable";
 import { useServices } from "../state/services";
 import { IconButton } from "../ui/Button";
 import { AlertIcon, CheckCircleIcon, CloseIcon } from "../ui/icons";
-import { MessageText } from "../ui/MessageText";
 
 /** Messages at the bottom of the window. */
 export function Toast() {

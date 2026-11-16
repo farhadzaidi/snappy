@@ -4,9 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 use snappy_core::geometry::Rect;
+use snappy_platform::overlay_style::{Paint, TEXT_SHADOW, TEXT_SHADOW_BLUR, mark_border, zone_style};
 use snappy_platform::{OverlayMarks as EngineMarks, OverlayScene as EngineScene};
 
-use crate::overlay_style::{Paint, SHADOW_BLUR, SHADOW_OPACITY, mark_border, place, place_mark, zone_style};
+use crate::overlay_style::{place, place_mark, rgb};
 
 /// A frame in the desktop shell's coordinates, as its script reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -91,11 +92,11 @@ pub struct OverlayText {
 }
 
 fn rgba(paint: Paint) -> [f64; 4] {
-    let color = paint.color;
+    let color = rgb(paint.tint);
     [
-        f64::from(color.0),
-        f64::from(color.1),
-        f64::from(color.2),
+        f64::from(color.red),
+        f64::from(color.green),
+        f64::from(color.blue),
         paint.alpha,
     ]
 }
@@ -106,8 +107,8 @@ pub fn scene(scene: &EngineScene, scale: f64) -> OverlayScene {
         text,
         center_y,
         size,
-        shadow_blur: SHADOW_BLUR * scale,
-        shadow_opacity: SHADOW_OPACITY,
+        shadow_blur: TEXT_SHADOW_BLUR * scale,
+        shadow_opacity: TEXT_SHADOW.alpha,
     };
     OverlayScene {
         work_area: Frame::from(scene.work_area),

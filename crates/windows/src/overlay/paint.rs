@@ -1,12 +1,13 @@
 //! Drawing a scene: every zone's shape, border, and number, plus the hovered zone's caption.
 
 use snappy_core::geometry::{Point, Rect};
+use snappy_platform::overlay_style::{MARK_BORDER_WIDTH, TEXT_SHADOW_BLUR, mark_border, zone_style};
 use snappy_platform::{OverlayMarks, OverlayScene};
 
 use super::canvas::{Canvas, Mask};
 use super::style::{
-    CAPTION_WEIGHT, MARK_BORDER_WIDTH, MARK_CORNER_RADIUS, NUMBER_WEIGHT, SHADOW_BLUR, SHADOW_COLOR,
-    TEXT_COLOR, mark_border, placement, zone_style,
+    CAPTION_WEIGHT, DEFAULT_ACCENT, MARK_CORNER_RADIUS, NUMBER_WEIGHT, SHADOW_COLOR, TEXT_COLOR, color,
+    placement,
 };
 
 /// Rendered text, as coverage masks.
@@ -17,22 +18,15 @@ pub trait Glyphs {
 
 /// Paints `scene` onto a canvas whose top left is the scene's work area origin.
 pub fn paint(canvas: &mut Canvas, scene: &OverlayScene, scale: f64, accent: u32, glyphs: &mut impl Glyphs) {
-    let origin = scene.work_area.origin();
     for zone in &scene.zones {
-        let frame = Rect::new(
-            zone.frame.x - origin.x,
-            zone.frame.y - origin.y,
-            zone.frame.width,
-            zone.frame.height,
-        );
-        let style = zone_style(zone, accent);
-        let placed = placement(zone, frame, &style, scale);
-        canvas.fill_rounded(placed.shape, placed.corner_radius, style.fill);
+        let style = zone_style(zone);
+        let placed = placement(zone, scene.work_area, scale);
+        canvas.fill_rounded(placed.shape, placed.corner_radius, color(style.fill, accent));
         canvas.stroke_rounded(
             placed.shape,
             placed.corner_radius,
             placed.border_width,
-            style.border,
+            color(style.border, accent),
         );
         let number = zone.number.to_string();
         label(
@@ -69,7 +63,7 @@ pub fn paint_marks(canvas: &mut Canvas, marks: &OverlayMarks, scale: f64) {
             local,
             MARK_CORNER_RADIUS * scale,
             MARK_BORDER_WIDTH * scale,
-            mark_border(mark.style),
+            color(mark_border(mark.style), DEFAULT_ACCENT),
         );
     }
 }
@@ -90,7 +84,7 @@ fn label(
             (center.y - mask.height as f64 / 2.0).round() as i64,
         )
     };
-    if let Some(shadow) = glyphs.text(text, size, weight, SHADOW_BLUR * scale) {
+    if let Some(shadow) = glyphs.text(text, size, weight, TEXT_SHADOW_BLUR * scale) {
         let (left, top) = top_left(shadow);
         canvas.draw_mask(shadow, left, top, SHADOW_COLOR);
     }

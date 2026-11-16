@@ -1,10 +1,11 @@
 //! Saving, refusing, importing, and resetting settings.
 
-use snappy_core::keys::{KeyChord, Modifier, Platform};
+use snappy_core::keys::{KeyChord, Modifier, Os};
 use snappy_core::layout::{Layout, preset};
-use snappy_core::navigate::Direction;
-use snappy_core::reset::{Reset, ShortcutSection};
+use snappy_core::placement::navigate::Direction;
+use snappy_core::settings::Reset;
 use snappy_core::settings::{HistoryStep, NavigationShortcut, Settings};
+use snappy_core::shortcuts::ShortcutSection;
 use snappy_engine::Engine;
 use snappy_fake::FakePlatform;
 use snappy_ipc::Command;
@@ -66,7 +67,7 @@ fn only_valid_changes_are_saved() {
             },
         );
         let saved = std::fs::read(&file).unwrap();
-        let platform = Platform::MacOs;
+        let platform = Os::MacOs;
         assert_eq!(Settings::from_json(&saved, platform).unwrap(), engine.settings());
     });
 }
@@ -271,14 +272,11 @@ fn resetting_a_section_saves_and_registers_its_defaults() {
                 },
             },
         );
-        let left = Settings::defaults(Platform::MacOs).navigation.left.unwrap();
+        let left = Settings::defaults(Os::MacOs).navigation.left.unwrap();
         assert_eq!(engine.settings().navigation.left, Some(left.clone()));
         assert!(registered(&left) && !registered(&moved));
-        let saved = Settings::from_json(
-            &std::fs::read(paths_kept(name).settings).unwrap(),
-            Platform::MacOs,
-        )
-        .unwrap();
+        let saved =
+            Settings::from_json(&std::fs::read(paths_kept(name).settings).unwrap(), Os::MacOs).unwrap();
         assert_eq!(saved.navigation.left, Some(left));
         assert_eq!(status_text(&engine), "Move between zones shortcuts reset.");
     });

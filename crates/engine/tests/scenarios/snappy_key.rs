@@ -1,10 +1,10 @@
 //! Choosing the Snappy key.
 
-use snappy_core::bindings::Refusal;
 use snappy_core::keys::{KeyChord, Modifier, Mods, SnappyKey};
 use snappy_core::settings::{HistoryStep, NavigationShortcut, WorkspaceShortcut};
+use snappy_core::shortcuts::Refusal;
 use snappy_core::shortcuts::{NamedShortcut, ShortcutId};
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent};
 use snappy_fake::FakePlatform;
 use snappy_ipc::Command;
 use snappy_platform::PlatformEvent;
@@ -53,7 +53,7 @@ fn changing_the_snappy_key_registers_every_snappy_shortcut_with_the_new_modifier
             "The Snappy key is now Control ⌃ + Option ⌥."
         );
         assert_eq!(saved_snappy_key(name), serde_json::json!(["ctrl", "alt"]));
-        let changed = logged(name, "snappyKeyChanged");
+        let changed = logged(name, LogEvent::SnappyKeyChanged);
         assert_eq!(changed.len(), 1);
         assert_eq!(
             changed[0]["from"],
@@ -97,7 +97,7 @@ fn a_snappy_key_change_that_clashes_with_another_shortcut_is_refused_and_changes
         assert_eq!(engine.with_platform(|p| p.registered.clone()), registered);
         assert_eq!(engine.with_platform(|p| p.registrations), registrations);
         assert_eq!(saved_snappy_key(name), serde_json::json!(["ctrl", "alt", "meta"]));
-        let refused = logged(name, "snappyKeyRefused");
+        let refused = logged(name, LogEvent::SnappyKeyRefused);
         assert_eq!(refused.len(), 1);
         assert_eq!(refused[0]["reason"], refusal);
 
@@ -192,7 +192,7 @@ fn a_snappy_key_change_onto_a_chord_the_os_holds_is_refused_naming_the_chord() {
             registered,
             "the shortcuts unregistered for probing are back"
         );
-        assert_eq!(logged(name, "snappyKeyRefused")[0]["reason"], refusal);
+        assert_eq!(logged(name, LogEvent::SnappyKeyRefused)[0]["reason"], refusal);
 
         let option_command = Mods::from_iter([Modifier::Alt, Modifier::Meta]);
         let other = reply_to(

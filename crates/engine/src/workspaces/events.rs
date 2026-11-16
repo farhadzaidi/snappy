@@ -8,14 +8,15 @@ use snappy_core::error::WindowError;
 use snappy_core::workspace::Session;
 use snappy_platform::{Platform, WindowId};
 
-use crate::core::Core;
+use crate::log_event::LogEvent;
 use crate::ops::Shared;
+use crate::state::EngineState;
 
 use super::containment::{self, contain_all};
-use super::members::{enroll, sync_tabs};
+use super::core_io::CoreIo;
+use super::members::{enroll, refresh_members, sync_tabs};
 use super::recovery::save_membership;
 use super::switching::{SwitchFocus, request_switch};
-use super::{CoreIo, refresh_members};
 
 /// Wait this long for a display change to settle.
 const DISPLAY_SETTLE: Duration = Duration::from_millis(350);
@@ -53,7 +54,10 @@ pub(crate) fn focus_changed<P: Platform + 'static>(shared: &Rc<Shared<P>>, by_ac
 
 /// Enroll the focused window, and its app's as `discovery` says. Returns a workspace to
 /// switch to when an activation revealed a window of another workspace.
-pub(super) fn discover_focused<P: Platform>(core: &mut Core<P>, discovery: Discovery) -> Option<String> {
+pub(super) fn discover_focused<P: Platform>(
+    core: &mut EngineState<P>,
+    discovery: Discovery,
+) -> Option<String> {
     let mut session = core.workspaces.session.take()?;
     let follow = discover_focused_into(core, &mut session, discovery);
     core.workspaces.session = Some(session);
@@ -61,7 +65,7 @@ pub(super) fn discover_focused<P: Platform>(core: &mut Core<P>, discovery: Disco
 }
 
 pub(super) fn discover_focused_into<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     session: &mut Session,
     discovery: Discovery,
 ) -> Option<String> {
@@ -74,7 +78,7 @@ pub(super) fn discover_focused_into<P: Platform>(
         Ok(info) => Some(info),
         Err(error) => {
             core.trace(
-                "focusedWindowUnknown",
+                LogEvent::FocusedWindowUnknown,
                 || serde_json::json!({ "reason": error.to_string() }),
             );
             None
@@ -117,7 +121,7 @@ pub(super) fn discover_focused_into<P: Platform>(
     None
 }
 
-pub(crate) fn window_destroyed<P: Platform>(core: &mut Core<P>, window: WindowId) {
+pub(crate) fn window_destroyed<P: Platform>(core: &mut EngineState<P>, window: WindowId) {
     if let Some(session) = core.workspaces.session.as_mut() {
         session.discard(window);
     }
@@ -130,7 +134,7 @@ pub(crate) fn window_destroyed<P: Platform>(core: &mut Core<P>, window: WindowId
     core.publish_state();
 }
 
-pub(crate) fn app_terminated<P: Platform>(core: &mut Core<P>, pid: u32) {
+pub(crate) fn app_terminated<P: Platform>(core: &mut EngineState<P>, pid: u32) {
     let gone: Vec<WindowId> = core
         .workspaces
         .keys
@@ -155,7 +159,10 @@ pub(crate) fn native_desktop_changed<P: Platform + 'static>(shared: &Rc<Shared<P
         let was_paused = core.workspaces.paused;
         core.workspaces.paused = !core.platform.on_managed_desktop();
         let paused = core.workspaces.paused;
-        core.trace("nativeDesktop", || serde_json::json!({ "paused": paused }));
+        core.trace(
+            LogEvent::NativeDesktop,
+            || serde_json::json!({ "paused": paused }),
+        );
         // Back on the managed desktop, windows are placed for the displays as they are now,
         // unless displays are still settling, whose update does it once they have.
         let failed = if was_paused && !paused && !core.workspaces.display_update_pending {
@@ -242,7 +249,7 @@ fn apply_display_change<P: Platform + 'static>(
 }
 
 /// Re-place every window for the displays as they are now, and record how it went.
-fn update_displays<P: Platform>(core: &mut Core<P>, attempt: u32) -> Result<(), WindowError> {
+fn update_displays<P: Platform>(core: &mut EngineState<P>, attempt: u32) -> Result<(), WindowError> {
     if core.workspaces.paused {
         return Ok(());
     }
@@ -270,14 +277,14 @@ fn update_displays<P: Platform>(core: &mut Core<P>, attempt: u32) -> Result<(), 
     match result {
         Ok(moved) => {
             core.trace(
-                "displaysUpdated",
+                LogEvent::DisplaysUpdated,
                 || serde_json::json!({ "attempt": attempt, "displays": count, "moved": moved, "held": held }),
             );
             containment::all_hidden(core);
             Ok(())
         }
         Err(error) => {
-            core.flag("displaysUpdated", || {
+            core.flag(LogEvent::DisplaysUpdated, || {
                 serde_json::json!({ "attempt": attempt, "displays": count, "held": held, "error": error.to_string() })
             });
             Err(error)

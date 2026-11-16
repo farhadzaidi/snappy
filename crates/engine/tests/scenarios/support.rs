@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::time::Duration;
 
-use snappy_core::bindings::Refusal;
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::{KeyChord, Modifier, Mods};
 use snappy_core::settings::{HistoryStep, LayoutOptions, Settings};
+use snappy_core::shortcuts::Refusal;
 use snappy_core::workspace::ParkingPolicy;
-use snappy_engine::{Engine, Input, Paths};
+use snappy_engine::{Engine, Input, LogEvent, Paths, file_names};
 use snappy_fake::{FakePlatform, FakeWindow};
 use snappy_ipc::{AppState, Command, ToSettings};
 use snappy_platform::{MarkStyle, PlatformEvent, WindowId};
@@ -30,11 +30,7 @@ pub fn paths(name: &str) -> Paths {
 /// The same paths, keeping whatever an earlier engine in the test wrote.
 pub fn paths_kept(name: &str) -> Paths {
     let root = std::env::temp_dir().join(format!("snappy-engine-{name}-{}", std::process::id()));
-    Paths {
-        settings: root.join("settings.json"),
-        state_dir: root.join("state"),
-        log_dir: root.join("logs"),
-    }
+    Paths::in_folder(&root)
 }
 
 /// Run a test on a single-threaded runtime with paused time, so settle waits are instant.
@@ -125,27 +121,27 @@ pub async fn drag(engine: &Engine<FakePlatform>, window: WindowId, to: Point, mo
 pub fn release(engine: &Engine<FakePlatform>, window: WindowId, to: Point, mods: Mods) {
     let start = engine.with_platform(|p| p.frame_of(window));
     let grip = Point::new(start.x + 200.0, start.y + 15.0);
-    event(
-        engine,
-        PlatformEvent::PointerDown {
-            at: grip,
-            mods,
-            window: None,
-        },
-    );
+    press(engine, grip, mods);
     let moved = start.with_origin(Point::new(to.x - 200.0, to.y - 15.0));
     engine.with_platform(|p| p.windows.get_mut(&window).unwrap().frame = moved);
     event(engine, PlatformEvent::PointerDragged { at: to, mods });
     event(engine, PlatformEvent::PointerUp { at: to, mods });
 }
 
+/// A test's drop diagnostics so far, oldest first.
+pub fn drop_records(name: &str) -> Vec<serde_json::Value> {
+    std::fs::read(paths_kept(name).log_dir.join(file_names::DROPS))
+        .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+        .unwrap_or_default()
+}
+
 /// The records of `event` in a test's debug log so far, oldest first.
-pub fn logged(name: &str, event: &str) -> Vec<serde_json::Value> {
-    std::fs::read_to_string(paths_kept(name).log_dir.join("debug.jsonl"))
+pub fn logged(name: &str, event: LogEvent) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(paths_kept(name).log_dir.join(file_names::DEBUG_LOG))
         .unwrap_or_default()
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|record| record["event"] == event)
+        .filter(|record| record["event"] == event.as_str())
         .collect()
 }
 
@@ -181,7 +177,10 @@ pub fn started(name: &str, fake: FakePlatform) -> Engine<FakePlatform> {
 pub fn with_settings_window() -> (FakePlatform, Rect) {
     let settings_frame = Rect::new(200.0, 100.0, 1080.0, 760.0);
     let mut fake = FakePlatform::default();
-    fake.open(9, FakeWindow::new("local.snappy.settings", 4242, settings_frame));
+    fake.open(
+        9,
+        FakeWindow::new("io.github.farhadzaidi.Snappy.Settings", 4242, settings_frame),
+    );
     (fake, settings_frame)
 }
 
@@ -354,11 +353,7 @@ pub fn place(engine: &Engine<FakePlatform>, window: u64, frame: Rect) {
 
 /// The outcomes recorded in the drop diagnostics, oldest first.
 pub fn drop_outcomes(name: &str) -> Vec<String> {
-    let Ok(bytes) = std::fs::read(paths_kept(name).log_dir.join("drops.json")) else {
-        return Vec::new();
-    };
-    let records: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
-    records
+    drop_records(name)
         .iter()
         .map(|record| record["outcome"].as_str().unwrap().to_owned())
         .collect()
@@ -371,6 +366,20 @@ pub fn press(engine: &Engine<FakePlatform>, at: Point, mods: Mods) {
             at,
             mods,
             window: None,
+            frame: None,
+        },
+    );
+}
+
+/// A press that names the window, as adapters that learn of it from a move starting do.
+pub fn press_on(engine: &Engine<FakePlatform>, at: Point, mods: Mods, window: WindowId) {
+    event(
+        engine,
+        PlatformEvent::PointerDown {
+            at,
+            mods,
+            window: Some(window),
+            frame: None,
         },
     );
 }

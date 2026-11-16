@@ -12,11 +12,12 @@ use std::time::Duration;
 
 use snappy_platform::{Platform, WindowId};
 
-use crate::core::Core;
 use crate::debug_log::Level;
+use crate::log_event::LogEvent;
 use crate::ops::Shared;
+use crate::state::EngineState;
 
-use super::CoreIo;
+use super::core_io::CoreIo;
 
 /// Park a revealed window again at most this often, in seconds.
 const CONTAINMENT_INTERVAL: f64 = 1.0;
@@ -125,7 +126,7 @@ pub(super) fn contain_all<P: Platform + 'static>(shared: &Rc<Shared<P>>) -> (usi
 }
 
 /// The display update parked every window again, so none is left revealed.
-pub(super) fn all_hidden<P: Platform>(core: &mut Core<P>) {
+pub(super) fn all_hidden<P: Platform>(core: &mut EngineState<P>) {
     let containment = &mut core.workspaces.containment;
     containment.held.clear();
     containment.showing.clear();
@@ -134,7 +135,7 @@ pub(super) fn all_hidden<P: Platform>(core: &mut Core<P>) {
 
 /// Stop reporting windows that no longer belong to a workspace that isn't showing, such as
 /// after a switch to theirs, and take the notice back once none is left.
-pub(super) fn review<P: Platform>(core: &mut Core<P>) {
+pub(super) fn review<P: Platform>(core: &mut EngineState<P>) {
     let workspaces = &core.workspaces;
     let still: BTreeSet<WindowId> = workspaces
         .containment
@@ -150,7 +151,7 @@ pub(super) fn review<P: Platform>(core: &mut Core<P>) {
 }
 
 /// A window closed.
-pub(super) fn forget<P: Platform>(core: &mut Core<P>, window: WindowId) {
+pub(super) fn forget<P: Platform>(core: &mut EngineState<P>, window: WindowId) {
     let containment = &mut core.workspaces.containment;
     containment.tried_at.remove(&window);
     containment.held.remove(&window);
@@ -195,7 +196,7 @@ fn retry_later<P: Platform + 'static>(shared: &Rc<Shared<P>>, windows: Vec<Windo
 
 /// Park `window` again where the current displays put parked windows, and log the outcome.
 /// `attempt` counts the tries for this reveal.
-fn attempt<P: Platform>(core: &mut Core<P>, window: WindowId, attempt: u32) -> Outcome {
+fn attempt<P: Platform>(core: &mut EngineState<P>, window: WindowId, attempt: u32) -> Outcome {
     let Some(mut session) = core.workspaces.session.take() else {
         return Outcome::Hidden;
     };
@@ -228,7 +229,7 @@ fn attempt<P: Platform>(core: &mut Core<P>, window: WindowId, attempt: u32) -> O
 
 /// Record a try that moved a window or failed to, with its app's identifier.
 fn log_attempt<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     window: WindowId,
     attempt: u32,
     outcome: Outcome,
@@ -250,7 +251,7 @@ fn log_attempt<P: Platform>(
         .into_iter()
         .find(|info| info.id == window)
         .map(|info| info.app);
-    core.log(level, "containment", || {
+    core.log(level, LogEvent::Containment, || {
         let mut details = serde_json::json!({
             "window": window.0,
             "app": app,
@@ -265,7 +266,7 @@ fn log_attempt<P: Platform>(
 }
 
 /// Tell the user which workspace's windows won't stay hidden, and how to hide them.
-fn post_notice<P: Platform>(core: &mut Core<P>) {
+fn post_notice<P: Platform>(core: &mut EngineState<P>) {
     let Some(session) = core.workspaces.session.as_ref() else {
         return;
     };
@@ -299,7 +300,7 @@ fn still_showing_message(workspaces: &[&str], windows: usize) -> String {
 }
 
 /// `window` no longer needs reporting; take the notice back once no window does.
-fn stop_reporting<P: Platform>(core: &mut Core<P>, window: WindowId) {
+fn stop_reporting<P: Platform>(core: &mut EngineState<P>, window: WindowId) {
     let containment = &mut core.workspaces.containment;
     containment.showing.remove(&window);
     if containment.showing.is_empty() {
@@ -309,7 +310,7 @@ fn stop_reporting<P: Platform>(core: &mut Core<P>, window: WindowId) {
 
 /// Clear the notice while it is still the current status, the way a quiet status clears
 /// an error.
-fn withdraw_notice<P: Platform>(core: &mut Core<P>) {
+fn withdraw_notice<P: Platform>(core: &mut EngineState<P>) {
     let Some(notice) = core.workspaces.containment.notice.take() else {
         return;
     };

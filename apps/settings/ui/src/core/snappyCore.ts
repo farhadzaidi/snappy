@@ -103,6 +103,23 @@ export interface ModifierNames {
 
 export type Validation = { valid: Settings } | { invalid: string };
 
+/** A change the settings app asks the daemon for, by the `snappy-core` rule that makes it. */
+export type SettingsEdit =
+  | { kind: "assignLayout"; display: string; layout: string }
+  | { kind: "saveLayout"; layout: Layout; options: LayoutOptions; display: string }
+  | { kind: "removeLayout"; layout: string }
+  | { kind: "setLayoutEnabled"; layout: string; enabled: boolean }
+  /** Turn workspaces on, with the IDs of the connected displays. */
+  | { kind: "enableWorkspaces"; displays: string[] }
+  | { kind: "addWorkspace" }
+  | { kind: "updateWorkspace"; workspace: Workspace }
+  | { kind: "reorderWorkspaces"; from: number[]; to: number }
+  | { kind: "removeWorkspace"; workspace: string };
+
+/** A settings edit: nothing to change, the edited settings with any workspace it added, or why not. */
+export type EditOutcome =
+  "unchanged" | { edited: { settings: Settings; addedWorkspace: string | null } } | { refused: string };
+
 /** A new Snappy key: nothing to change, the settings with it, or why it is refused. */
 export type SnappyKeyChange = "unchanged" | { changed: Settings } | { refused: string };
 
@@ -155,6 +172,8 @@ export interface Limits {
   workspaces: number;
   /** Window moves that undo remembers. */
   undoSteps: number;
+  /** Characters in a layout's or a workspace's name. */
+  nameLength: number;
 }
 
 /** Load the WebAssembly module. Call once before rendering. */
@@ -257,14 +276,15 @@ export const core = {
     call<Refusal | null>(wasm.recordingConflict, { settings, shortcut, chord, platform }),
   layoutConflict: (settings: Settings, layout: Layout, options: LayoutOptions, platform: PlatformName) =>
     call<string | null>(wasm.layoutConflict, { settings, layout, options, platform }),
-  layoutForDisplay: (settings: Settings, display: string) =>
-    call<Layout>(wasm.layoutForDisplay, { settings, display }),
+  /** The layout a display uses now, or in `workspace` when one is named. */
+  layoutForDisplay: (settings: Settings, display: string, workspace?: string) =>
+    call<Layout>(wasm.layoutForDisplay, { settings, display, workspace }),
   layoutOptions: (settings: Settings, layout: Layout) =>
     call<LayoutOptions>(wasm.layoutOptions, { settings, layout }),
   /** The settings with `reset` applied: what the daemon does with a `reset` command. */
   resetSettings: (settings: Settings, reset: Reset, platform: PlatformName) =>
     call<ResetOutcome>(wasm.resetSettings, { settings, reset, platform }),
-  /** "Workspace <number>", switched to with the Snappy key and its digit when that is free. */
-  newWorkspace: (settings: Settings, id: string, number: number) =>
-    call<Workspace>(wasm.newWorkspace, { settings, id, number }),
+  /** A settings edit by the daemon's rules, not yet validated: validate it as the daemon does. */
+  applyEdit: (settings: Settings, edit: SettingsEdit, platform: PlatformName) =>
+    call<EditOutcome>(wasm.applyEdit, { settings, edit, platform }),
 };

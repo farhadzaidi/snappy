@@ -36,6 +36,7 @@ impl SettingsApp {
             return Ok(());
         }
         let mut child = Command::new(executable()?)
+            .arg(snappy_ipc::DAEMON_ARGUMENT)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

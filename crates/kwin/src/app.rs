@@ -8,12 +8,14 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Instant;
 
 use snappy_core::geometry::Point;
+use snappy_linux::adapter::Adapter;
 use snappy_linux::clients::ClientTracker;
+use snappy_linux::dbus;
 use snappy_linux::journal;
+use snappy_linux::names::{DBUS_NAME, NAME_OWNER_CHANGED};
 use snappy_linux::tray::TrayIcon;
 use snappy_platform::{CapsLockInput, LiveControl, PlatformEvent, WindowId};
 use zbus::MatchRule;
-use zbus::blocking::MessageIterator;
 use zbus::message::Type;
 
 use crate::bus::{
@@ -21,13 +23,13 @@ use crate::bus::{
     KXKBRC_PATH, SCREEN_SAVER_INTERFACE, Served,
 };
 use crate::error::KWinError;
+use crate::input::order::HeldModifiers;
 use crate::messages::{KWIN_NOT_RUNNING, SCRIPT_NOT_LOADED, SCRIPT_OTHER_VERSION, SCRIPT_STARTING};
-use crate::order::HeldModifiers;
 use crate::overlay::{Command, Overlays};
 use crate::platform::KWinPlatform;
 use crate::protocol::{Event, PROTOCOL_VERSION, Request, WindowRecord};
 use crate::shared::{Incoming, Shared};
-use crate::{caps_lock, script, shortcuts};
+use crate::{caps_lock, hotkeys, script};
 
 pub struct App {
     shared: Arc<Shared>,
@@ -52,6 +54,7 @@ impl Stopper {
 impl App {
     /// Connects to the session bus, starts listening, and loads the script into KWin.
     pub fn new(events: Sender<PlatformEvent>) -> Result<App, KWinError> {
+        caps_lock::prepare_xkb_folder();
         let bus = Bus::session()?;
         let (sender, incoming) = mpsc::channel();
         let shared = Arc::new(Shared::new(
@@ -69,7 +72,7 @@ impl App {
         let pressed = MatchRule::builder()
             .msg_type(Type::Signal)
             .sender(GLOBAL_ACCEL_NAME)?
-            .path(shortcuts::COMPONENT_PATH)?
+            .path(hotkeys::COMPONENT_PATH)?
             .interface(COMPONENT_INTERFACE)?
             .member("globalShortcutPressed")?
             .build();
@@ -79,9 +82,9 @@ impl App {
         })?;
         let kwin_owner = MatchRule::builder()
             .msg_type(Type::Signal)
-            .sender("org.freedesktop.DBus")?
-            .interface("org.freedesktop.DBus")?
-            .member("NameOwnerChanged")?
+            .sender(DBUS_NAME)?
+            .interface(DBUS_NAME)?
+            .member(NAME_OWNER_CHANGED)?
             .arg(0, KWIN_NAME)?
             .build();
         listen(&shared.bus, kwin_owner, sender.clone(), |_| {
@@ -147,13 +150,13 @@ impl App {
                         tray.update(menu);
                     }
                 }
-                Incoming::Shortcut(action) if action == shortcuts::CAPS_LOCK_TAP => {
+                Incoming::Shortcut(action) if action == hotkeys::CAPS_LOCK_TAP => {
                     if caps_lock::released_alone(&self.shared) {
                         self.emit(PlatformEvent::CapsLock(CapsLockInput::Released));
                     }
                 }
                 Incoming::Shortcut(action) => {
-                    if let Some(id) = shortcuts::shortcut_id(&action) {
+                    if let Some(id) = hotkeys::shortcut_id(&action) {
                         self.emit(PlatformEvent::HotKey(id));
                     }
                 }
@@ -188,7 +191,7 @@ impl App {
     fn release(&mut self) {
         caps_lock::restore(&self.shared);
         let grabs = std::mem::take(&mut self.shared.state().registered);
-        shortcuts::unregister(&self.shared.bus, &grabs);
+        hotkeys::unregister(&self.shared.bus, &grabs);
         self.shared.follow_modifiers(false);
         self.shared.overlays.send(Command::Stop);
         script::stop(&self.shared.bus);
@@ -228,23 +231,27 @@ impl App {
     }
 
     /// KWin started over, which drops every script, or went away.
+    /// Reported once, with where loading the script left things.
     fn kwin_changed(&self) {
-        self.set_live_control(LiveControl::unavailable(SCRIPT_STARTING));
+        let before = self.shared.live_control();
+        self.shared
+            .set_live_control(LiveControl::unavailable(SCRIPT_STARTING));
         load_script(&self.shared);
-        if !self.shared.live_control().is_available() {
+        if self.shared.live_control() != before {
             self.emit(PlatformEvent::LiveControlChanged);
         }
     }
 
     fn event(&self, event: Event, windows: &mut WindowList, held: &mut HeldModifiers, pointer: &mut Point) {
         let translated = match event {
-            Event::PointerDown { x, y, window } => {
+            Event::PointerDown { x, y, window, frame } => {
                 *pointer = Point::new(x, y);
                 held.drag_started();
                 vec![PlatformEvent::PointerDown {
                     at: *pointer,
                     mods: held.current(),
                     window: Some(WindowId(window)),
+                    frame: Some(frame.into()),
                 }]
             }
             Event::PointerDragged { x, y } => {
@@ -278,6 +285,28 @@ impl App {
         for event in translated {
             self.emit(event);
         }
+    }
+}
+
+impl Adapter for App {
+    type Platform = KWinPlatform;
+    type Error = KWinError;
+
+    fn start(events: Sender<PlatformEvent>) -> Result<App, KWinError> {
+        App::new(events)
+    }
+
+    fn platform(&self) -> KWinPlatform {
+        App::platform(self)
+    }
+
+    fn stop_handle(&self) -> impl FnOnce() + Send + 'static {
+        let stopper = self.stopper();
+        move || stopper.stop()
+    }
+
+    fn run(self) -> Result<(), KWinError> {
+        App::run(self)
     }
 }
 
@@ -376,27 +405,19 @@ fn listen_for_caps_lock(bus: &Bus, sender: &Sender<Incoming>) -> Result<(), KWin
     })
 }
 
-/// Forwards each matching signal, in order, from a thread of its own, and reports the bus
-/// going away. Blocking reads can't be interrupted, so the threads end with the process.
+/// Forwards each matching signal from a thread of its own, and reports the bus going away.
 fn listen(
     bus: &Bus,
     rule: MatchRule<'static>,
     sender: Sender<Incoming>,
     translate: impl Fn(&zbus::Message) -> Option<Incoming> + Send + 'static,
 ) -> Result<(), KWinError> {
-    let messages = MessageIterator::for_match_rule(rule, bus.connection(), None)?;
-    std::thread::Builder::new()
-        .name("snappy-kwin-signals".into())
-        .spawn(move || {
-            for message in messages {
-                let Ok(message) = message else { break };
-                if let Some(incoming) = translate(&message)
-                    && sender.send(incoming).is_err()
-                {
-                    return;
-                }
-            }
-            let _ = sender.send(Incoming::BusLost);
-        })?;
-    Ok(())
+    dbus::forward_signals(
+        bus.connection(),
+        rule,
+        "snappy-kwin-signals",
+        sender,
+        Incoming::BusLost,
+        translate,
+    )
 }

@@ -3,6 +3,10 @@ name = "snappy-engine"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Snappy's engine: runtime state, the order of window operations, and Snappy's files."
 
 [dependencies]
 snappy-core = { path = "../core" }

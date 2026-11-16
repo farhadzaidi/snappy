@@ -4,22 +4,25 @@
 
 use std::rc::Rc;
 
-use snappy_core::drag::DragIntent;
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::Mods;
 use snappy_core::layout::hit_test;
-use snappy_core::swap::{SwapSource, ZoneSlot, source_slot};
+use snappy_core::placement::drag::DragIntent;
+use snappy_core::placement::swap::{SwapSource, ZoneSlot, source_slot};
 use snappy_platform::{Caption, Platform, WindowId};
 
-use crate::core::{Core, DragSession};
 use crate::diagnostics::DropRecord;
+use crate::log_event::LogEvent;
 use crate::ops::{Shared, SnapRequest, SwapMove, run_snap, run_swap};
+use crate::outcome::Outcome;
+use crate::state::{DragSession, EngineState};
 
 pub(crate) fn pointer_down<P: Platform + 'static>(
     shared: &Rc<Shared<P>>,
     at: Point,
     mods: Mods,
     window: Option<WindowId>,
+    pressed_frame: Option<Rect>,
 ) {
     {
         let mut core = shared.core.borrow_mut();
@@ -34,13 +37,16 @@ pub(crate) fn pointer_down<P: Platform + 'static>(
     core.set_preview(None);
     core.end_drag();
     let target = match window {
-        Some(id) => core.platform.frame(id).map(|_| (id, String::new())),
+        Some(id) => Ok((id, String::new())),
         None => core.platform.window_at(at).map(|info| (info.id, info.app)),
     };
     let found = target.and_then(|(id, app)| Ok((id, app, core.platform.frame(id)?)));
 
     match found {
-        Ok((id, app, frame)) => {
+        Ok((id, app, now)) => {
+            // A press reported once the move is under way names the frame from the same
+            // moment as `at`; the window has moved since.
+            let frame = pressed_frame.unwrap_or(now);
             if !core.protected.contains(&id) && core.op_in_flight {
                 core.protected.push(id);
             }
@@ -49,7 +55,6 @@ pub(crate) fn pointer_down<P: Platform + 'static>(
                 window: id,
                 app,
                 intent: DragIntent::new(frame, Some(at)),
-                pointer: at,
                 modifier_held,
                 caption: None,
             };
@@ -59,7 +64,7 @@ pub(crate) fn pointer_down<P: Platform + 'static>(
             core.drag = DragSession::Idle;
             if mods.contains(drag_modifier(&core)) {
                 core.diagnostics.record_drop(DropRecord {
-                    outcome: "targetLookupFailed".into(),
+                    outcome: Outcome::TargetLookupFailed.as_str().to_owned(),
                     pointer: at,
                     cancellation: Some(error.to_string()),
                     ..DropRecord::default()
@@ -70,7 +75,7 @@ pub(crate) fn pointer_down<P: Platform + 'static>(
 }
 
 /// A press during a swap or grouped undo claims the windows under it.
-fn protect_pressed_windows<P: Platform>(core: &mut Core<P>, at: Point, pressed: Option<WindowId>) {
+fn protect_pressed_windows<P: Platform>(core: &mut EngineState<P>, at: Point, pressed: Option<WindowId>) {
     let claimed: Vec<WindowId> = core
         .op_windows
         .clone()
@@ -94,13 +99,11 @@ pub(crate) fn pointer_moved<P: Platform>(shared: &Shared<P>, at: Point, mods: Mo
     let held = mods.contains(drag_modifier(&core));
     if let DragSession::Tracking {
         intent,
-        pointer,
         modifier_held,
         ..
     } = &mut core.drag
     {
         intent.observe(frame);
-        *pointer = at;
         *modifier_held |= held;
     }
     let caption = show_zones(&mut core, at, mods);
@@ -108,23 +111,23 @@ pub(crate) fn pointer_moved<P: Platform>(shared: &Shared<P>, at: Point, mods: Mo
 }
 
 /// Shows the overlay for the drag, or hides it. Returns the caption it shows.
-fn show_zones<P: Platform>(core: &mut Core<P>, at: Point, mods: Mods) -> Option<Caption> {
+fn show_zones<P: Platform>(core: &mut EngineState<P>, at: Point, mods: Mods) -> Option<Caption> {
     let DragSession::Tracking { intent, .. } = &core.drag else {
         return None;
     };
     let held = mods.contains(drag_modifier(core));
     let original = intent.original();
     if !intent.permits_snap(held) {
-        core.platform.hide();
+        core.hide_overlay();
         return None;
     }
     let Some(display) = core.display_at(at).cloned() else {
-        core.platform.hide();
+        core.hide_overlay();
         return None;
     };
     let layout = core.settings.layout_for_display(&display.id).clone();
     if !core.settings.is_enabled(&layout) {
-        core.platform.hide();
+        core.hide_overlay();
         return None;
     }
 
@@ -148,18 +151,18 @@ fn show_zones<P: Platform>(core: &mut Core<P>, at: Point, mods: Mods) -> Option<
         })
         .flatten();
     let scene = core.scene(&layout, &display, zone.as_deref(), caption, source.as_deref());
-    core.platform.show(&display.id, &scene);
+    core.show_overlay(&display.id, &scene);
     caption.filter(|_| zone.is_some())
 }
 
 /// Logs the hovered zone's caption when it changes.
-fn note_caption<P: Platform>(core: &mut Core<P>, shown: Option<Caption>) {
+fn note_caption<P: Platform>(core: &mut EngineState<P>, shown: Option<Caption>) {
     let DragSession::Tracking { caption, .. } = &mut core.drag else {
         return;
     };
     if std::mem::replace(caption, shown) != shown {
         core.trace(
-            "overlayCaption",
+            LogEvent::OverlayCaption,
             || serde_json::json!({ "caption": shown.map(Caption::text) }),
         );
     }
@@ -213,7 +216,7 @@ enum DropAction {
 
 /// Decide what the drop does, filling in the record's outcome when it does nothing.
 fn plan_drop<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     window: WindowId,
     intent: &mut DragIntent,
     at: Point,
@@ -222,32 +225,33 @@ fn plan_drop<P: Platform>(
 ) -> Option<DropAction> {
     let held = mods.contains(drag_modifier(core));
     let Ok(current) = core.platform.frame(window) else {
-        record.outcome = "windowUnavailable".into();
+        record.outcome = Outcome::WindowUnavailable.as_str().to_owned();
         return None;
     };
     record.before_drop = Some(current);
     intent.observe(current);
     if !intent.permits_snap(held) {
         record.cancellation = intent.cancellation().map(|reason| reason.as_str().to_owned());
-        record.outcome = match (intent.cancellation(), held) {
-            (Some(reason), _) => reason.as_str().to_owned(),
-            (None, true) => "noWindowMovement".into(),
-            (None, false) => "modifierReleased".into(),
+        let outcome = match (intent.cancellation(), held) {
+            (Some(reason), _) => Outcome::Cancelled(reason),
+            (None, true) => Outcome::NoWindowMovement,
+            (None, false) => Outcome::ModifierReleased,
         };
+        record.outcome = outcome.as_str().to_owned();
         return None;
     }
     let Some(display) = core.display_at(at).cloned() else {
-        record.outcome = "outsideDisplay".into();
+        record.outcome = Outcome::OutsideDisplay.as_str().to_owned();
         return None;
     };
     let layout = core.settings.layout_for_display(&display.id).clone();
     if !core.settings.is_enabled(&layout) {
-        record.outcome = "layoutDisabled".into();
+        record.outcome = Outcome::LayoutDisabled.as_str().to_owned();
         return None;
     }
     let spacing = core.spacing(&display);
     let Some(zone) = hit_test(at, &layout, display.work_area, spacing) else {
-        record.outcome = "outsideZone".into();
+        record.outcome = Outcome::OutsideZone.as_str().to_owned();
         return None;
     };
     let frame = snappy_core::layout::zone_frame(zone.rect, display.work_area, spacing);
@@ -279,13 +283,13 @@ fn plan_drop<P: Platform>(
 
 /// Where a window at `frame` swaps from: the zone it fills, the zone under its center, or
 /// its own frame.
-pub(crate) fn swap_source<P: Platform>(core: &Core<P>, frame: Rect) -> SwapSource {
+pub(crate) fn swap_source<P: Platform>(core: &EngineState<P>, frame: Rect) -> SwapSource {
     let work_area = core.display_of(frame).map_or(frame, |display| display.work_area);
     SwapSource::find(frame, work_area, &zone_slots(core))
 }
 
 /// Every zone on every display, by each display's current enabled layout.
-pub(crate) fn zone_slots<P: Platform>(core: &Core<P>) -> Vec<ZoneSlot> {
+pub(crate) fn zone_slots<P: Platform>(core: &EngineState<P>) -> Vec<ZoneSlot> {
     core.displays
         .iter()
         .flat_map(|display| {
@@ -305,12 +309,12 @@ pub(crate) fn zone_slots<P: Platform>(core: &Core<P>) -> Vec<ZoneSlot> {
         .collect()
 }
 
-fn drag_modifier<P>(core: &Core<P>) -> snappy_core::keys::Modifier {
+fn drag_modifier<P>(core: &EngineState<P>) -> snappy_core::keys::Modifier {
     core.settings.snapping.drag_modifier.modifier()
 }
 
 /// True when `mods` hold the swap key, so the drop does the opposite of the setting.
-fn reverses<P>(core: &Core<P>, mods: Mods) -> bool {
+fn reverses<P>(core: &EngineState<P>, mods: Mods) -> bool {
     core.settings
         .snapping
         .swap_modifier
@@ -318,6 +322,6 @@ fn reverses<P>(core: &Core<P>, mods: Mods) -> bool {
 }
 
 /// True when a drop with `mods` held swaps with the zone's occupant rather than stacking.
-fn swaps<P>(core: &Core<P>, mods: Mods) -> bool {
+fn swaps<P>(core: &EngineState<P>, mods: Mods) -> bool {
     core.settings.snapping.when_taken.swaps(reverses(core, mods))
 }

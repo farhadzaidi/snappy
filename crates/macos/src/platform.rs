@@ -6,20 +6,19 @@ use std::time::{Duration, Instant};
 use objc2_app_kit::NSApplication;
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::keys::{Combo, Mods, Platform as PlatformName};
+use snappy_core::keys::{Combo, Mods, Os};
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockUndo, DesktopGuard, Display, HotKeys, Input, LiveControl, LoginItem,
-    Overlay, OverlayMarks, OverlayScene, Permissions, Platform, TabGroup, Tray, TrayMenu, WindowId,
-    WindowInfo, WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
+    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, TabGroup, Tray,
+    TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::ax::{self, AxElement};
-use crate::registry::Shared;
 use crate::windows::Windows;
+use crate::windows::registry::Shared;
 use crate::{
-    caps_lock, desktop_guard, displays, hotkeys, login_item, main_thread, monitors, overlay, permissions,
-    tray,
+    caps_lock, desktop_guard, displays, hotkeys, input, login_item, main_thread, overlay, permissions, tray,
 };
 
 pub struct MacPlatform {
@@ -123,17 +122,17 @@ impl WindowSystem for MacPlatform {
     }
 
     fn pointer(&mut self) -> Point {
-        main_thread::sync(monitors::pointer)
+        main_thread::sync(input::pointer)
     }
 }
 
 impl Input for MacPlatform {
     fn set_press_monitoring(&mut self, on: bool) {
-        main_thread::spawn(move |mtm| monitors::set_press_monitoring(on, mtm));
+        main_thread::spawn(move |mtm| input::set_press_monitoring(on, mtm));
     }
 
     fn set_drag_monitoring(&mut self, on: bool) {
-        main_thread::spawn(move |mtm| monitors::set_drag_monitoring(on, mtm));
+        main_thread::spawn(move |mtm| input::set_drag_monitoring(on, mtm));
     }
 }
 
@@ -154,8 +153,8 @@ impl HotKeys for MacPlatform {
 }
 
 impl CapsLock for MacPlatform {
-    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, String> {
-        caps_lock::hold_as(modifiers)
+    fn hold_caps_lock_as(&mut self, modifiers: Mods) -> Result<CapsLockUndo, CapsLockRefusal> {
+        caps_lock::hold_as(modifiers).map_err(CapsLockRefusal::Refused)
     }
 
     fn restore_caps_lock(&mut self) {
@@ -240,18 +239,18 @@ impl Tray for MacPlatform {
 
 impl LoginItem for MacPlatform {
     fn is_enabled(&mut self) -> bool {
-        main_thread::sync(|_| login_item::is_enabled())
+        login_item::is_enabled()
     }
 
     fn set_enabled(&mut self, on: bool) -> Result<(), String> {
-        main_thread::sync(move |_| login_item::set_enabled(on))
+        login_item::set_enabled(on)
     }
 }
 
 impl Platform for MacPlatform {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            platform: PlatformName::MacOs,
+            platform: Os::MacOs,
             parking: ParkingPolicy::CornerSliver,
             needs_permission: true,
         }

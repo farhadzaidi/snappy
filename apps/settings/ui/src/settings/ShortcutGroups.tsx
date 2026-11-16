@@ -2,8 +2,9 @@
 // sections there are, their titles, and their shortcuts come from `snappy-core`; this file
 // adds only what each says about itself and how a change reaches the daemon.
 
+import type { Command } from "../bridge/protocol";
 import { coreLimits } from "../core/limits";
-import { DIRECTIONS, type Command, type Direction, type KeyChord, type ShortcutSection } from "../core/model";
+import { DIRECTIONS, type Direction, type KeyChord, type ShortcutSection } from "../core/model";
 import {
   core,
   type GlobalShortcutId,
@@ -11,10 +12,10 @@ import {
   type SectionOfShortcuts,
 } from "../core/snappyCore";
 import { ShortcutRecorder } from "../recorder/ShortcutRecorder";
+import { ResetShortcutsButton } from "../shortcuts/ResetShortcutsButton";
 import { useAppState, useSend } from "../state/services";
 import { Group, Row } from "../ui/Group";
 import { ArrowIcon } from "../ui/icons";
-import { ResetShortcutsButton } from "../ui/ResetShortcutsButton";
 
 /** What a section says under its title, and more behind its ⓘ. */
 function sectionCopy(section: ShortcutSection): { caption: string; info: string } {

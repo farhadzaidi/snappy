@@ -15,18 +15,20 @@ mod bus;
 mod caps_lock;
 mod displays;
 mod error;
+mod hotkeys;
+mod input;
 mod keys;
-mod keystate;
 mod messages;
-mod order;
 mod overlay;
 mod platform;
 pub mod protocol;
+/// Snappy's own view of the desktop, for the tests to check against; built only for them.
+#[cfg(feature = "reference")]
 pub mod reference;
 pub mod script;
 mod shared;
-mod shortcuts;
 mod windows;
+pub mod wire;
 
 pub use app::{App, Stopper};
 pub use error::KWinError;

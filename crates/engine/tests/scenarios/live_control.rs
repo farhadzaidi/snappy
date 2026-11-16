@@ -6,11 +6,12 @@ use snappy_core::settings::DragModifier;
 use snappy_engine::{Engine, Input};
 use snappy_fake::{FakePlatform, OverlayCall};
 use snappy_ipc::{Command, ToSettings};
-use snappy_platform::{LiveControl, PlatformEvent, Remedy};
+use snappy_platform::{LiveControl, PlatformEvent, Remedy, WindowId};
 
 use crate::support::{
-    FLOATING, app_state, command, enable_workspaces, event, frame_of, is_parked, live_engine, paths_kept,
-    scenario, send_to, settle, started, status_text, with_settings_window, with_window,
+    FLOATING, LEFT_ZONE, app_state, command, enable_workspaces, event, frame_of, hotkey_id, is_parked,
+    live_engine, paths_kept, scenario, send_to, settle, snappy, started, status_text, with_settings_window,
+    with_window,
 };
 
 fn without_permission() -> FakePlatform {
@@ -369,6 +370,34 @@ fn a_login_item_error_keeps_the_switch_off_and_shows_the_message() {
         let status = engine.status().unwrap();
         assert_eq!((status.message.as_str(), status.is_error), (refusal, true));
         assert!(!app_state(&engine).login_item_enabled, "the switch reverts");
+    });
+}
+
+#[test]
+fn what_finishes_between_inputs_signals_the_settings_app_at_once() {
+    scenario(|| async {
+        let engine = live_engine("outbox-signal", with_window(LEFT_ZONE));
+        engine.handle(Input::SettingsAppStarted { pid: 4242 });
+        let ready = engine.outbox_ready();
+        let signalled = || async {
+            tokio::time::timeout(std::time::Duration::ZERO, ready.notified())
+                .await
+                .is_ok()
+        };
+
+        engine.with_platform(|p| p.focused = Some(WindowId(1)));
+        event(
+            &engine,
+            PlatformEvent::HotKey(hotkey_id(&engine, &snappy("ArrowRight"))),
+        );
+        engine.take_outbox();
+        signalled().await;
+        settle(&engine).await;
+        assert!(
+            signalled().await,
+            "the snap settling is told without another input"
+        );
+        assert!(!engine.take_outbox().is_empty());
     });
 }
 

@@ -16,15 +16,16 @@ use objc2_core_foundation::{CFRetained, CFRunLoop, CFString, CFType, kCFRunLoopC
 use snappy_platform::{PlatformEvent, WindowId};
 
 use crate::ax::{AxElement, AxError, names};
-use crate::eligibility::AppFacts;
 use crate::events::emit;
 use crate::ffi::Pid;
 use crate::ffi::ax::{
     AXObserverAddNotification, AXObserverCreate, AXObserverGetRunLoopSource, AXObserverRef,
     AXUIElementGetPid, AXUIElementRef,
 };
-use crate::registry::{self, Shared};
+use crate::main_thread;
 use crate::thresholds::AX_MESSAGING_TIMEOUT;
+use crate::windows::eligibility::AppFacts;
+use crate::windows::registry::{self, Shared};
 
 const APP_NOTIFICATIONS: [&str; 2] = [names::WINDOW_CREATED, names::FOCUSED_WINDOW_CHANGED];
 const WINDOW_NOTIFICATIONS: [&str; 4] = [
@@ -46,6 +47,7 @@ impl Observer {
         let mut raw: AXObserverRef = ptr::null();
         // SAFETY: valid callback and out-pointer; the result is +1.
         AxError::check(unsafe { AXObserverCreate(pid, on_notification, &mut raw) }).ok()?;
+        // SAFETY: the create function returned a +1 reference, owned from here on.
         NonNull::new(raw.cast_mut()).map(|raw| Self(unsafe { CFRetained::from_raw(raw) }))
     }
 
@@ -67,10 +69,10 @@ impl Observer {
         }
     }
 
-    fn add(&self, element: &AxElement, name: &'static str, refcon: *mut c_void) {
+    fn add(&self, element: &AxElement, name: &'static str, refcon: *mut c_void) -> Result<(), AxError> {
         let name = CFString::from_static_str(name);
         // SAFETY: valid observer, element, and name. The refcon is an integer, never dereferenced.
-        unsafe { AXObserverAddNotification(self.as_ptr(), element.as_ptr(), &name, refcon) };
+        AxError::check(unsafe { AXObserverAddNotification(self.as_ptr(), element.as_ptr(), &name, refcon) })
     }
 }
 
@@ -105,11 +107,16 @@ pub fn watch_app(app: &AppFacts) {
         DispatchQoS::UserInitiated,
     ));
     queue.exec_async(move || {
-        let Some(application) = AxElement::application(pid, AX_MESSAGING_TIMEOUT) else {
-            return;
-        };
-        for name in APP_NOTIFICATIONS {
-            observer.add(&application, name, ptr::null_mut());
+        // An app still starting up may not answer yet. Forgetting it lets its next
+        // activation try again; a notification the app doesn't offer never will be.
+        let watched = AxElement::application(pid, AX_MESSAGING_TIMEOUT).is_some_and(|application| {
+            APP_NOTIFICATIONS
+                .into_iter()
+                .filter_map(|name| observer.add(&application, name, ptr::null_mut()).err())
+                .all(AxError::is_unsupported_notification)
+        });
+        if !watched {
+            main_thread::spawn(move |_| unwatch_app(pid));
         }
     });
 }
@@ -136,7 +143,8 @@ pub fn watch_window(pid: Pid, element: &AxElement, id: WindowId) {
     // Window IDs start at 1, so a null refcon always means an app-level notification.
     let refcon = id.0 as usize as *mut c_void;
     for name in WINDOW_NOTIFICATIONS {
-        observer.add(element, name, refcon);
+        // A window that refuses one still reports the others.
+        let _ = observer.add(element, name, refcon);
     }
 }
 

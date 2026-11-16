@@ -4,7 +4,7 @@
 
 import type { KeyChord, Modifier } from "../core/model";
 import { core } from "../core/snappyCore";
-import type { KeyPress } from "../ui/keyPress";
+import { isDeleting, type KeyPress } from "../ui/keyPress";
 
 export type KeyOutcome =
   { kind: "cancel" } | { kind: "clear" } | { kind: "ignore" } | { kind: "candidate"; chord: KeyChord };
@@ -22,9 +22,6 @@ const MODIFIER_CODES = new Set([
   "Fn",
 ]);
 
-/** Delete (Backspace) and Forward Delete clear the shortcut when pressed alone. */
-const CLEARING_CODES = new Set(["Backspace", "Delete"]);
-
 /** `snappyKey` is the modifiers the Snappy key stands for, which decide whether the chord records it. */
 export function interpretKey(press: KeyPress, snappyKey: Modifier[]): KeyOutcome {
   if (press.code === "Escape") {
@@ -34,7 +31,8 @@ export function interpretKey(press: KeyPress, snappyKey: Modifier[]): KeyOutcome
     return { kind: "ignore" };
   }
   const mods = modifiersOf(press);
-  if (CLEARING_CODES.has(press.code) && mods.length === 0) {
+  // Delete or Forward Delete alone clears the shortcut.
+  if (isDeleting(press) && mods.length === 0) {
     return { kind: "clear" };
   }
   const label = keyLabel(press);

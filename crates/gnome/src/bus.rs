@@ -2,15 +2,15 @@
 //! extensions and displays.
 
 use std::collections::HashMap;
-use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
+use snappy_linux::dbus::BusThread;
+pub use snappy_linux::dbus::CallError;
 use zbus::blocking::Connection;
 use zbus::zvariant::OwnedValue;
 
-use crate::protocol::{INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME};
-use snappy_linux::journal;
+use crate::protocol::{CALL_METHOD, INTERFACE, OBJECT_PATH, Request, SHELL_BUS_NAME, VERSION_PROPERTY};
 
 /// How long a request may take before the engine gives up on it. GNOME Shell answers from
 /// its main loop, normally within a frame.
@@ -22,46 +22,18 @@ const PROPERTIES_INTERFACE: &str = "org.freedesktop.DBus.Properties";
 pub const DISPLAY_CONFIG_NAME: &str = "org.gnome.Mutter.DisplayConfig";
 pub const DISPLAY_CONFIG_PATH: &str = "/org/gnome/Mutter/DisplayConfig";
 
-/// Why a request didn't succeed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CallError {
-    /// The bus or GNOME Shell didn't answer, or the extension isn't there.
-    Unreachable(String),
-    /// The extension answered with an error, such as `gone` for a closed window.
-    Refused(String),
-    /// A reply that doesn't have the shape this version expects.
-    Malformed(String),
-}
-
-impl CallError {
-    /// Logs what went wrong for the daemon's output, once, where it happened.
-    fn logged(self) -> CallError {
-        if let CallError::Malformed(detail) = &self {
-            journal::warn(format_args!("unexpected reply from GNOME Shell: {detail}"));
-        }
-        self
-    }
-}
-
-impl CallError {
-    pub fn is_refusal(&self, reason: &str) -> bool {
-        matches!(self, CallError::Refused(refused) if refused == reason)
-    }
-}
+/// Who answers requests, as the daemon's output names it.
+const REPLIER: &str = "GNOME Shell";
 
 /// What `GetExtensionInfo` says about an extension; empty when Shell doesn't know it.
 pub type ExtensionInfo = HashMap<String, OwnedValue>;
 
-/// Work for the bus thread.
-type Job = Box<dyn FnOnce(&Connection) + Send>;
-
-/// The session bus connection the adapter shares between its threads. Calls run on a bus
-/// thread of their own: the engine thread drives an async runtime, inside which zbus can't
-/// block, so it waits for the bus thread's answer instead.
+/// The session bus connection the adapter shares between its threads. Calls run on the bus
+/// thread.
 #[derive(Clone)]
 pub struct Bus {
     conn: Connection,
-    jobs: Sender<Job>,
+    thread: BusThread,
 }
 
 impl Bus {
@@ -69,30 +41,12 @@ impl Bus {
         let conn = zbus::blocking::connection::Builder::session()?
             .method_timeout(CALL_TIMEOUT)
             .build()?;
-        let (jobs, queue) = mpsc::channel::<Job>();
-        let worker = conn.clone();
-        std::thread::Builder::new()
-            .name("snappy-gnome-bus".into())
-            .spawn(move || {
-                for job in queue {
-                    job(&worker);
-                }
-            })?;
-        Ok(Bus { conn, jobs })
+        let thread = BusThread::spawn(&conn, "snappy-gnome-bus")?;
+        Ok(Bus { conn, thread })
     }
 
     pub fn connection(&self) -> &Connection {
         &self.conn
-    }
-
-    /// Runs `job` on the bus thread and waits for its result; `None` if the thread is gone.
-    fn run<T: Send + 'static>(&self, job: impl FnOnce(&Connection) -> T + Send + 'static) -> Option<T> {
-        let (answer, answered) = mpsc::channel();
-        let job: Job = Box::new(move |conn| {
-            let _ = answer.send(job(conn));
-        });
-        self.jobs.send(job).ok()?;
-        answered.recv().ok()
     }
 
     fn call_method<B>(
@@ -106,23 +60,22 @@ impl Bus {
     where
         B: serde::Serialize + zbus::zvariant::DynamicType + Send + 'static,
     {
-        self.run(move |conn| {
+        self.thread.call(move |conn| {
             conn.call_method(Some(destination), path, Some(interface), method, &body)
                 .map_err(|error| CallError::Unreachable(error.to_string()))
         })
-        .unwrap_or_else(|| Err(CallError::Unreachable("the bus thread stopped".to_owned())))
     }
 
     /// Sends a request to the extension and reads the `ok` value of its reply.
     pub fn call<T: DeserializeOwned>(&self, request: &Request) -> Result<T, CallError> {
         let json = serde_json::to_string(request)
-            .map_err(|error| CallError::Malformed(error.to_string()).logged())?;
-        let reply = self.call_method(SHELL_BUS_NAME, OBJECT_PATH, INTERFACE, "Call", (json,))?;
+            .map_err(|error| CallError::Malformed(error.to_string()).logged(REPLIER))?;
+        let reply = self.call_method(SHELL_BUS_NAME, OBJECT_PATH, INTERFACE, CALL_METHOD, (json,))?;
         let (text,): (String,) = reply
             .body()
             .deserialize()
-            .map_err(|error| CallError::Malformed(error.to_string()).logged())?;
-        parse_reply(&text).map_err(CallError::logged)
+            .map_err(|error| CallError::Malformed(error.to_string()).logged(REPLIER))?;
+        parse_reply(&text).map_err(|error| error.logged(REPLIER))
     }
 
     /// A request whose reply carries nothing.
@@ -145,7 +98,7 @@ impl Bus {
 
     /// The protocol version the loaded extension speaks, when one is loaded.
     pub fn extension_version(&self) -> Option<u32> {
-        u32::try_from(self.property(SHELL_BUS_NAME, OBJECT_PATH, INTERFACE, "Version")?).ok()
+        u32::try_from(self.property(SHELL_BUS_NAME, OBJECT_PATH, INTERFACE, VERSION_PROPERTY)?).ok()
     }
 
     pub fn extension_info(&self, uuid: &str) -> Option<ExtensionInfo> {
@@ -234,11 +187,5 @@ mod tests {
             parse_reply::<u32>("not json"),
             Err(CallError::Malformed(_))
         ));
-    }
-
-    #[test]
-    fn refusals_are_recognized_by_reason() {
-        assert!(CallError::Refused("gone".into()).is_refusal("gone"));
-        assert!(!CallError::Unreachable("gone".into()).is_refusal("gone"));
     }
 }

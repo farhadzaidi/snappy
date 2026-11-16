@@ -2,13 +2,12 @@
 
 use snappy_core::error::WindowError;
 
-pub const FULL_SCREEN: &str = "Leave full screen before tiling this window.";
-pub const NOT_STANDARD: &str = "Choose a standard application window.";
-pub const NOT_MOVABLE: &str = "This window does not allow moving and resizing.";
+pub use snappy_core::eligibility::NOT_STANDARD;
+
 pub const NO_PERMISSION: &str = "Enable Accessibility for Snappy in System Settings first.";
 pub const NO_FOCUSED_WINDOW: &str = "No movable window is focused.";
 pub const WINDOW_GONE: &str = "The window is no longer available.";
-pub const NOT_RESPONDING: &str = "The app is not responding. Try again when it is.";
+pub const NOT_RESPONDING: &str = "The app isn't responding. Try again when it is.";
 pub const CLOSED_OR_REVOKED: &str = "The window is closed or Accessibility access was revoked.";
 pub const UNAVAILABLE_OR_FULL_SCREEN: &str = "The window is unavailable or in full screen.";
 
@@ -21,8 +20,8 @@ pub const CAPS_LOCK_UNWATCHED: &str =
 pub const SWAP_NEEDS_PERMISSION: &str = "Accessibility access is required to swap windows.";
 pub const SWAP_LIST_UNREADABLE: &str = "Couldn't check which window occupies the zone.";
 pub const SWAP_UNSUPPORTED_OCCUPANT: &str = "An unsupported app occupies that zone. The swap was cancelled.";
-pub const SWAP_NOT_RESPONDING: &str = "An app in that zone is not responding. The swap was cancelled.";
-pub const SWAP_NOT_SWAPPABLE: &str = "A window in that zone does not allow swapping. The drag was cancelled.";
+pub const SWAP_NOT_RESPONDING: &str = "An app in that zone isn't responding. The swap was cancelled.";
+pub const SWAP_NOT_SWAPPABLE: &str = "A window in that zone doesn't allow swapping. The drag was cancelled.";
 pub const SWAP_UNIDENTIFIED: &str = "The window in that zone couldn't be identified safely. Try again.";
 
 /// An app rejected a position or size write.

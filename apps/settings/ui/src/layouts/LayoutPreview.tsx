@@ -98,6 +98,7 @@ function NumberedLayout({ layout }: { layout: Layout }) {
             <div
               key={layout.zones[index]?.id ?? index}
               className="preview-zone"
+              role="img"
               aria-label={`Zone ${index + 1}`}
               style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
             >

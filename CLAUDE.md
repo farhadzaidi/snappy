@@ -1,1 +1,1 @@
-Read AGENTS.md before starting any task.
+Read [AGENTS.md](AGENTS.md).

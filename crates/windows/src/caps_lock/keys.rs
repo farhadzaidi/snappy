@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use snappy_core::keys::Mods;
 use windows::Win32::UI::Input::KeyboardAndMouse::VK_CAPITAL;
 
-use crate::input_hooks::modifier_of;
+use crate::input::modifier_of;
 
 /// One key event as the hook sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

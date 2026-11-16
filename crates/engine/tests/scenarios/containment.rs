@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use snappy_core::geometry::Point;
 use snappy_core::workspace::{ParkingPolicy, parking_origin};
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent};
 use snappy_fake::FakePlatform;
 use snappy_platform::{PlatformEvent, WindowId};
 
@@ -57,7 +57,7 @@ fn parked_with_both_displays(engine: &Engine<FakePlatform>) -> Point {
 
 /// The warnings the engine posted for the user, oldest first.
 fn warnings(name: &str) -> Vec<String> {
-    logged(name, "status")
+    logged(name, LogEvent::Status)
         .iter()
         .filter(|record| record["level"] == "warn")
         .map(|record| record["message"].as_str().unwrap().to_owned())
@@ -65,7 +65,7 @@ fn warnings(name: &str) -> Vec<String> {
 }
 
 fn outcomes(name: &str) -> Vec<(u64, String)> {
-    logged(name, "containment")
+    logged(name, LogEvent::Containment)
         .iter()
         .map(|record| {
             (
@@ -102,7 +102,7 @@ fn a_window_shown_while_displays_change_is_parked_again_once_they_settle_without
             [],
             "the display update parked it, not containment"
         );
-        let updates = logged(name, "displaysUpdated");
+        let updates = logged(name, LogEvent::DisplaysUpdated);
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0]["held"], 1);
         assert_eq!(updates[0]["moved"], 1);
@@ -124,7 +124,7 @@ fn a_wake_with_displays_coming_back_in_steps_never_warns_and_ends_with_windows_p
         assert_eq!(active(&engine), "workspace-1");
         assert_eq!(outcomes(name), [], "nothing was tried while displays settled");
         assert_eq!(
-            logged(name, "displaysUpdated").len(),
+            logged(name, LogEvent::DisplaysUpdated).len(),
             2,
             "one update per settled change"
         );
@@ -164,14 +164,14 @@ fn a_window_that_wont_stay_hidden_after_displays_settle_is_reported_once_with_wh
             outcomes(name),
             [(1, "retrying".to_owned()), (2, "stillShowing".to_owned())]
         );
-        let records = logged(name, "containment");
+        let records = logged(name, LogEvent::Containment);
         assert!(
             records
                 .iter()
                 .all(|record| record["app"] == "com.example.browser")
         );
         assert_eq!(
-            logged(name, "displaysUpdated").len(),
+            logged(name, LogEvent::DisplaysUpdated).len(),
             2,
             "the update and its retry"
         );

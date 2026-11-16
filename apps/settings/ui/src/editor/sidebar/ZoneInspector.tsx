@@ -162,11 +162,8 @@ function Coordinates({ zone }: { zone: Zone }) {
   const scaleOf = (field: CoordinateField) =>
     field === "x" || field === "width" ? pixels.width : pixels.height;
 
-  const commit = (field: CoordinateField, value: number): number => {
-    const scale = scaleOf(field);
-    const zones = editor.setField(zone.id, field, value / scale);
-    const result = zones.find((item) => item.id === zone.id)?.rect ?? zone.rect;
-    return result[field] * scale;
+  const commit = (field: CoordinateField, value: number) => {
+    editor.setField(zone.id, field, value / scaleOf(field));
   };
 
   return (

@@ -142,19 +142,33 @@ test("dragging a card reorders the workspaces", async ({ page }) => {
   await expect(chordIn(workspaceCard(page, "Workspace 1"))).toHaveAttribute("aria-label", "Control ⌃ + 1");
 });
 
-test("option and arrow keys reorder a focused card", async ({ page }) => {
+test("option and arrow keys reorder a focused card, as its description says", async ({ page }) => {
+  await expect(workspaceCard(page, "Workspace 3")).toHaveAccessibleDescription(
+    "Press Option and the Up or Down arrow to move this workspace.",
+  );
   await workspaceCard(page, "Workspace 3").focus();
   await page.keyboard.press("Alt+ArrowUp");
   await expect.poll(() => cardNames(page)).toEqual(["Workspace 1", "Workspace 3", "Workspace 2"]);
+});
+
+test("the delete dialog keeps focus on its buttons", async ({ page }) => {
+  await workspaceCard(page, "Workspace 2").click();
+  await page.getByRole("button", { name: "Delete workspace" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Delete Workspace 2?" });
+  const cancel = dialog.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(dialog.getByRole("button", { name: "Delete workspace" })).toBeFocused();
 });
 
 test("deleting asks first and names where the windows go", async ({ page }) => {
   await workspaceCard(page, "Workspace 2").click();
   await page.getByRole("button", { name: "Delete workspace" }).click();
   const dialog = page.getByRole("alertdialog", { name: "Delete Workspace 2?" });
-  await expect(dialog).toContainText(
-    "Its windows will be moved to Workspace 1. Your windows and layouts will be kept.",
-  );
+  await expect(dialog).toContainText("Its windows move to Workspace 1. No windows close.");
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -166,7 +180,7 @@ test("deleting asks first and names where the windows go", async ({ page }) => {
 
 test("deleting the active workspace moves its windows to the first other one", async ({ page }) => {
   await page.getByRole("button", { name: "Delete workspace" }).click();
-  await expect(page.getByRole("alertdialog")).toContainText("Its windows will be moved to Workspace 2.");
+  await expect(page.getByRole("alertdialog")).toContainText("Its windows move to Workspace 2.");
 });
 
 test("a workspace's display layout changes only that workspace", async ({ page }) => {

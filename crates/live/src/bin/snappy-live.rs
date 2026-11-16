@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use serde::Serialize;
-use snappy_core::keys::{KeyChord, Modifier, Platform};
+use snappy_core::keys::{KeyChord, Modifier, Os};
 use snappy_core::settings::Settings;
 use snappy_live::fixture::Fixture;
 use snappy_live::input::{pause, platform_input};
@@ -36,7 +36,17 @@ struct ScenarioResult {
     detail: Option<String>,
 }
 
+/// Set to 1 by every sandbox's launch script. The runner kills any running Snappy and drives
+/// the pointer and keyboard, so it refuses to run anywhere else, such as a real desktop.
+const SANDBOX_MARKER: &str = "SNAPPY_LIVE_SANDBOX";
+
 fn main() -> ExitCode {
+    if std::env::var(SANDBOX_MARKER).ok().as_deref() != Some("1") {
+        eprintln!(
+            "snappy-live: runs only inside a test sandbox, which sets {SANDBOX_MARKER}=1; use a tools/live script."
+        );
+        return ExitCode::from(2);
+    }
     let options = match parse(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(error) => {
@@ -80,15 +90,15 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
 /// gets chords this platform leaves free.
 fn test_settings() -> Result<Settings, String> {
     let chords = match PLATFORM {
-        Platform::MacOs => MACOS_CHORDS,
-        Platform::Windows => WINDOWS_CHORDS,
-        Platform::Linux if is_gnome() => GNOME_CHORDS,
-        Platform::Linux => LINUX_CHORDS,
+        Os::MacOs => MACOS_CHORDS,
+        Os::Windows => WINDOWS_CHORDS,
+        Os::Linux if is_gnome() => GNOME_CHORDS,
+        Os::Linux => LINUX_CHORDS,
     };
     settings_with(&chords, PLATFORM)
 }
 
-fn settings_with(chords: &RunChords, platform: Platform) -> Result<Settings, String> {
+fn settings_with(chords: &RunChords, platform: Os) -> Result<Settings, String> {
     let mut settings = Settings::defaults(platform);
     settings.snapping.enabled = true;
     settings.layouts.default_layout_id = "halves".to_owned();
@@ -214,11 +224,11 @@ fn warm_up(
     Ok(())
 }
 
-/// On GNOME the test helper's virtual devices keep whatever a failed scenario left held.
+/// On Wayland the shell's virtual devices keep whatever a failed scenario left held.
 #[cfg(target_os = "linux")]
 fn release_input() {
-    if is_gnome() {
-        snappy_live::gnome::release_all();
+    if let Some(shell) = snappy_live::desktop::wayland::Shell::current() {
+        shell.release_all();
     }
 }
 
@@ -227,7 +237,7 @@ fn release_input() {}
 
 #[cfg(target_os = "linux")]
 fn is_gnome() -> bool {
-    snappy_live::gnome::is_session()
+    snappy_live::desktop::gnome::is_session()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -250,7 +260,9 @@ fn run(options: &Options) -> Result<bool, String> {
     warm_up(&mut fixture, input.as_mut(), &display)?;
     let mut results = Vec::new();
     {
-        let debug_log = daemon.home().join("logs").join("debug.jsonl");
+        let debug_log = daemon.debug_log();
+        #[cfg(target_os = "linux")]
+        snappy_live::desktop::kwin::set_debug_log(&debug_log);
         let mut context = Context::new(
             &daemon,
             &settings,
@@ -342,18 +354,14 @@ fn primary_display() -> Result<Display, String> {
 
 #[cfg(target_os = "linux")]
 fn primary_display() -> Result<Display, String> {
-    if snappy_live::gnome::is_session() {
-        return snappy_gnome::reference::displays()?
-            .into_iter()
-            .next()
-            .ok_or_else(|| "no display".to_owned());
-    }
-    let (conn, screen) = x11rb::connect(None).map_err(|error| error.to_string())?;
-    snappy_x11::reference::displays(&conn, screen)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .next()
-        .ok_or_else(|| "no display".to_owned())
+    let displays = match snappy_live::desktop::wayland::Shell::current() {
+        Some(shell) => shell.displays()?,
+        None => {
+            let (conn, screen) = x11rb::connect(None).map_err(|error| error.to_string())?;
+            snappy_x11::reference::displays(&conn, screen).map_err(|error| error.to_string())?
+        }
+    };
+    displays.into_iter().next().ok_or_else(|| "no display".to_owned())
 }
 
 #[cfg(windows)]
@@ -393,10 +401,10 @@ mod tests {
     #[test]
     fn every_platforms_run_settings_take_the_snappy_key_the_live_scenario_chooses() {
         for (platform, chords) in [
-            (Platform::MacOs, MACOS_CHORDS),
-            (Platform::Windows, WINDOWS_CHORDS),
-            (Platform::Linux, LINUX_CHORDS),
-            (Platform::Linux, GNOME_CHORDS),
+            (Os::MacOs, MACOS_CHORDS),
+            (Os::Windows, WINDOWS_CHORDS),
+            (Os::Linux, LINUX_CHORDS),
+            (Os::Linux, GNOME_CHORDS),
         ] {
             let run = settings_with(&chords, platform).unwrap();
             let chosen = snappy_live::scenarios::with_free_snappy_key(&run, platform).unwrap();

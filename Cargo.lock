@@ -3940,7 +3940,7 @@ dependencies = [
 
 [[package]]
 name = "snappy"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "directories",
  "snappy-core",
@@ -3958,7 +3958,7 @@ dependencies = [
 
 [[package]]
 name = "snappy-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
@@ -3968,7 +3968,7 @@ dependencies = [
 
 [[package]]
 name = "snappy-engine"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3982,7 +3982,7 @@ dependencies = [
 
 [[package]]
 name = "snappy-fake"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "snappy-core",
  "snappy-platform",
@@ -3990,11 +3990,12 @@ dependencies = [
 
 [[package]]
 name = "snappy-gnome"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
  "snappy-core",
+ "snappy-gnome",
  "snappy-linux",
  "snappy-platform",
  "thiserror 2.0.21",
@@ -4003,7 +4004,7 @@ dependencies = [
 
 [[package]]
 name = "snappy-ipc"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4014,11 +4015,13 @@ dependencies = [
 
 [[package]]
 name = "snappy-kwin"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
  "snappy-core",
+ "snappy-engine",
+ "snappy-kwin",
  "snappy-linux",
  "snappy-platform",
  "thiserror 2.0.21",
@@ -4027,18 +4030,19 @@ dependencies = [
 
 [[package]]
 name = "snappy-linux"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ksni",
  "serde",
  "snappy-core",
  "snappy-platform",
  "tiny-skia 0.12.0",
+ "zbus",
 ]
 
 [[package]]
 name = "snappy-live"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "objc2 0.6.5",
  "objc2-core-foundation",
@@ -4046,7 +4050,9 @@ dependencies = [
  "serde",
  "serde_json",
  "snappy-core",
+ "snappy-engine",
  "snappy-gnome",
+ "snappy-kwin",
  "snappy-linux",
  "snappy-macos",
  "snappy-platform",
@@ -4061,7 +4067,7 @@ dependencies = [
 
 [[package]]
 name = "snappy-macos"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "block2 0.6.2",
  "dispatch2",
@@ -4075,11 +4081,12 @@ dependencies = [
  "objc2-service-management",
  "snappy-core",
  "snappy-platform",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "snappy-platform"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4088,7 +4095,7 @@ dependencies = [
 
 [[package]]
 name = "snappy-settings"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4100,7 +4107,7 @@ dependencies = [
 
 [[package]]
 name = "snappy-wasm"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4110,17 +4117,18 @@ dependencies = [
 
 [[package]]
 name = "snappy-windows"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "snappy-core",
  "snappy-platform",
+ "snappy-windows",
  "thiserror 2.0.21",
  "windows",
 ]
 
 [[package]]
 name = "snappy-x11"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",

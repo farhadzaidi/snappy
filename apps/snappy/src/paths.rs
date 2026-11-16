@@ -2,20 +2,12 @@
 
 use std::path::PathBuf;
 
-use snappy_engine::Paths;
-
-/// Names a folder to hold every file instead of the standard locations. Live tests use it
-/// to run Snappy against scratch settings and state.
-const HOME_OVERRIDE: &str = "SNAPPY_HOME";
+use snappy_engine::{Paths, file_names};
+use snappy_platform::launch;
 
 pub fn snappy_paths() -> Option<Paths> {
-    if let Some(home) = std::env::var_os(HOME_OVERRIDE).filter(|home| !home.is_empty()) {
-        let home = PathBuf::from(home);
-        return Some(Paths {
-            settings: home.join("settings.json"),
-            state_dir: home.join("state"),
-            log_dir: home.join("logs"),
-        });
+    if let Some(home) = std::env::var_os(launch::HOME_ENV).filter(|home| !home.is_empty()) {
+        return Some(Paths::in_folder(&PathBuf::from(home)));
     }
     let project = directories::ProjectDirs::from("", "", "Snappy")?;
     let home = directories::BaseDirs::new()?.home_dir().to_path_buf();
@@ -38,7 +30,7 @@ pub fn snappy_paths() -> Option<Paths> {
     };
 
     Some(Paths {
-        settings: settings_dir.join("settings.json"),
+        settings: settings_dir.join(file_names::SETTINGS),
         state_dir,
         log_dir,
     })

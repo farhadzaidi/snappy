@@ -71,6 +71,13 @@ impl Dib {
         // which this borrow can't outlive.
         unsafe { std::slice::from_raw_parts_mut(self.bits, self.width * self.height) }
     }
+
+    /// Takes the bitmap out of its DC, as calls that copy it, such as
+    /// `CreateIconIndirect`, require. GDI can't draw into it afterwards.
+    pub fn deselect(&self) {
+        // SAFETY: puts back the DC's original bitmap; `drop` doing so again changes nothing.
+        unsafe { SelectObject(self.dc, self.previous) };
+    }
 }
 
 impl Drop for Dib {

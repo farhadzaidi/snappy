@@ -5,10 +5,10 @@ use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_platform::{WindowId, WindowState};
 
-use super::{Windows, gone, notice};
+use super::registry::Entry;
+use super::tracked::{Windows, gone, notice};
 use crate::ax::{self, AxElement, AxError, names};
 use crate::messages::{CLOSED_OR_REVOKED, UNAVAILABLE_OR_FULL_SCREEN, declined, unavailable};
-use crate::registry::Entry;
 use crate::thresholds::AX_MESSAGING_TIMEOUT;
 use crate::{apps, main_thread};
 

@@ -25,13 +25,14 @@ type Binding = (u32, u16);
 struct Registered {
     native: i32,
     engine: u32,
-    combo: Combo,
     binding: Binding,
 }
 
-/// Registered shortcuts and the layout their virtual keys came from.
+/// The shortcuts the engine wants, those registered, and the layout their virtual keys
+/// came from. A shortcut one layout refuses stays wanted, so another layout can register it.
 #[derive(Default)]
 pub struct HotKeyTable {
+    wanted: Vec<(u32, Combo)>,
     registered: Vec<Registered>,
     layout: isize,
 }
@@ -95,11 +96,17 @@ impl Main {
     /// Replaces every registration with `keys`. Returns the IDs that couldn't be
     /// registered. A chord listed twice triggers the later ID.
     pub fn register_hotkeys(&mut self, keys: &[(u32, Combo)]) -> Vec<u32> {
-        self.unregister_hotkeys();
-        let layout = foreground_layout();
+        self.hotkeys.wanted = keys.to_vec();
+        self.register_wanted(foreground_layout())
+    }
+
+    /// Registers every wanted shortcut with the virtual keys `layout` gives them. Returns
+    /// the IDs that couldn't be registered.
+    fn register_wanted(&mut self, layout: HKL) -> Vec<u32> {
+        self.release_hotkeys();
         self.hotkeys.layout = layout.0 as isize;
         let mut refused = Vec::new();
-        for (index, (engine, combo)) in keys.iter().enumerate() {
+        for (index, (engine, combo)) in self.hotkeys.wanted.iter().enumerate() {
             let Some(key) = binding(combo, layout) else {
                 refused.push(*engine);
                 continue;
@@ -121,7 +128,6 @@ impl Main {
             self.hotkeys.registered.push(Registered {
                 native,
                 engine: *engine,
-                combo: combo.clone(),
                 binding: key,
             });
         }
@@ -136,6 +142,11 @@ impl Main {
     }
 
     pub fn unregister_hotkeys(&mut self) {
+        self.hotkeys.wanted.clear();
+        self.release_hotkeys();
+    }
+
+    fn release_hotkeys(&mut self) {
         for registered in std::mem::take(&mut self.hotkeys.registered) {
             unregister_one(self.window, registered.native);
         }
@@ -169,23 +180,18 @@ impl Main {
         }
     }
 
-    /// Re-registers every shortcut when the foreground window uses another layout.
-    pub fn follow_keyboard_layout(&mut self, foreground: HWND) {
-        if self.hotkeys.registered.is_empty() {
-            return;
+    /// Re-registers every wanted shortcut when the foreground window uses another layout.
+    /// Returns whether any was refused, which the engine only learns by registering again.
+    pub fn follow_keyboard_layout(&mut self, foreground: HWND) -> bool {
+        if self.hotkeys.wanted.is_empty() {
+            return false;
         }
         // SAFETY: plain queries.
         let layout = unsafe { GetKeyboardLayout(GetWindowThreadProcessId(foreground, None)) };
         if layout.0 as isize == self.hotkeys.layout {
-            return;
+            return false;
         }
-        let keys: Vec<(u32, Combo)> = self
-            .hotkeys
-            .registered
-            .iter()
-            .map(|registered| (registered.engine, registered.combo.clone()))
-            .collect();
-        self.register_hotkeys(&keys);
+        !self.register_wanted(layout).is_empty()
     }
 }
 

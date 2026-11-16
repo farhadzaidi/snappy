@@ -1,4 +1,4 @@
-import type { Remedy } from "../core/model";
+import type { Remedy } from "../bridge/protocol";
 import { useAppState, useSend } from "../state/services";
 import { Button } from "../ui/Button";
 import { AlertIcon, InfoIcon } from "../ui/icons";

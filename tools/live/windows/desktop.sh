@@ -20,7 +20,7 @@ task=snappy-desktop
 
 script="$(mktemp)"
 trap 'rm -f "$script"' EXIT
-printf '@echo off\r\ncd /d %s\r\nset SNAPPY_WINDOWS_TEST=1\r\n%s > task.out 2>&1\r\necho %%ERRORLEVEL%% > task.done\r\n' \
+printf '@echo off\r\ncd /d %s\r\nset SNAPPY_WINDOWS_TEST=1\r\nset SNAPPY_LIVE_SANDBOX=1\r\n%s > task.out 2>&1\r\necho %%ERRORLEVEL%% > task.done\r\n' \
     "$folder" "$command" >"$script"
 
 vm_ssh "New-Item -ItemType Directory -Force -Path '$folder' | Out-Null; Remove-Item -ErrorAction Ignore '$folder\\task.out', '$folder\\task.done'; exit 0"

@@ -13,7 +13,7 @@ use snappy_platform::{LiveControl, OverlayScene, TrayMenu};
 
 use crate::bus::Bus;
 use crate::caps_lock;
-use crate::keystate::{self, Watch};
+use crate::input::keystate::{self, Watch};
 use crate::overlay::{Overlays, Target};
 use crate::protocol::{Event, Request};
 

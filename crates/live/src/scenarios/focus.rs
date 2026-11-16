@@ -1,8 +1,9 @@
 //! Moving keyboard focus between windows and zones.
 
 use snappy_core::geometry::Rect;
-use snappy_core::navigate::Direction;
+use snappy_core::placement::navigate::Direction;
 use snappy_core::settings::NavigationShortcut;
+use snappy_engine::LogEvent;
 
 use super::Outcome;
 use super::support::{Context, side_by_side, timed, two_zoned};
@@ -36,7 +37,7 @@ fn focus_around(context: &mut Context) -> Result<Outcome, String> {
     frames.push(context.fixture.frame("focus-d")?);
     context.focus("focus-a")?;
 
-    let seen = context.logged("focusMove").len();
+    let seen = context.logged(LogEvent::FocusMove).len();
     let presses = [
         NavigationShortcut::Focus(Direction::Right),
         NavigationShortcut::Focus(Direction::Down),
@@ -52,7 +53,7 @@ fn focus_around(context: &mut Context) -> Result<Outcome, String> {
     }
     let elapsed = context.elapsed_ms();
     let moves: Vec<(Option<u64>, Option<u64>)> = context
-        .logged("focusMove")
+        .logged(LogEvent::FocusMove)
         .iter()
         .skip(seen)
         .map(|record| (record["from"].as_u64(), record["to"].as_u64()))
@@ -113,7 +114,7 @@ fn focus_between_zones(context: &mut Context) -> Result<Outcome, String> {
     let floating = context.open("zone-f", between)?;
     context.focus("zone-a")?;
 
-    let seen = context.logged("focusMove").len();
+    let seen = context.logged(LogEvent::FocusMove).len();
     let press = |context: &mut Context, shortcut| -> Result<(), String> {
         let key = context.navigation_key(shortcut)?;
         context.input.chord(&key.combo(context.settings.snappy_key))?;
@@ -133,7 +134,11 @@ fn focus_between_zones(context: &mut Context) -> Result<Outcome, String> {
     press(context, NavigationShortcut::Focus(Direction::Left))?;
     let elapsed = context.elapsed_ms();
 
-    let moves: Vec<serde_json::Value> = context.logged("focusMove").into_iter().skip(seen).collect();
+    let moves: Vec<serde_json::Value> = context
+        .logged(LogEvent::FocusMove)
+        .into_iter()
+        .skip(seen)
+        .collect();
     let to: Vec<Option<u64>> = moves.iter().map(|record| record["to"].as_u64()).collect();
     let from: Vec<Option<u64>> = moves.iter().map(|record| record["from"].as_u64()).collect();
     let described = || format!("focus went {:?} from {:?}", to, from);

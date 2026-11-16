@@ -1,7 +1,7 @@
 //! Snapping by drag and by shortcut, and the windows Snappy leaves alone.
 
 use snappy_core::geometry::{Rect, Size};
-use snappy_core::navigate::Direction;
+use snappy_core::placement::navigate::Direction;
 use snappy_core::settings::NavigationShortcut;
 
 use super::Outcome;

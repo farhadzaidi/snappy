@@ -6,8 +6,8 @@ use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication, NSWorkspace};
 
-use crate::eligibility::{AppFacts, app_identifier};
-use crate::ffi::{NO_SUCH_PROCESS, Pid, kill};
+use crate::ffi::Pid;
+use crate::windows::eligibility::{AppFacts, app_identifier};
 
 pub fn own_pid() -> Pid {
     std::process::id() as Pid
@@ -77,6 +77,6 @@ pub fn is_running(pid: Pid) -> bool {
         return false;
     }
     // SAFETY: signal 0 only checks that the process exists.
-    let alive = unsafe { kill(pid, 0) } == 0;
-    alive || std::io::Error::last_os_error().raw_os_error() != Some(NO_SUCH_PROCESS)
+    let alive = unsafe { libc::kill(pid, 0) } == 0;
+    alive || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }

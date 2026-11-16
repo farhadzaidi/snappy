@@ -1,6 +1,6 @@
 {
   "productName": "Snappy",
-  "identifier": "local.snappy.settings",
+  "identifier": "io.github.farhadzaidi.Snappy.Settings",
   "build": {
     "frontendDist": "../ui/dist"
   },

@@ -5,6 +5,7 @@ use std::time::Duration;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::settings::WorkspaceStep;
 use snappy_core::workspace::{ParkingPolicy, parking_origin};
+use snappy_engine::LogEvent;
 
 use super::Outcome;
 use super::support::{Context, describe, floating, near, side_by_side, timed};
@@ -70,7 +71,7 @@ pub(super) fn restart_keeps_workspaces(context: &mut Context) -> Result<Outcome,
     context.wait_parked("away")?;
     let parked = context.fixture.frame("away")?;
 
-    let seen = context.logged("workspacesStarted").len();
+    let seen = context.logged(LogEvent::WorkspacesStarted).len();
     context.begin();
     context.daemon.restart()?;
     let elapsed = context.elapsed_ms();
@@ -85,7 +86,7 @@ pub(super) fn restart_keeps_workspaces(context: &mut Context) -> Result<Outcome,
     if context.active_workspace()? != "workspace-1" {
         return Err("the restart changed the active workspace".to_owned());
     }
-    let started = context.logged("workspacesStarted");
+    let started = context.logged(LogEvent::WorkspacesStarted);
     let rejoined = started
         .get(seen..)
         .and_then(<[_]>::last)
@@ -153,7 +154,7 @@ fn parked_through_display_changes(context: &mut Context, sizes: &[Size]) -> Resu
     context.press(&context.send_key(2)?)?;
     context.wait_parked("resized")?;
     let warned = warnings(context).len();
-    let updated = context.logged("displaysUpdated").len();
+    let updated = context.logged(LogEvent::DisplaysUpdated).len();
 
     context.begin();
     let mut slowest: f64 = 0.0;
@@ -183,7 +184,7 @@ fn parked_through_display_changes(context: &mut Context, sizes: &[Size]) -> Resu
     if !new_warnings.is_empty() {
         return Err(format!("Snappy warned: {}", new_warnings.join(" | ")));
     }
-    let updates = context.logged("displaysUpdated").split_off(updated);
+    let updates = context.logged(LogEvent::DisplaysUpdated).split_off(updated);
     if let Some(failed) = updates.iter().find(|record| !record["error"].is_null()) {
         return Err(format!("a display update failed: {}", failed["error"]));
     }
@@ -207,7 +208,7 @@ fn parked_through_display_changes(context: &mut Context, sizes: &[Size]) -> Resu
 /// The messages Snappy flagged as warnings for the user so far.
 fn warnings(context: &Context) -> Vec<String> {
     context
-        .logged("status")
+        .logged(LogEvent::Status)
         .iter()
         .filter(|record| record["level"] == "warn")
         .map(|record| record["message"].as_str().unwrap_or_default().to_owned())

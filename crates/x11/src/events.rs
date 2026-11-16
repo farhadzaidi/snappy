@@ -17,8 +17,8 @@ use crate::caps_lock;
 use crate::error::X11Error;
 use crate::input::{HeldModifiers, PRIMARY_BUTTON};
 use crate::overlay::UiCommand;
-use crate::shared::Shared;
-use crate::x::{self, lock};
+use crate::shared::{Shared, lock};
+use crate::xserver;
 
 /// Keysyms of Shift, Control, Caps Lock, Meta, Alt, Super, and Hyper, left and right.
 const MODIFIER_KEYSYMS: std::ops::RangeInclusive<u32> = 0xffe1..=0xffee;
@@ -45,7 +45,7 @@ enum Flow {
 
 impl EventLoop {
     pub fn new(shared: Arc<Shared>, events: Sender<PlatformEvent>, ui: Sender<UiCommand>) -> EventLoop {
-        let list = x::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_CLIENT_LIST);
+        let list = xserver::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_CLIENT_LIST);
         let clients = ClientTracker::new(
             list.iter()
                 .map(|window| (u64::from(*window), pid(&shared, *window))),
@@ -210,6 +210,7 @@ impl EventLoop {
                 at,
                 mods,
                 window: None,
+                frame: None,
             });
         }
     }
@@ -290,10 +291,11 @@ impl EventLoop {
 
     fn clients_changed(&mut self) {
         let shared = &self.shared;
-        let list: Vec<u64> = x::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_CLIENT_LIST)
-            .into_iter()
-            .map(u64::from)
-            .collect();
+        let list: Vec<u64> =
+            xserver::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_CLIENT_LIST)
+                .into_iter()
+                .map(u64::from)
+                .collect();
         let pids: BTreeMap<u64, Option<u32>> = self
             .clients
             .added(&list)
@@ -314,7 +316,7 @@ impl EventLoop {
     fn focus_changed(&self) {
         let _ = self.ui.send(UiCommand::RaiseMarks);
         let shared = &self.shared;
-        let active = x::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_ACTIVE_WINDOW)
+        let active = xserver::window_list(&shared.conn, shared.screen.root, shared.atoms._NET_ACTIVE_WINDOW)
             .first()
             .copied()
             .filter(|window| *window != x11rb::NONE);
@@ -328,7 +330,7 @@ impl EventLoop {
 }
 
 fn pid(shared: &Shared, window: Window) -> Option<u32> {
-    x::property32(&shared.conn, window, shared.atoms._NET_WM_PID, AtomEnum::CARDINAL)?
+    xserver::property32(&shared.conn, window, shared.atoms._NET_WM_PID, AtomEnum::CARDINAL)?
         .first()
         .copied()
         .filter(|pid| *pid > 0)

@@ -5,19 +5,22 @@ import type { Collection } from "../state/session";
 import { useAppState, useServices, useSession } from "../state/services";
 import { Button } from "../ui/Button";
 import { EmptyLayoutsIcon, PlusIcon } from "../ui/icons";
+import { tabPanelProps, Tabs, useTabIds } from "../ui/Tabs";
 import { LayoutCard } from "./LayoutCard";
 import { LayoutPreview } from "./LayoutPreview";
 import { library } from "./library";
 
-const COLLECTIONS: readonly { collection: Collection; title: string }[] = [
-  { collection: "presets", title: "Presets" },
-  { collection: "custom", title: "My layouts" },
+const COLLECTIONS: readonly { value: Collection; title: string }[] = [
+  { value: "presets", title: "Presets" },
+  { value: "custom", title: "My layouts" },
 ];
 
 /** The layout library. */
 export function LayoutsPage() {
   const app = useAppState();
   const session = useSession();
+  const tabIds = useTabIds();
+  const panel = tabPanelProps(tabIds, session.collection);
   const { session: sessionStore, editor, client } = useServices();
   const { layouts, browsed, inUse } = library(app, session);
   useKeepBrowsing(browsed?.id);
@@ -38,20 +41,13 @@ export function LayoutsPage() {
       </div>
 
       <div className="library-bar">
-        <div className="segmented segmented-even" role="tablist" aria-label="Collections">
-          {COLLECTIONS.map(({ collection, title }) => (
-            <button
-              type="button"
-              role="tab"
-              key={collection}
-              className="segment"
-              aria-selected={session.collection === collection}
-              onClick={() => showCollection(collection)}
-            >
-              {title}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          label="Collections"
+          tabs={COLLECTIONS}
+          selected={session.collection}
+          ids={tabIds}
+          onSelect={showCollection}
+        />
         <Button onClick={() => editor.requestNew()}>
           <PlusIcon />
           New layout
@@ -59,7 +55,7 @@ export function LayoutsPage() {
       </div>
 
       {browsed ? (
-        <div className="library">
+        <div className="library" {...panel}>
           <LayoutPreview layout={browsed} inUse={inUse} />
           <div className="layout-grid" role="list" aria-label="Layouts">
             {layouts.map((layout) => (
@@ -68,7 +64,7 @@ export function LayoutsPage() {
           </div>
         </div>
       ) : (
-        <div className="empty-collection">
+        <div className="empty-collection" {...panel}>
           <span className="muted">
             <EmptyLayoutsIcon />
           </span>

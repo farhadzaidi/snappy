@@ -10,7 +10,7 @@ import {
   snappyKeyLabel,
   splitAtShortcuts,
 } from "./labels";
-import type { KeyChord, Modifier, NamedShortcut } from "./model";
+import { PLATFORMS, type KeyChord, type Modifier, type NamedShortcut } from "./model";
 import { core } from "./snappyCore";
 
 const DEFAULT_KEY: Modifier[] = ["ctrl", "alt", "meta"];
@@ -76,7 +76,7 @@ describe("labels", () => {
       { code: "KeyJ", mods: ["snappy", "shift"] },
       { code: "ArrowLeft", mods: ["ctrl", "alt", "shift", "meta"] },
     ];
-    for (const platform of ["macos", "windows", "linux"] as const) {
+    for (const platform of PLATFORMS) {
       for (const chord of chords) {
         const long = longLabel(chord, platform);
         expect(splitAtShortcuts(`${long} is taken.`)).toEqual([
@@ -133,10 +133,10 @@ describe("labels", () => {
 
   it("the recorders' help names the platform's modifiers", () => {
     expect(recorderHelp("macos", DEFAULT_KEY)).toBe(
-      "Click and press a combination with Control, Option, or Command; hold Control ⌃ + Option ⌥ + Command ⌘ for the Snappy key. Escape cancels; Delete clears.",
+      "Click, then press a combination with Control, Option, or Command. Hold Control ⌃ + Option ⌥ + Command ⌘ for the Snappy key. Escape cancels, Delete clears.",
     );
     expect(recorderHelp("linux", ["ctrl", "shift"])).toBe(
-      "Click and press a combination with Ctrl, Alt, or Super; hold Ctrl + Shift for the Snappy key. Escape cancels; Delete clears.",
+      "Click, then press a combination with Ctrl, Alt, or Super. Hold Ctrl + Shift for the Snappy key. Escape cancels, Delete clears.",
     );
   });
 

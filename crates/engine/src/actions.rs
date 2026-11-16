@@ -5,19 +5,20 @@
 
 use std::rc::Rc;
 
-use snappy_core::bindings::HotKeyAction;
-use snappy_core::empty_zone::nearest_empty_zone;
 use snappy_core::error::WindowError;
 use snappy_core::geometry::Rect;
 use snappy_core::keys::Combo;
 use snappy_core::layout::{Zone, zone_frame};
-use snappy_core::navigate::{Direction, destination};
-use snappy_core::swap::ZoneSlot;
+use snappy_core::placement::empty_zone::nearest_empty_zone;
+use snappy_core::placement::navigate::{Direction, destination};
+use snappy_core::placement::swap::ZoneSlot;
+use snappy_core::shortcuts::HotKeyAction;
 use snappy_platform::{Display, Platform, WindowInfo};
 
-use crate::core::{Core, PendingNavigation};
 use crate::drag::{swap_source, zone_slots};
+use crate::log_event::LogEvent;
 use crate::ops::{Shared, SnapRequest, SwapMove, run_redo, run_snap, run_swap, run_undo};
+use crate::state::{EngineState, PendingNavigation};
 use crate::workspaces::{AfterSend, SwitchFocus};
 use crate::{caps_lock, focus, selection, workspaces};
 
@@ -32,7 +33,7 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         };
         caps_lock::note_other_input(&mut core);
         let live = core.is_live();
-        core.trace("shortcut", || {
+        core.trace(LogEvent::Shortcut, || {
             let mut record = action_record(&hotkey.action);
             record.insert("live".to_owned(), live.into());
             serde_json::Value::Object(record)
@@ -109,7 +110,7 @@ fn move_to_nearest_empty<P: Platform + 'static>(shared: &Rc<Shared<P>>) {
 
 /// The snap into the empty zone nearest `window`, or `None` when there is none.
 fn nearest_empty_snap<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     window: &WindowInfo,
 ) -> Result<Option<SnapRequest>, WindowError> {
     if core.workspaces.is_inactive(window.id) {
@@ -123,7 +124,7 @@ fn nearest_empty_snap<P: Platform>(
     let frames: Vec<Rect> = slots.iter().map(|slot| slot.frame).collect();
     let windows = core.occupants(&frames)?;
     let Some(slot) = nearest_empty_zone(window.id, frame, &display.id, &slots, &windows) else {
-        core.announce_quietly("No empty zone on this display.");
+        core.announce_quietly("Every zone is taken.");
         return Ok(None);
     };
     Ok(Some(SnapRequest {
@@ -199,7 +200,9 @@ fn move_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target: Target) {
         drop(core);
         shared.submit(move |shared, cancel| async move {
             shared.core.borrow_mut().pending_navigation = pending;
-            run_swap(shared, cancel, swap).await;
+            run_swap(Rc::clone(&shared), cancel, swap).await;
+            // Moved or not, the window is where it is now; a later press starts from there.
+            shared.core.borrow_mut().pending_navigation = None;
         });
     } else {
         let request = SnapRequest {
@@ -213,13 +216,14 @@ fn move_focused<P: Platform + 'static>(shared: &Rc<Shared<P>>, target: Target) {
         shared.submit(move |shared, cancel| async move {
             // A rapid repeat continues from here while this snap settles.
             shared.core.borrow_mut().pending_navigation = pending;
-            run_snap(shared, cancel, request).await;
+            run_snap(Rc::clone(&shared), cancel, request).await;
+            shared.core.borrow_mut().pending_navigation = None;
         });
     }
 }
 
 fn plan<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     window: WindowInfo,
     target: &Target,
 ) -> Result<Option<Planned>, WindowError> {
@@ -241,7 +245,7 @@ fn plan<P: Platform>(
 }
 
 /// The zone whose shortcut was pressed in the display's layout.
-fn zone_by_chord<P: Platform>(core: &Core<P>, display: &Display, combo: &Combo) -> Option<Zone> {
+fn zone_by_chord<P: Platform>(core: &EngineState<P>, display: &Display, combo: &Combo) -> Option<Zone> {
     let layout = core.settings.layout_for_display(&display.id);
     let options = core.settings.options(layout);
     if !options.enabled {
@@ -258,7 +262,7 @@ fn zone_by_chord<P: Platform>(core: &Core<P>, display: &Display, combo: &Combo) 
 
 /// The next zone in `direction`.
 fn navigate<P: Platform>(
-    core: &mut Core<P>,
+    core: &mut EngineState<P>,
     window: &WindowInfo,
     frame: Rect,
     display: &Display,
@@ -287,7 +291,7 @@ fn navigate<P: Platform>(
         direction,
         continuing.as_deref(),
     ) else {
-        core.announce_quietly(&format!("No zone {} of this window.", direction.name()));
+        core.announce_quietly(no_zone_toward(direction));
         return None;
     };
     let pending = PendingNavigation {
@@ -297,4 +301,13 @@ fn navigate<P: Platform>(
         zone: zone.id.clone(),
     };
     Some((zone.clone(), Some(pending)))
+}
+
+fn no_zone_toward(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Up => "No zone above this window.",
+        Direction::Down => "No zone below this window.",
+        Direction::Left => "No zone to the left of this window.",
+        Direction::Right => "No zone to the right of this window.",
+    }
 }

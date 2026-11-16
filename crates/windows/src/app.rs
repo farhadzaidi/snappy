@@ -39,7 +39,8 @@ use crate::platform::WindowsPlatform;
 use crate::shared::{Shared, lock};
 use crate::tray::{self, Tray};
 
-const CLASS: windows::core::PCWSTR = w!("Snappy.Daemon");
+/// The hidden main window's class, which the live harness looks the daemon up by.
+pub const CLASS: windows::core::PCWSTR = w!("Snappy.Daemon");
 /// How long the session end or a console close waits for parked windows to return.
 /// Windows ends the process soon after either handler returns.
 const QUIT_WAIT: Duration = Duration::from_millis(4500);

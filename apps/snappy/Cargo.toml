@@ -3,6 +3,10 @@ name = "snappy"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Snappy, which arranges windows into zones: the daemon."
 
 [dependencies]
 snappy-core = { path = "../../crates/core" }

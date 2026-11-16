@@ -3,11 +3,9 @@
 //! on the keyboard layout, their fixed virtual key. Layout-dependent keys get their
 //! virtual key from the current layout through `MapVirtualKeyExW`.
 
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    HKL, MAPVK_VSC_TO_VK_EX, MapVirtualKeyExW, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-};
+use windows::Win32::UI::Input::KeyboardAndMouse::{HKL, MAPVK_VSC_TO_VK_EX, MapVirtualKeyExW};
 
-use snappy_core::keys::{KeyCode, Modifier};
+use snappy_core::keys::KeyCode;
 
 /// A physical key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +17,8 @@ pub struct Key {
 }
 
 impl Key {
+    /// Read by the tests' input, which sends extended keys with their flag.
+    #[cfg(any(test, feature = "reference"))]
     pub fn is_extended(self) -> bool {
         self.scan >> 8 == 0xE0
     }
@@ -156,16 +156,6 @@ pub fn virtual_key(code: &KeyCode, layout: HKL) -> Option<u16> {
     // SAFETY: a plain lookup; an unknown layout handle yields 0.
     let vk = unsafe { MapVirtualKeyExW(u32::from(key.scan), MAPVK_VSC_TO_VK_EX, Some(layout)) };
     u16::try_from(vk).ok().filter(|vk| *vk != 0)
-}
-
-/// The left-hand key for each modifier.
-pub fn modifier_key(modifier: Modifier) -> VIRTUAL_KEY {
-    match modifier {
-        Modifier::Shift => VK_LSHIFT,
-        Modifier::Ctrl => VK_LCONTROL,
-        Modifier::Alt => VK_LMENU,
-        Modifier::Meta => VK_LWIN,
-    }
 }
 
 #[cfg(test)]

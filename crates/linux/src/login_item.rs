@@ -17,7 +17,7 @@ pub fn enabled() -> bool {
 pub fn set_enabled_for_this_program(on: bool) -> Result<(), String> {
     let path = entry_path().ok_or_else(|| NO_CONFIG_FOLDER.to_owned())?;
     let executable = std::env::current_exe().map_err(|error| {
-        eprintln!("snappy: can't find its own program: {error}");
+        crate::journal::warn(format_args!("can't find its own program: {error}"));
         NOT_CHANGED.to_owned()
     })?;
     if on {
@@ -30,11 +30,7 @@ const FILE_NAME: &str = "snappy.desktop";
 
 /// `$XDG_CONFIG_HOME/autostart/snappy.desktop`, defaulting to `~/.config`.
 pub fn entry_path() -> Option<PathBuf> {
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(config.join("autostart").join(FILE_NAME))
+    crate::xdg::config_home().map(|config| config.join("autostart").join(FILE_NAME))
 }
 
 /// Enabled when the entry exists and isn't hidden.
@@ -52,7 +48,7 @@ pub fn set_enabled(path: &Path, executable: &Path, on: bool) -> Result<(), Strin
         }
     };
     result.map_err(|error| {
-        eprintln!("snappy: can't change the autostart entry: {error}");
+        crate::journal::warn(format_args!("can't change the autostart entry: {error}"));
         NOT_CHANGED.to_owned()
     })
 }
@@ -71,12 +67,13 @@ pub fn desktop_entry(executable: &Path) -> String {
          Type=Application\n\
          Name=Snappy\n\
          Comment=Arrange windows into zones\n\
-         Exec={} --background\n\
+         Exec={} {}\n\
          Icon={}\n\
          Terminal=false\n\
          NoDisplay=true\n\
          X-GNOME-Autostart-enabled=true\n",
         exec_argument(&executable.to_string_lossy()),
+        snappy_platform::launch::BACKGROUND,
         app_icon::NAME
     )
 }

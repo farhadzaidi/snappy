@@ -3,6 +3,10 @@ name = "snappy-gnome"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Snappy's adapter for GNOME on Wayland, through its GNOME Shell extension."
 
 [target.'cfg(target_os = "linux")'.dependencies]
 snappy-core = { path = "../core" }
@@ -12,6 +16,13 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+snappy-gnome = { path = ".", features = ["reference"] }
+
+[features]
+# The `reference` module, for tests and the live harness only.
+reference = []
 
 [lints]
 workspace = true

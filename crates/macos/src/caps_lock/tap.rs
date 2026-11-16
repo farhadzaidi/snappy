@@ -24,9 +24,10 @@ use objc2_core_graphics::{
 use snappy_core::keys::{KeyCode, Mods};
 use snappy_platform::{CapsLockInput, PlatformEvent};
 
+use super::key_mapping::F18_CODE;
 use crate::events::emit;
 use crate::hotkeys;
-use crate::keycodes::{event_flags, virtual_key_code};
+use crate::keys::{event_flags, virtual_key_code};
 
 /// The events the tap sees while Caps Lock is down: keys, modifier changes, and buttons.
 const OBSERVED: [CGEventType; 12] = [
@@ -70,7 +71,7 @@ thread_local! {
 /// Hold Caps Lock as `modifiers`: watch its key and get the tap ready, disabled until the key
 /// goes down. False when either couldn't be set up, as without Accessibility.
 pub fn hold_as(modifiers: Mods) -> bool {
-    let Some(key) = virtual_key_code(&KeyCode::new("F18")) else {
+    let Some(key) = virtual_key_code(&KeyCode::new(F18_CODE)) else {
         return false;
     };
     HELD.with(|held| {

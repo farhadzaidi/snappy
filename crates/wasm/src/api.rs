@@ -1,359 +1,19 @@
-//! Typed requests and handlers behind each exported function.
+//! The handler behind each exported function: a typed request in, a typed answer out.
 
-use std::collections::BTreeMap;
-
-use serde::{Deserialize, Serialize};
-use snappy_core::bindings::{
+use serde::Serialize;
+use snappy_core::editor::{self, ALIGN_TOLERANCE, ResizeHandle};
+use snappy_core::geometry::Rect;
+use snappy_core::keys::KeyChord;
+use snappy_core::layout::{self, Layout, MAX_NAME_LENGTH, MAX_ZONES, Spacing, Zone, zone_frame};
+use snappy_core::placement::operations::UNDO_LIMIT;
+use snappy_core::settings::{LayoutOptions, LayoutShortcut, MAX_WORKSPACES, Settings, WorkspaceShortcut};
+use snappy_core::shortcuts::ShortcutSection;
+use snappy_core::shortcuts::guide::{self, GuideEntry};
+use snappy_core::shortcuts::{
     Refusal, availability_probes, conflict_with_layout, recording_conflict, unavailable_refusal,
 };
-use snappy_core::editor::{self, ALIGN_TOLERANCE, ResizeHandle};
-use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::guide::{self, GuideEntry};
-use snappy_core::keys::{KeyChord, LabelParts, Modifier, Mods, Platform, SnappyKey};
-use snappy_core::layout::{self, Layout, MAX_ZONES, Spacing, UnitRect, Zone, zone_frame};
-use snappy_core::operations::UNDO_LIMIT;
-use snappy_core::reset::{Reset, ShortcutSection};
-use snappy_core::settings::{
-    LayoutOptions, LayoutShortcut, MAX_WORKSPACES, Settings, Workspace, WorkspaceShortcut,
-};
-use snappy_core::shortcuts::{NamedShortcut, ShortcutId};
 
-use crate::gestures::{self, CutPreview, Drawn, Edit};
-use crate::wire::{Axis, CutScope, Divider, Field, Handle, HandlePosition};
-
-#[derive(Deserialize)]
-pub struct Empty {}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ZoneFramesRequest {
-    zones: Vec<Zone>,
-    work_area: Rect,
-    spacing_factor: f64,
-}
-
-#[derive(Deserialize)]
-pub struct ZonesRequest {
-    zones: Vec<Zone>,
-}
-
-#[derive(Deserialize)]
-pub struct HandleAtRequest {
-    point: Point,
-    size: Size,
-}
-
-#[derive(Deserialize)]
-pub struct SizeRequest {
-    size: Size,
-}
-
-#[derive(Deserialize)]
-pub struct MoveRequest {
-    zones: Vec<Zone>,
-    id: String,
-    delta: Point,
-    tolerance: Size,
-}
-
-#[derive(Deserialize)]
-pub struct ResizeRequest {
-    zones: Vec<Zone>,
-    id: String,
-    handle: Handle,
-    delta: Point,
-    tolerance: Size,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DividerRequest {
-    zones: Vec<Zone>,
-    zone_id: String,
-    axis: Axis,
-    line: f64,
-    delta: f64,
-    tolerance: f64,
-}
-
-#[derive(Deserialize)]
-pub struct DrawRequest {
-    zones: Vec<Zone>,
-    from: Point,
-    to: Point,
-    tolerance: Size,
-}
-
-#[derive(Deserialize)]
-pub struct CopiesRequest {
-    zones: Vec<Zone>,
-    copied: Vec<UnitRect>,
-}
-
-#[derive(Deserialize)]
-pub struct CutPreviewRequest {
-    zones: Vec<Zone>,
-    scope: CutScope,
-    axis: Axis,
-    at: f64,
-    tolerance: f64,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CutRequest {
-    zones: Vec<Zone>,
-    scope: CutScope,
-    axis: Axis,
-    /// The line itself, already snapped by the preview.
-    at: f64,
-    /// At least one per zone the cut may split.
-    new_ids: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MergeRequest {
-    zones: Vec<Zone>,
-    ids: Vec<String>,
-    zone_shortcuts: BTreeMap<String, KeyChord>,
-}
-
-#[derive(Deserialize)]
-pub struct FieldRequest {
-    zones: Vec<Zone>,
-    id: String,
-    field: Field,
-    value: f64,
-}
-
-#[derive(Deserialize)]
-pub struct ChordRequest {
-    chord: KeyChord,
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-pub struct UnavailableRequest {
-    chord: KeyChord,
-    /// The shortcut being recorded, with the title its recorder shows.
-    shortcut: NamedShortcut,
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyedChordRequest {
-    chord: KeyChord,
-    snappy_key: SnappyKey,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SnappyKeyRequest {
-    snappy_key: SnappyKey,
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-pub struct SnappyKeyChangeRequest {
-    settings: Settings,
-    modifiers: Mods,
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-pub struct ModifierRequest {
-    modifier: Modifier,
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-pub struct PlatformRequest {
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-pub struct SettingsRequest {
-    settings: Settings,
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-pub struct RecordingRequest {
-    settings: Settings,
-    /// The shortcut being recorded, which the message names from its side.
-    shortcut: ShortcutId,
-    chord: KeyChord,
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-pub struct ResetRequest {
-    settings: Settings,
-    reset: Reset,
-    platform: Platform,
-}
-
-/// Settings put back to their defaults, whether that changes anything, and what to say.
-#[derive(Serialize)]
-pub struct ResetOutcome {
-    settings: Settings,
-    changed: bool,
-    message: String,
-}
-
-#[derive(Deserialize)]
-pub struct LayoutConflictRequest {
-    settings: Settings,
-    layout: Layout,
-    options: LayoutOptions,
-    platform: Platform,
-}
-
-#[derive(Deserialize)]
-pub struct LayoutRequest {
-    layout: Layout,
-}
-
-#[derive(Deserialize)]
-pub struct DisplayLayoutRequest {
-    settings: Settings,
-    display: String,
-}
-
-#[derive(Deserialize)]
-pub struct LayoutOptionsRequest {
-    settings: Settings,
-    layout: Layout,
-}
-
-#[derive(Deserialize)]
-pub struct SectionsRequest {
-    settings: Settings,
-}
-
-#[derive(Deserialize)]
-pub struct WorkspaceNameRequest {
-    workspace: String,
-}
-
-#[derive(Deserialize)]
-pub struct LayoutTitlesRequest {
-    layout: String,
-    zones: usize,
-}
-
-#[derive(Deserialize)]
-pub struct NewWorkspaceRequest {
-    settings: Settings,
-    id: String,
-    number: usize,
-}
-
-/// Titles by the name the settings file gives each shortcut, such as `"focusUp"`.
-type Titles = BTreeMap<String, String>;
-
-/// The titles of a layout's own shortcuts.
-#[derive(Serialize)]
-pub struct LayoutShortcutTitles {
-    select: String,
-    /// One per zone, in the layout's order.
-    zones: Vec<String>,
-}
-
-/// One section of global shortcuts, as the Settings page shows it.
-#[derive(Serialize)]
-pub struct SectionOfShortcuts {
-    section: ShortcutSection,
-    title: &'static str,
-    shortcuts: Vec<ListedShortcut>,
-}
-
-/// A shortcut as a section lists it: what it is, its title, and its chord.
-#[derive(Serialize)]
-pub struct ListedShortcut {
-    id: ShortcutId,
-    title: String,
-    chord: Option<KeyChord>,
-}
-
-/// A chord's label as messages and assistive technology say it, and in two parts for
-/// recorders, cards, and references, which draw the Snappy key their own way.
-#[derive(Serialize)]
-pub struct ChordLabels {
-    long: String,
-    parts: LabelParts,
-}
-
-/// A chord to ask the OS about before the Snappy key changes: its concrete modifiers, and
-/// what to say when it is taken.
-#[derive(Serialize)]
-pub struct AvailabilityProbe {
-    chord: KeyChord,
-    refusal: Refusal,
-}
-
-#[derive(Serialize)]
-pub struct ModifierNames {
-    name: &'static str,
-    /// The name with its symbol, as messages show it: "Shift ⇧".
-    label: String,
-}
-
-/// The most of each thing the settings app counts that core allows.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Limits {
-    zones: usize,
-    workspaces: usize,
-    /// Window moves that undo remembers.
-    undo_steps: usize,
-}
-
-/// A layout's zones and zone shortcuts after a merge.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MergedLayout {
-    zones: Vec<Zone>,
-    zone_shortcuts: BTreeMap<String, KeyChord>,
-    /// The merged zone's ID.
-    kept: String,
-}
-
-/// The outcome of merging zones: the merged layout, or why the zones can't be merged.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum MergeOutcome {
-    Merged(MergedLayout),
-    Refused(String),
-}
-
-/// Where copies go, or why they can't be placed.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum PlaceOutcome {
-    Placed(Vec<UnitRect>),
-    Refused(String),
-}
-
-/// The outcome of changing the Snappy key: nothing to change, the settings with the new key,
-/// or why it is refused.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum SnappyKeyChange {
-    Unchanged,
-    Changed(Box<Settings>),
-    Refused(String),
-}
-
-/// The outcome of validating settings: the normalized settings, or the first problem.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Validation {
-    Valid(Box<Settings>),
-    Invalid(String),
-}
+use crate::wire::*;
 
 pub fn zone_frames(request: ZoneFramesRequest) -> Vec<Rect> {
     let spacing = Spacing::STANDARD.scaled(request.spacing_factor);
@@ -412,21 +72,22 @@ pub fn handle_positions(request: SizeRequest) -> Vec<HandlePosition> {
 }
 
 pub fn drag_move(request: MoveRequest) -> Edit {
-    gestures::drag_move(&request.zones, &request.id, request.delta, request.tolerance)
+    editor::drag_move(&request.zones, &request.id, request.delta, request.tolerance).into()
 }
 
 pub fn drag_resize(request: ResizeRequest) -> Edit {
-    gestures::drag_resize(
+    editor::drag_resize(
         &request.zones,
         &request.id,
         request.handle.into(),
         request.delta,
         request.tolerance,
     )
+    .into()
 }
 
 pub fn drag_divider(request: DividerRequest) -> Edit {
-    gestures::drag_divider(
+    editor::drag_divider(
         &request.zones,
         &request.zone_id,
         request.axis.into(),
@@ -434,20 +95,22 @@ pub fn drag_divider(request: DividerRequest) -> Edit {
         request.delta,
         request.tolerance,
     )
+    .into()
 }
 
 pub fn draw_zone(request: DrawRequest) -> Drawn {
-    gestures::draw_zone(&request.zones, request.from, request.to, request.tolerance)
+    editor::draw_zone(&request.zones, request.from, request.to, request.tolerance).into()
 }
 
 pub fn cut_preview(request: CutPreviewRequest) -> CutPreview {
-    gestures::cut_preview(
+    editor::cut_preview(
         &request.zones,
         request.scope.to_core(),
         request.axis.into(),
         request.at,
         request.tolerance,
     )
+    .into()
 }
 
 pub fn cut_zones(request: CutRequest) -> Option<Vec<Zone>> {
@@ -461,7 +124,7 @@ pub fn cut_zones(request: CutRequest) -> Option<Vec<Zone>> {
 }
 
 pub fn set_field(request: FieldRequest) -> Vec<Zone> {
-    gestures::set_field(&request.zones, &request.id, request.field, request.value)
+    editor::set_field(&request.zones, &request.id, request.field.into(), request.value)
 }
 
 pub fn chord_labels(request: ChordRequest) -> ChordLabels {
@@ -596,6 +259,7 @@ pub fn limits(_: Empty) -> Limits {
         zones: MAX_ZONES,
         workspaces: MAX_WORKSPACES,
         undo_steps: UNDO_LIMIT,
+        name_length: MAX_NAME_LENGTH,
     }
 }
 
@@ -638,7 +302,13 @@ pub fn layout_conflict(request: LayoutConflictRequest) -> Option<String> {
 }
 
 pub fn layout_for_display(request: DisplayLayoutRequest) -> Layout {
-    request.settings.layout_for_display(&request.display).clone()
+    let settings = &request.settings;
+    match &request.workspace {
+        Some(id) => settings
+            .layout_in(settings.workspaces.item(id), &request.display)
+            .clone(),
+        None => settings.layout_for_display(&request.display).clone(),
+    }
 }
 
 pub fn layout_options(request: LayoutOptionsRequest) -> LayoutOptions {
@@ -658,6 +328,56 @@ pub fn reset_settings(request: ResetRequest) -> ResetOutcome {
     }
 }
 
-pub fn new_workspace(request: NewWorkspaceRequest) -> Workspace {
-    request.settings.new_workspace(request.id, request.number)
+/// A settings edit by the rules the daemon applies. The daemon validates the result as it
+/// saves, so the caller validates it too.
+pub fn apply_edit(request: EditRequest) -> EditOutcome {
+    let EditRequest {
+        mut settings,
+        edit,
+        platform,
+    } = request;
+    let mut added_workspace = None;
+    let changed = match edit {
+        SettingsEdit::AssignLayout { display, layout } => settings.assign_layout(&display, &layout).is_some(),
+        SettingsEdit::SaveLayout {
+            layout,
+            options,
+            display,
+        } => match settings.save_layout(layout, options, &display, platform) {
+            Ok(_) => true,
+            Err(error) => return EditOutcome::Refused(error.to_string()),
+        },
+        SettingsEdit::RemoveLayout { layout } => settings.remove_layout(&layout),
+        SettingsEdit::SetLayoutEnabled { layout, enabled } => {
+            match settings.set_layout_enabled(&layout, enabled, platform) {
+                Ok(_) => true,
+                Err(error) => return EditOutcome::Refused(error.to_string()),
+            }
+        }
+        SettingsEdit::EnableWorkspaces { displays } => {
+            settings.enable_workspaces(&displays);
+            true
+        }
+        SettingsEdit::AddWorkspace => {
+            added_workspace = settings.add_workspace();
+            added_workspace.is_some()
+        }
+        SettingsEdit::UpdateWorkspace { workspace } => {
+            settings.update_workspace(workspace);
+            true
+        }
+        SettingsEdit::ReorderWorkspaces { from, to } => {
+            settings.reorder_workspaces(&from, to);
+            true
+        }
+        SettingsEdit::RemoveWorkspace { workspace } => settings.remove_workspace(&workspace).is_some(),
+    };
+    if changed {
+        EditOutcome::Edited(Box::new(Edited {
+            settings,
+            added_workspace,
+        }))
+    } else {
+        EditOutcome::Unchanged
+    }
 }

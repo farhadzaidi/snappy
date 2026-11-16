@@ -7,15 +7,21 @@
 use objc2::runtime::AnyObject;
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults, ns_string};
 
-use crate::keycodes::CarbonChord;
+use crate::ffi::carbon::{CMD_KEY, CONTROL_KEY, OPTION_KEY, SHIFT_KEY};
+use crate::keys::{CarbonChord, EVENT_COMMAND, EVENT_CONTROL, EVENT_OPTION, EVENT_SHIFT};
 
+/// Carbon's modifier bits for Shift, Control, Option, and Command, in that order.
+const CARBON: [u32; 4] = [SHIFT_KEY, CONTROL_KEY, OPTION_KEY, CMD_KEY];
+/// The matching symbolic hotkey bits, which are NSEvent's modifier flags.
+const SYMBOLIC: [u64; 4] = [
+    EVENT_SHIFT as u64,
+    EVENT_CONTROL as u64,
+    EVENT_OPTION as u64,
+    EVENT_COMMAND as u64,
+];
 /// The modifier bits of a symbolic hotkey: Shift, Control, Option, Command. The function
 /// and keypad bits that arrow keys carry don't count.
-const MODIFIER_MASK: u64 = 0x1E_0000;
-/// Carbon's modifier bits for Shift, Control, Option, and Command, in that order.
-const CARBON: [u32; 4] = [1 << 9, 1 << 12, 1 << 11, 1 << 8];
-/// The matching symbolic hotkey bits.
-const SYMBOLIC: [u64; 4] = [0x2_0000, 0x4_0000, 0x8_0000, 0x10_0000];
+const MODIFIER_MASK: u64 = SYMBOLIC[0] | SYMBOLIC[1] | SYMBOLIC[2] | SYMBOLIC[3];
 
 /// One of macOS's own shortcuts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,7 +174,7 @@ mod tests {
 
     #[test]
     fn mission_control_leaves_the_default_workspace_steps_free() {
-        let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
+        let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Os::MacOs);
         for (_, chord) in settings.workspaces.steps() {
             let carbon =
                 CarbonChord::from_combo(&chord.combo(snappy_core::keys::SnappyKey::DEFAULT)).unwrap();
@@ -194,11 +200,11 @@ mod tests {
         shipped.extend(DEFAULTS.iter().filter(|shortcut| shortcut.enabled));
         assert!(is_taken(carbon("Digit3", &[Modifier::Ctrl]), &shipped));
 
-        let mut settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
+        let mut settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Os::MacOs);
         settings.workspaces.items = (1..=9)
             .map(|n| snappy_core::settings::Workspace::numbered(format!("workspace-{n}"), n))
             .collect();
-        let combos = snappy_core::bindings::bound_combos(&settings);
+        let combos = snappy_core::shortcuts::bound_combos(&settings);
         assert_eq!(combos.len(), 4 + 9 + 5 + 6);
         assert!(
             combos.contains(
@@ -214,7 +220,7 @@ mod tests {
 
     #[test]
     fn turning_on_the_contrast_shortcuts_takes_only_the_previous_send_step() {
-        let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
+        let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Os::MacOs);
         let step = |chord: &Option<snappy_core::keys::KeyChord>| {
             CarbonChord::from_combo(
                 &chord
@@ -258,7 +264,7 @@ mod tests {
             &shipped
         ));
 
-        let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Platform::MacOs);
+        let settings = snappy_core::settings::Settings::defaults(snappy_core::keys::Os::MacOs);
         let nearest_empty = settings
             .navigation
             .nearest_empty

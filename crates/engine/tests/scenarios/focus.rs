@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use snappy_core::geometry::Rect;
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent};
 use snappy_fake::{FakePlatform, FakeWindow};
 use snappy_platform::{MarkStyle, PlatformEvent, WindowId};
 
@@ -131,7 +131,7 @@ fn with_windows_in_zones_focus_moves_between_zones_past_a_floating_window() {
         );
         assert_eq!(status_text(&engine), "No window below.");
 
-        let moves = logged(name, "focusMove");
+        let moves = logged(name, LogEvent::FocusMove);
         assert_eq!(moves.len(), 3);
         assert!(moves.iter().all(|record| record["mode"] == "zones"), "{moves:?}");
         assert_eq!(
@@ -196,7 +196,7 @@ fn with_no_window_in_a_zone_focus_moves_by_window_centers() {
         focus(&engine, 1);
         press_default(&engine, "KeyL").await;
         assert_eq!(focused(&engine), Some(WindowId(3)));
-        let moves = logged(name, "focusMove");
+        let moves = logged(name, LogEvent::FocusMove);
         assert_eq!(moves.len(), 1);
         assert_eq!(moves[0]["mode"], "windows");
         assert_eq!(moves[0]["zone"], serde_json::Value::Null);

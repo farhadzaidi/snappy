@@ -6,6 +6,8 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 here="$root/tools/macos"
+# The bundles' property lists and the launch agent.
+packaging="$root/packaging/macos"
 app="$root/dist/Snappy.app"
 helper="$app/Contents/Helpers/Snappy Settings.app"
 
@@ -16,11 +18,11 @@ cargo build --release -p snappy -p snappy-settings
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchAgents" \
     "$helper/Contents/MacOS" "$helper/Contents/Resources"
-cp "$here/Snappy.plist" "$app/Contents/Info.plist"
+cp "$packaging/Snappy.plist" "$app/Contents/Info.plist"
 cp assets/icon/snappy.icns "$app/Contents/Resources/Snappy.icns"
-cp "$here/local.snappy.agent.plist" "$app/Contents/Library/LaunchAgents/"
+cp "$packaging/io.github.farhadzaidi.Snappy.Agent.plist" "$app/Contents/Library/LaunchAgents/"
 cp target/release/snappy "$app/Contents/MacOS/snappy"
-cp "$here/SnappySettings.plist" "$helper/Contents/Info.plist"
+cp "$packaging/SnappySettings.plist" "$helper/Contents/Info.plist"
 cp assets/icon/snappy.icns "$helper/Contents/Resources/Snappy.icns"
 cp target/release/snappy-settings "$helper/Contents/MacOS/snappy-settings"
 

@@ -2,7 +2,7 @@
 
 use snappy_core::keys::{KeyChord, SnappyKey};
 use snappy_core::settings::NavigationShortcut;
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent};
 use snappy_fake::{FakePlatform, FakeWindow};
 use snappy_ipc::Command;
 use snappy_platform::{PlatformEvent, WindowId};
@@ -32,7 +32,7 @@ fn snappy_space_snaps_a_floating_window_into_the_nearest_empty_zone_and_undoes()
             (status.message.as_str(), status.is_error, status.notify),
             ("Snapped.", false, false)
         );
-        let snaps = logged(name, "snap");
+        let snaps = logged(name, LogEvent::Snap);
         assert_eq!(snaps.len(), 1);
         assert_eq!(snaps[0]["outcome"], "snapped");
         assert_eq!(snaps[0]["window"], 1);
@@ -66,7 +66,7 @@ fn snappy_space_with_every_zone_taken_moves_nothing_and_says_so_quietly() {
         let status = engine.status().unwrap();
         assert_eq!(
             (status.message.as_str(), status.is_error, status.notify),
-            ("No empty zone on this display.", false, false)
+            ("Every zone is taken.", false, false)
         );
     });
 }

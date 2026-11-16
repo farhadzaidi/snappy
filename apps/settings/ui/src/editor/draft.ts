@@ -79,11 +79,19 @@ export function duplicateDraft(layout: Layout, options: LayoutOptions): Draft {
   });
   return fresh(
     {
-      layout: { id: newId(), name: `${layout.name} copy`, zones },
+      layout: { id: newId(), name: copyName(layout.name), zones },
       options: { enabled: options.enabled, selectShortcut: null, zoneShortcuts },
     },
     null,
   );
+}
+
+const COPY_SUFFIX = " copy";
+
+/** "<name> copy", the name shortened as needed for the copy to stay within the limit. */
+export function copyName(name: string): string {
+  const room = coreLimits().nameLength - [...COPY_SUFFIX].length;
+  return [...name].slice(0, room).join("").trimEnd() + COPY_SUFFIX;
 }
 
 /** One complete edit, recorded as one undo step. */
@@ -224,12 +232,12 @@ export function canAddZone(draft: Draft): boolean {
   return draft.current.layout.zones.length < coreLimits().zones;
 }
 
-export function sameSnapshot(a: Snapshot, b: Snapshot): boolean {
+function sameSnapshot(a: Snapshot, b: Snapshot): boolean {
   return sameValue(a, b);
 }
 
 /** Structural equality for JSON-shaped values, ignoring object key order. */
-export function sameValue(a: unknown, b: unknown): boolean {
+function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) {
     return true;
   }

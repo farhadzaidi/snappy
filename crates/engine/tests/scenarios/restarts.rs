@@ -2,7 +2,7 @@
 
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::{KeyChord, Modifier};
-use snappy_engine::Engine;
+use snappy_engine::{Engine, LogEvent, file_names};
 use snappy_fake::{FakePlatform, FakeWindow};
 use snappy_ipc::Command;
 use snappy_platform::{PlatformEvent, WindowId};
@@ -51,11 +51,7 @@ fn a_visible_window_joins_the_active_workspace_whatever_was_remembered() {
             "frame": visible,
             "parkedOrigin": null,
         }]);
-        std::fs::write(
-            paths.state_dir.join("workspace-membership.json"),
-            saved.to_string(),
-        )
-        .unwrap();
+        std::fs::write(paths.state_dir.join(file_names::MEMBERSHIP), saved.to_string()).unwrap();
 
         let engine = Engine::new(with_window(visible), paths);
         engine.start();
@@ -92,11 +88,7 @@ fn a_window_parked_for_another_workspace_stays_parked_with_its_home() {
             "frame": home,
             "parkedOrigin": parked.origin(),
         }]);
-        std::fs::write(
-            paths.state_dir.join("workspace-membership.json"),
-            saved.to_string(),
-        )
-        .unwrap();
+        std::fs::write(paths.state_dir.join(file_names::MEMBERSHIP), saved.to_string()).unwrap();
 
         let engine = Engine::new(with_window(parked), paths);
         engine.start();
@@ -169,7 +161,7 @@ fn a_restart_keeps_every_window_in_its_workspace_and_moves_nothing() {
             ),
             (1, 1, 0)
         );
-        let started = logged(name, "workspacesStarted");
+        let started = logged(name, LogEvent::WorkspacesStarted);
         let started = started.last().unwrap();
         assert_eq!(
             started["rejoined"],
@@ -328,7 +320,7 @@ fn a_process_id_reused_by_another_launch_never_takes_over_a_parked_window() {
         assert_eq!(frame_of(&engine, 1).size(), stranded.size());
         assert_eq!(window_counts(&engine)["workspace-2"], 0);
         assert!(!paths_kept(name).journal().exists());
-        let started = logged(name, "workspacesStarted");
+        let started = logged(name, LogEvent::WorkspacesStarted);
         let started = started.last().unwrap();
         assert_eq!(started["staleJournal"], 1);
         assert_eq!(started["staleMembership"], 1);
@@ -396,8 +388,8 @@ fn an_unreadable_journal_is_set_aside_and_workspaces_start_from_membership() {
                 .with_file_name("workspace-journal.unreadable.json")
                 .exists()
         );
-        let unreadable = logged(name, "stateFileUnreadable");
-        assert_eq!(unreadable.last().unwrap()["file"], "workspace-journal.json");
+        let unreadable = logged(name, LogEvent::StateFileUnreadable);
+        assert_eq!(unreadable.last().unwrap()["file"], file_names::JOURNAL);
         assert!(is_parked(&engine, 1), "membership still knows its workspace");
         assert_eq!(window_counts(&engine)["workspace-2"], 1);
         assert_eq!(saved_windows(&journal).len(), 1, "journaled again");
@@ -419,7 +411,7 @@ fn a_parked_window_that_closed_while_its_app_ran_on_is_forgotten_at_launch() {
         assert!(!paths_kept(name).journal().exists());
         assert_eq!(writes_to(&engine, 9), 0);
         assert_eq!(window_counts(&engine)["workspace-1"], 2);
-        let started = logged(name, "workspacesStarted");
+        let started = logged(name, LogEvent::WorkspacesStarted);
         assert_eq!(started.last().unwrap()["closed"], 1);
     });
 }

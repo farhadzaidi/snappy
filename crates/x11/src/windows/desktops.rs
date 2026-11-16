@@ -8,20 +8,20 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
 
-use super::{FROM_PAGER, Windows};
+use super::clients::{FROM_PAGER, Windows};
 use crate::messages::{NO_PARKING_DESKTOP, WINDOW_GONE, unavailable};
-use crate::x;
+use crate::xserver;
 
 /// The parking desktop's name in pagers.
 pub const NAME: &str = "Snappy";
 
 impl Windows {
     pub fn desktop_count(&self) -> Option<u32> {
-        x::cardinal(&*self.conn, self.screen.root, self.atoms._NET_NUMBER_OF_DESKTOPS)
+        xserver::cardinal(&*self.conn, self.screen.root, self.atoms._NET_NUMBER_OF_DESKTOPS)
     }
 
     fn desktop_names(&self) -> Vec<String> {
-        x::bytes(
+        xserver::bytes(
             &*self.conn,
             self.screen.root,
             self.atoms._NET_DESKTOP_NAMES,
@@ -34,7 +34,7 @@ impl Windows {
     /// The parking desktop a running or crashed Snappy added in this X session, or a
     /// trailing "Snappy" desktop the window manager kept from an earlier one.
     pub fn find_parking_desktop(&self) -> Option<u32> {
-        let recorded = x::cardinal(&*self.conn, self.screen.root, self.atoms._SNAPPY_PARKING_DESKTOP);
+        let recorded = xserver::cardinal(&*self.conn, self.screen.root, self.atoms._SNAPPY_PARKING_DESKTOP);
         existing(recorded, self.desktop_count()?, &self.desktop_names())
     }
 

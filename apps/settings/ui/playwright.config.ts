@@ -1,7 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-/** `SNAPPY_UI_PORT` gives a run a server of its own, apart from another checkout's. */
-const PORT = Number(process.env.SNAPPY_UI_PORT ?? 5179);
+import { DEV_PORT as PORT } from "./devServer";
 
 export default defineConfig({
   testDir: "e2e",

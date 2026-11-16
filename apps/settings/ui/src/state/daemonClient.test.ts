@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Transport } from "../bridge/bridge";
 import { initialState } from "../bridge/fake/fixtures";
-import type { AppState, Command, NamedShortcut, Refusal, Status, ToSettings } from "../core/model";
+import type { AppState, Command, Status, ToSettings } from "../bridge/protocol";
+import type { NamedShortcut, Refusal } from "../core/model";
 import { DaemonClient, TOAST_DURATION_MS } from "./daemonClient";
 
 class ScriptedTransport implements Transport {

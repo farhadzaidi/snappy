@@ -9,11 +9,11 @@ pub enum WindowError {
     /// An app refused or only partly applied a change.
     #[error("{0}")]
     Refused(String),
-    #[error("That zone does not have a usable size.")]
+    #[error("That zone doesn't have a usable size.")]
     InvalidFrame,
-    #[error("There is no window move to undo.")]
+    #[error("Nothing to undo.")]
     NoHistory,
-    #[error("There is no window move to redo.")]
+    #[error("Nothing to redo.")]
     NoRedo,
     /// A newer gesture took over. Never shown.
     #[error("cancelled")]

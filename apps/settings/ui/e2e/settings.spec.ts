@@ -130,6 +130,21 @@ test("when the zone is taken swaps by default and can stack on top", async ({ pa
   await expect(choice).toHaveText("Stack on top");
 });
 
+test("a menu opens on its choice and the arrow keys move through the others", async ({ page }) => {
+  const choice = page.getByRole("button", { name: "When the zone is taken" });
+  await choice.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("option", { name: "Swap" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("option", { name: "Stack on top" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("option", { name: "Swap" })).toBeFocused();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  expect(await lastCommandOf(page, "setWhenTaken")).toEqual({ kind: "setWhenTaken", choice: "stack" });
+  await expect(choice).toBeFocused();
+});
+
 test("the keyboard shortcuts switch turns every shortcut off", async ({ page }) => {
   await page.getByRole("switch", { name: "Keyboard shortcuts" }).click();
   expect(await lastCommandOf(page, "setShortcutsEnabled")).toEqual({
@@ -490,7 +505,7 @@ test("changing the Snappy key keeps shortcuts named Snappy and the labels follow
   await expect(chordIn(left)).toHaveAttribute("aria-label", "Snappy + ←");
   await expect(left).toHaveAttribute(
     "title",
-    "Click and press a combination with Control, Option, or Command; hold Control ⌃ + Option ⌥ for the Snappy key. Escape cancels; Delete clears.",
+    "Click, then press a combination with Control, Option, or Command. Hold Control ⌃ + Option ⌥ for the Snappy key. Escape cancels, Delete clears.",
   );
 
   await left.click();

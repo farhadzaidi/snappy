@@ -1,26 +1,28 @@
 import { core } from "../../core/snappyCore";
 import { DisplayChooser } from "../../shell/DisplayChooser";
+import { WarningNotice } from "../../shortcuts/WarningNotice";
 import { useObservable } from "../../state/observable";
 import { useAppState, useServices } from "../../state/services";
 import { Button } from "../../ui/Button";
+import { tabPanelProps, Tabs, useTabIds } from "../../ui/Tabs";
 import { Toggle } from "../../ui/Toggle";
-import { WarningNotice } from "../../ui/WarningNotice";
 import type { SidebarTab } from "../draft";
-import { draftConflict } from "../saving";
+import { draftConflict, nameProblem } from "../saving";
 import { ShortcutsPanel } from "./ShortcutsPanel";
 import { ZoneInspector } from "./ZoneInspector";
 
-const TABS: readonly { tab: SidebarTab; title: string }[] = [
-  { tab: "zone", title: "Zone" },
-  { tab: "shortcuts", title: "Shortcuts" },
+const TABS: readonly { value: SidebarTab; title: string }[] = [
+  { value: "zone", title: "Zone" },
+  { value: "shortcuts", title: "Shortcuts" },
 ];
 
 /** The display, "Layout enabled", and the Zone and Shortcuts tabs. */
 export function Sidebar() {
   const { editor } = useServices();
   const draft = useObservable(editor.draft);
+  const tabIds = useTabIds();
   const readOnly = editor.isReadOnly;
-  const showShortcuts = readOnly || draft.tab === "shortcuts";
+  const showShortcuts = draft.tab === "shortcuts";
 
   return (
     <aside className="editor-sidebar" aria-label="Layout settings">
@@ -28,31 +30,32 @@ export function Sidebar() {
       <Toggle
         label="Layout enabled"
         checked={draft.current.options.enabled}
-        title="Disable to keep this layout and its shortcuts saved without registering them."
+        title="Turn off to keep this layout without using it or its shortcuts."
         onChange={(enabled) => editor.setEnabled(enabled)}
       />
       <hr className="sidebar-divider" />
-      {!readOnly && (
-        <div className="segmented segmented-even sidebar-tabs" role="tablist" aria-label="Sidebar">
-          {TABS.map(({ tab, title }) => (
-            <button
-              type="button"
-              role="tab"
-              key={tab}
-              className="segment"
-              aria-selected={draft.tab === tab}
-              onClick={() => {
-                editor.commitPendingField();
-                editor.setTab(tab);
-              }}
-            >
-              {title}
-            </button>
-          ))}
-        </div>
+      {readOnly ? (
+        <ShortcutsPanel />
+      ) : (
+        <>
+          <Tabs
+            label="Sidebar"
+            className="segmented segmented-even sidebar-tabs"
+            tabs={TABS}
+            selected={draft.tab}
+            ids={tabIds}
+            onSelect={(tab) => {
+              editor.commitPendingField();
+              editor.setTab(tab);
+            }}
+          />
+          <div {...tabPanelProps(tabIds, draft.tab)}>
+            {showShortcuts ? <ShortcutsPanel /> : <ZoneInspector />}
+          </div>
+        </>
       )}
-      {showShortcuts ? <ShortcutsPanel /> : <ZoneInspector />}
       <OverlapNotice />
+      <NameNotice />
       <ConflictNotice />
     </aside>
   );
@@ -76,6 +79,20 @@ function OverlapNotice() {
       ) : (
         <p className="muted">Move the overlapping zones apart before saving.</p>
       )}
+    </div>
+  );
+}
+
+/** A blank or over-long name blocks saving, so say so beside the other reasons. */
+function NameNotice() {
+  const { editor } = useServices();
+  const problem = nameProblem(useObservable(editor.draft).current);
+  if (problem === null) {
+    return null;
+  }
+  return (
+    <div className="notice">
+      <p className="muted">{problem}</p>
     </div>
   );
 }

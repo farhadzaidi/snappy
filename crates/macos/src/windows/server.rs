@@ -7,8 +7,8 @@ use objc2_core_graphics::{
     kCGWindowBounds, kCGWindowLayer, kCGWindowOwnerPID,
 };
 
+use super::occupancy::ServerWindow;
 use crate::displays::to_rect;
-use crate::occupancy::ServerWindow;
 
 type Row = CFDictionary<CFString, CFType>;
 

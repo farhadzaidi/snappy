@@ -18,9 +18,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_THICKFRAME,
 };
 
-use crate::eligibility::WindowFacts;
-use crate::identity::{Minted, Owner};
-use crate::process;
+use super::eligibility::WindowFacts;
+use super::identity::{Minted, Owner};
+use super::process;
 use crate::shared::{ProcessFacts, Shared, lock};
 
 /// The HWND for a 32-bit handle. Handles are sign-extended on 64-bit Windows.

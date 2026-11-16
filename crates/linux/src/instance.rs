@@ -73,7 +73,12 @@ pub fn claim(path: &Path) -> std::io::Result<Claim> {
         .mode(0o600)
         .open(path)?;
     match file.try_lock() {
-        Ok(()) => Ok(Claim::Primary(InstanceLock { file })),
+        Ok(()) => {
+            // A crashed daemon's process ID may be another process's by now; until this one
+            // publishes its own, a second launch finds none and signals nothing.
+            file.set_len(0)?;
+            Ok(Claim::Primary(InstanceLock { file }))
+        }
         Err(TryLockError::WouldBlock) => {
             let mut contents = String::new();
             file.read_to_string(&mut contents)?;

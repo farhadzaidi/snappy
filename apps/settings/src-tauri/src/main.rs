@@ -63,3 +63,23 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// Tauri takes the app's version from Cargo; the UI's package says the same.
+    #[test]
+    fn the_ui_package_carries_snappys_version() {
+        let package = include_str!("../../ui/package.json");
+        assert!(package.contains(&format!("\"version\": \"{}\"", env!("CARGO_PKG_VERSION"))));
+    }
+
+    /// The UI listens on the same event and invokes these commands by the same names.
+    #[test]
+    fn the_ui_names_the_shells_event_and_commands_alike() {
+        let bridge = include_str!("../../ui/src/bridge/tauriBridge.ts");
+        let commands = ["ui_ready", "send_command", "window_display_frame"];
+        for name in std::iter::once(crate::daemon::MESSAGE_EVENT).chain(commands) {
+            assert!(bridge.contains(&format!("\"{name}\"")), "{name}");
+        }
+    }
+}

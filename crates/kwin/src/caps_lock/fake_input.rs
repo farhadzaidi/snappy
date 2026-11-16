@@ -15,13 +15,8 @@ use std::path::{Path, PathBuf};
 use snappy_linux::app_icon;
 use snappy_linux::wayland::{Arg, Connection};
 
-const INTERFACE: &str = "org_kde_kwin_fake_input";
-/// Version 4 added keyboard keys.
-const VERSION: u32 = 4;
-const AUTHENTICATE: u16 = 0;
-const KEYBOARD_KEY: u16 = 10;
-const PRESSED: u32 = 1;
-const RELEASED: u32 = 0;
+use crate::wire::fake_input::{AUTHENTICATE, INTERFACE, KEYBOARD_KEY, PRESSED, RELEASED, VERSION};
+
 /// Linux input codes, which the protocol takes.
 const LEFT_SHIFT: u32 = 42;
 const CAPS_LOCK: u32 = 58;
@@ -69,15 +64,10 @@ impl FakeKeyboard {
     }
 }
 
-const ENTRY_NAME: &str = "io.github.farhadzaidi.Snappy.CapsLock.desktop";
-
-/// `$XDG_DATA_HOME/applications/…`, defaulting to `~/.local/share`.
+/// `$XDG_DATA_HOME/applications/<app ID>.CapsLock.desktop`, defaulting to `~/.local/share`.
 pub fn entry_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .map(|data| data.join("applications").join(ENTRY_NAME))
+    let name = format!("{}.CapsLock.desktop", snappy_linux::names::APP_ID);
+    snappy_linux::xdg::data_home().map(|data| data.join("applications").join(name))
 }
 
 /// The entry naming `executable`. KWin takes the first word of `Exec`, as Qt splits a

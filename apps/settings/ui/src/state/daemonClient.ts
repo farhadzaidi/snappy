@@ -1,5 +1,6 @@
 import type { Transport } from "../bridge/bridge";
-import type { AppState, Command, KeyChord, NamedShortcut, Refusal, Status, ToSettings } from "../core/model";
+import type { AppState, Command, Status, ToSettings } from "../bridge/protocol";
+import type { KeyChord, NamedShortcut, Refusal } from "../core/model";
 import { Observable } from "./observable";
 
 /** Non-error messages hide after this long. */

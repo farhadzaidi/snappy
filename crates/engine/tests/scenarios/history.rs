@@ -12,7 +12,7 @@ use snappy_platform::{PlatformEvent, WindowId};
 
 use crate::support::{
     FLOATING, LEFT_ZONE, RIGHT_ZONE, command, drag, enable_workspaces, event, frame_of, frozen, is_parked,
-    live_engine, press_history, scenario, send_to, settle, shift, snappy, status_text, switch_to,
+    live_engine, press_history, press_on, scenario, send_to, settle, shift, snappy, status_text, switch_to,
     two_zoned_windows, undo, with_window,
 };
 
@@ -43,7 +43,7 @@ fn undo_with_an_empty_history_says_so() {
         let engine = live_engine("undo-empty", with_window(LEFT_ZONE));
         undo(&engine);
         settle(&engine).await;
-        assert_eq!(status_text(&engine), "There is no window move to undo.");
+        assert_eq!(status_text(&engine), "Nothing to undo.");
     });
 }
 
@@ -107,7 +107,7 @@ fn redo_with_nothing_undone_says_so() {
         let engine = live_engine("redo-empty", with_window(FLOATING));
         redo(&engine);
         settle(&engine).await;
-        assert_eq!(status_text(&engine), "There is no window move to redo.");
+        assert_eq!(status_text(&engine), "Nothing to redo.");
     });
 }
 
@@ -122,7 +122,7 @@ fn a_new_move_after_undo_leaves_nothing_to_redo() {
         redo(&engine);
         settle(&engine).await;
         assert_eq!(frame_of(&engine, 1), RIGHT_ZONE);
-        assert_eq!(status_text(&engine), "There is no window move to redo.");
+        assert_eq!(status_text(&engine), "Nothing to redo.");
     });
 }
 
@@ -147,14 +147,7 @@ fn a_press_during_a_grouped_undo_protects_the_window_and_keeps_the_entry() {
         );
 
         let pressed = Point::new(300.0, 400.0);
-        event(
-            &engine,
-            PlatformEvent::PointerDown {
-                at: pressed,
-                mods: Mods::NONE,
-                window: Some(WindowId(1)),
-            },
-        );
+        press_on(&engine, pressed, Mods::NONE, WindowId(1));
         event(
             &engine,
             PlatformEvent::PointerUp {
@@ -193,14 +186,14 @@ fn sending_a_window_removes_its_undo_entries_everywhere() {
         assert!(is_parked(&engine, 1));
         undo(&engine);
         settle(&engine).await;
-        assert_eq!(status_text(&engine), "There is no window move to undo.");
+        assert_eq!(status_text(&engine), "Nothing to undo.");
         assert!(is_parked(&engine, 1));
 
         command(&engine, Command::SetWorkspacesEnabled { enabled: false });
         assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(1))), RIGHT_ZONE);
         undo(&engine);
         settle(&engine).await;
-        assert_eq!(status_text(&engine), "There is no window move to undo.");
+        assert_eq!(status_text(&engine), "Nothing to undo.");
         assert_eq!(engine.with_platform(|p| p.frame_of(WindowId(1))), RIGHT_ZONE);
     });
 }
@@ -229,7 +222,7 @@ fn each_workspace_has_its_own_history_and_otherwise_one_covers_every_window() {
         event(&engine, PlatformEvent::HotKey(switch_to(&engine, 2)));
         settle(&engine).await;
         undo().await;
-        assert_eq!(status_text(&engine), "There is no window move to undo.");
+        assert_eq!(status_text(&engine), "Nothing to undo.");
 
         event(&engine, PlatformEvent::HotKey(switch_to(&engine, 1)));
         settle(&engine).await;

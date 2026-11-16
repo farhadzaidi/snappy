@@ -4,8 +4,8 @@
 import { useAppState, useSend, useServices } from "../state/services";
 import { Button } from "../ui/Button";
 import { Group, Row } from "../ui/Group";
-import { StatusBadge } from "../ui/StatusBadge";
 import { Toggle } from "../ui/Toggle";
+import { StatusBadge } from "./StatusBadge";
 
 /** The login item, and Accessibility where the platform has a permission step. */
 export function StartupGroup() {
@@ -81,7 +81,7 @@ export function DebugGroup() {
   return (
     <Group
       title="Debug"
-      caption="Record what Snappy does, never window titles, to share when reporting a problem."
+      caption="A record of what Snappy does, to share when you report a problem. It never includes window titles."
       info="Turn it on, reproduce the problem, then share the file below."
     >
       <Toggle
