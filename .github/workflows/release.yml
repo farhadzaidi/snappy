@@ -1,0 +1,129 @@
+# Pushing a tag v<version> builds every package, checksums them, attests where they were
+# built, and drafts a GitHub release with them. Publishing the draft is left to a person.
+#
+# Run by hand as a dry run, it builds and uploads the packages and checksums as artifacts
+# only. docs/releasing/README.md describes the whole process.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (build and upload artifacts, no release)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          source tools/release/common.sh
+          version="$(snappy_version)"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+              echo "::error::The tag $GITHUB_REF_NAME doesn't match Cargo.toml's version, $version. Set the version with tools/release/bump.sh before tagging."
+              exit 1
+            fi
+          elif [[ "$DRY_RUN" != true ]]; then
+            echo "::error::A release needs a tag. Run this on the tag v$version, or as a dry run."
+            exit 1
+          fi
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+
+  release:
+    name: Draft the release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PUBLISH: ${{ github.ref_type == 'tag' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          merge-multiple: true
+          path: dist
+      - name: Every package, and nothing else
+        working-directory: dist
+        run: |
+          v="$VERSION"
+          expected=(
+            "Snappy-$v-macos-universal.dmg"
+            "Snappy-$v-windows-x64.msi"
+            "Snappy-$v-windows-x64-setup.exe"
+            "Snappy-$v-windows-arm64.msi"
+            "Snappy-$v-windows-arm64-setup.exe"
+            "snappy-app_${v}_amd64.deb"
+            "snappy-app_${v}_arm64.deb"
+            "snappy-app-$v-1.x86_64.rpm"
+            "snappy-app-$v-1.aarch64.rpm"
+            "snappy-app-$v-linux-x86_64.tar.gz"
+            "snappy-app-$v-linux-aarch64.tar.gz"
+          )
+          for file in "${expected[@]}"; do
+            [[ -f "$file" ]] || { echo "::error::$file is missing"; exit 1; }
+          done
+          for file in *; do
+            [[ " ${expected[*]} " == *" $file "* ]] || { echo "::error::$file wasn't expected"; exit 1; }
+          done
+          sha256sum -- "${expected[@]}" >SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        if: env.PUBLISH == 'true'
+        with:
+          subject-path: dist/*
+      - name: Draft release
+        if: env.PUBLISH == 'true'
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # A rerun: refresh the files on the release made last time.
+            gh release upload "$TAG" --clobber -- *
+          else
+            gh release create "$TAG" --draft --verify-tag --generate-notes --title "Snappy $VERSION" -- *
+          fi
+      - name: Summary
+        run: |
+          if [[ "$PUBLISH" == true ]]; then
+            echo "Drafted the release ${{ github.ref_name }}. Check it, then publish it on the Releases page." >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "Dry run of $VERSION: the packages and SHA256SUMS are this run's artifacts. No release was made." >>"$GITHUB_STEP_SUMMARY"
+          fi

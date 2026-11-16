@@ -1,0 +1,192 @@
+# Builds every package Snappy releases, each on its own system, and uploads them as
+# artifacts named packages-<system>. The release workflow calls this; run it by hand to try
+# a build without releasing. The work is in tools/release/, which runs locally too.
+name: Build packages
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_BINDGEN_VERSION: 0.2.130
+  WIX_VERSION: 5.0.2
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04's older glibc lets the binaries run on more distributions.
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev libxdo-dev libssl-dev rpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-linux-${{ matrix.arch }}
+          # A tag's cache is only ever visible to that tag, so tag builds don't save one.
+          save-if: ${{ github.ref_type != 'tag' }}
+      - name: wasm-bindgen
+        run: cargo install --locked wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/app/ui/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/app/ui/pnpm-lock.yaml
+      - run: pnpm -C apps/app/ui install --frozen-lockfile
+      - run: tools/release/linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-linux-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            arch: arm64
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup, when the image has none
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            $hostArch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+            $init = "$env:RUNNER_TEMP\rustup-init.exe"
+            Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/$hostArch-pc-windows-msvc/rustup-init.exe" -OutFile $init
+            & $init -y --profile minimal --default-toolchain none
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-windows-${{ matrix.arch }}
+          save-if: ${{ github.ref_type != 'tag' }}
+      - name: wasm-bindgen
+        run: cargo install --locked wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/app/ui/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/app/ui/pnpm-lock.yaml
+      - run: pnpm -C apps/app/ui install --frozen-lockfile
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: WiX and NSIS
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add --global "WixToolset.Util.wixext/$env:WIX_VERSION"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nsis = @("${env:ProgramFiles(x86)}\NSIS\makensis.exe", "$env:ProgramFiles\NSIS\makensis.exe")
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not ($nsis | Where-Object { Test-Path $_ })) {
+            choco install nsis --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Packages
+        shell: pwsh
+        run: ./tools/release/windows.ps1 -Arch ${{ matrix.arch }}
+      - name: Summary
+        run: |
+          echo "**Windows ${{ matrix.arch }}:** the MSI and the setup program are unsigned, so SmartScreen warns on first run." \
+            >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-windows-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-macos
+          save-if: ${{ github.ref_type != 'tag' }}
+      - name: wasm-bindgen
+        run: cargo install --locked wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/app/ui/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/app/ui/pnpm-lock.yaml
+      - run: pnpm -C apps/app/ui install --frozen-lockfile
+      # Signing and notarization each happen only when their secrets are set.
+      - name: Package
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+        run: tools/release/macos.sh | tee "$RUNNER_TEMP/macos.log"
+      - name: Summary
+        run: |
+          signing="$(sed -n 's/^signing=//p' "$RUNNER_TEMP/macos.log")"
+          notarized="$(sed -n 's/^notarized=//p' "$RUNNER_TEMP/macos.log")"
+          case "$signing/$notarized" in
+          developer-id/yes) note="signed with Developer ID, notarized, and stapled." ;;
+          developer-id/no) note="signed with Developer ID but **not notarized**: the App Store Connect secrets aren't set, so Gatekeeper blocks it." ;;
+          *) note="**ad-hoc signed only**: the MACOS_CERTIFICATE_P12 secret isn't set. macOS blocks it until the user allows it in System Settings → Privacy & Security, and asks for Accessibility again after each update." ;;
+          esac
+          echo "**macOS:** the disk image is $note" >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-macos
+          path: dist/release/*
+          if-no-files-found: error
