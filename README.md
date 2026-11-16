@@ -173,3 +173,9 @@ To remove your settings too, delete Snappy's folders:
 ## Contributing
 
 Bug reports and ideas are welcome as GitHub issues. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to set up a development environment, build, test, and send a change.
+
+## License
+
+Snappy's source is public under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE.md) (FSL-1.1-ALv2). You can read it, build it, change it, and share it for any purpose except offering it in a commercial product or service that competes with Snappy. Two years after each release, that release's code also becomes available under the Apache License 2.0.
+
+Snappy never uses the network or collects anything; [PRIVACY.md](PRIVACY.md) says exactly what it keeps on your computer.

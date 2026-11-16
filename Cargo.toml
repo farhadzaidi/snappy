@@ -8,6 +8,7 @@ authors = ["Syed Zaidi"]
 repository = "https://github.com/farhadzaidi/snappy"
 edition = "2024"
 publish = false
+license = "FSL-1.1-ALv2"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

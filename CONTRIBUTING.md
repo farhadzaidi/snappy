@@ -17,6 +17,8 @@ If a drag didn't snap or a shortcut misbehaved, Snappy's diagnostic files help a
 
 Open a pull request against `main`. Keep each commit to one logical change, with a message that says what changed and why.
 
+On your first pull request, a bot asks you to accept the [Contributor License Agreement](CLA.md) by leaving a comment. You keep the copyright in your work; the agreement lets Snappy be offered under its [license](LICENSE.md) and in app stores. You only do this once.
+
 CI runs on every pull request:
 
 - on Linux, `tools/check.sh` and the app's end-to-end tests;
