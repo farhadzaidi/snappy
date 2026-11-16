@@ -4,7 +4,7 @@ How a version of Snappy goes from `main` to a GitHub release: setting the versio
 
 Getting a release into package managers, the Microsoft Store, and the Mac App Store comes after this and is covered in:
 
-- [Package managers](package-managers.md): Homebrew, winget, and the AUR.
+- [Package managers](package-managers.md): Homebrew and winget.
 - [Microsoft Store](microsoft-store.md)
 - [Mac App Store](mac-app-store.md)
 
