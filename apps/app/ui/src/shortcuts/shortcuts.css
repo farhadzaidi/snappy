@@ -1,0 +1,46 @@
+/* A shortcut a message points to: a reference with an arrow, which goes to its recorder. */
+.reference-link {
+  transition: border-color 120ms ease;
+}
+
+.reference-link svg {
+  width: 0.95em;
+  height: 0.95em;
+  margin-left: 0.25em;
+  vertical-align: -0.14em;
+  color: var(--muted);
+}
+
+.reference-link:hover {
+  --reference-wash: rgb(var(--text-rgb) / 9%);
+  border-color: rgb(var(--text-rgb) / 32%);
+}
+
+.reference-link:hover svg {
+  color: var(--text);
+}
+
+/* The icon sits in a line of its own, as tall as the message's, on the baseline of the
+   message's first line: it stays level with that line when a reference makes it taller. */
+.warning-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgb(var(--warning-rgb) / 22%);
+  background: rgb(var(--warning-rgb) / 7%);
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 18px;
+  text-wrap: pretty;
+}
+
+.warning-notice-icon {
+  flex: none;
+}
+
+.warning-notice-icon svg {
+  margin-top: 1px;
+  vertical-align: top;
+}

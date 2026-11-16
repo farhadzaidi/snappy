@@ -1,0 +1,27 @@
+/* The ⓘ beside a title and the explanation it shows. */
+.info-hint {
+  position: relative;
+  display: inline-flex;
+}
+
+.info-hint-button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+
+.info-hint-button:hover,
+.info-hint-button[aria-expanded="true"] {
+  color: var(--mint);
+}
+
+.info-hint-panel {
+  width: 320px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}

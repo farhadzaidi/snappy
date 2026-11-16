@@ -1,0 +1,44 @@
+/* A shortcut: the Snappy key's pill, then its keys, modifiers included, in the color around
+   them, "[◧ Snappy] + Shift ⇧ + J", or only keys, "Control ⌃ + Option ⌥ + L". The keys are
+   semibold and each + between them is lighter, so the keys read first. Sized in ems, so a
+   shortcut sets at the size of the recorder, card, or line it sits in. */
+.chord {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font);
+  white-space: nowrap;
+}
+
+.chord-keys {
+  letter-spacing: 0.03em;
+}
+
+.chord-key {
+  font-weight: 600;
+}
+
+.chord-plus {
+  margin: 0 var(--chord-space);
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* The Snappy key: its glyph and name in mint on a mint wash, the same wherever it appears. */
+.snappy-key {
+  display: inline-block;
+  padding: 0 0.42em;
+  border-radius: 0.42em;
+  background: rgb(var(--mint-rgb) / 12%);
+  color: var(--mint);
+  font-weight: 500;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+
+/* The glyph, set like a character a little taller than the capitals. */
+.snappy-key-glyph {
+  width: 1.05em;
+  height: 1.05em;
+  margin-right: 0.3em;
+  vertical-align: -0.17em;
+}

@@ -113,6 +113,10 @@
   opacity: 0.5;
 }
 
+.help {
+  position: relative;
+}
+
 .help-popover {
   width: 380px;
   padding: 24px;

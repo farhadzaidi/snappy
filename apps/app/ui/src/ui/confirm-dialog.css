@@ -1,0 +1,52 @@
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgb(var(--shadow-rgb) / 45%);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 400px;
+  padding: 24px;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--line);
+  background: var(--background);
+  box-shadow: 0 20px 50px rgb(var(--shadow-rgb) / 50%);
+}
+
+.dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-panel);
+  color: var(--destructive);
+  background: var(--destructive-wash);
+}
+
+.dialog-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.dialog-title {
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.dialog-message {
+  color: var(--muted);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}

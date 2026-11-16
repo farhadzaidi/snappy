@@ -87,6 +87,17 @@
   font-weight: 500;
 }
 
+/* A shortcut longer than the card can hold ends in an ellipsis rather than cut off; the
+   Snappy key's pill stays whole. */
+.workspace-card .chord {
+  max-width: 100%;
+}
+
+.workspace-card .chord-keys {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* A card-shaped place for the next workspace. */
 .new-workspace {
   display: flex;

@@ -1,0 +1,28 @@
+/* A shortcut or setting a sentence names, outlined on the text's baseline and a little
+   taller than the text so a Snappy key nested in it has room on every side. Its text ends as
+   far from its sides as a shortcut's keys sit from their +, so "[◧ Snappy] + Space" keeps one
+   rhythm to the reference's edge. Its faint wash sits on the page's dark whatever the surface
+   around it, so it reads the same in a toast, a warning, or a popover, and apart from the
+   mint pill a shortcut nests in it. */
+.reference {
+  --reference-wash: rgb(var(--text-rgb) / 4%);
+  --reference-inset: 0.2em;
+  --reference-radius: 0.4em;
+  display: inline-block;
+  padding: var(--reference-inset) var(--chord-space);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--reference-radius);
+  background: linear-gradient(var(--reference-wash), var(--reference-wash)), var(--background);
+  color: var(--text);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+/* A nested Snappy key is the text's height and sits as far in from the reference's left edge
+   as from its top and bottom, its corners following the reference's. */
+.reference .snappy-key {
+  margin-left: calc(var(--reference-inset) - var(--chord-space));
+  padding: 0 0.32em;
+  border-radius: calc(var(--reference-radius) - var(--reference-inset));
+  line-height: 1.25;
+}

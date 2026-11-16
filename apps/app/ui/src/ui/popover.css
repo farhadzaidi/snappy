@@ -1,0 +1,30 @@
+.popover-anchor {
+  position: relative;
+}
+
+.popover {
+  position: absolute;
+  z-index: 20;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--line);
+  background: var(--background);
+  box-shadow: 0 12px 32px rgb(var(--shadow-rgb) / 45%);
+}
+
+.popover-below {
+  top: calc(100% + 6px);
+}
+
+.popover-above {
+  bottom: calc(100% + 6px);
+}
+
+.popover-start {
+  left: 0;
+}
+
+.popover-end {
+  right: 0;
+}

@@ -1,0 +1,52 @@
+.choice-menu {
+  position: relative;
+}
+
+.choice-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.choice-button svg {
+  color: var(--muted);
+}
+
+.choice-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.choice-list {
+  width: max(100%, 240px);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.choice-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-small);
+  font-weight: 500;
+  text-align: left;
+}
+
+.choice-option:hover {
+  background: var(--wash);
+}
+
+.choice-option svg {
+  color: var(--mint);
+}

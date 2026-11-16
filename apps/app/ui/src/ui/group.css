@@ -1,0 +1,72 @@
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+}
+
+.group-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Its text, not its hover box, lines up with the controls below. */
+.group-action {
+  margin: -4px -9px -4px auto;
+}
+
+.group-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.group-caption {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* A group's rows share its label and control columns, so its recorders are one width. */
+.group-body {
+  display: grid;
+  grid-template-columns: var(--control-columns);
+  gap: 14px 16px;
+}
+
+.group-body > * {
+  grid-column: 1 / -1;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: var(--row-height);
+}
+
+.row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.row-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.row-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}

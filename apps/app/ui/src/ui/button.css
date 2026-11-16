@@ -1,0 +1,131 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 13px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 120ms ease;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.button:active:not(:disabled) {
+  opacity: 0.7;
+}
+
+.button:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.button-primary {
+  background: var(--mint);
+  border-color: transparent;
+  color: var(--background);
+  font-weight: 600;
+}
+
+.button-primary:hover:not(:disabled) {
+  background: var(--mint-hover);
+}
+
+.button-primary:disabled {
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.button-destructive {
+  background: rgb(var(--destructive-rgb) / 12%);
+  border-color: var(--destructive-line);
+  color: var(--destructive);
+  font-weight: 600;
+}
+
+.button-destructive:hover:not(:disabled) {
+  background: rgb(var(--destructive-rgb) / 22%);
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--wash);
+  color: var(--text);
+}
+
+.icon-button[aria-pressed="true"] {
+  color: var(--mint);
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+}
+
+.tool-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 var(--tool-button-padding);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.tool-button:hover:not(:disabled) {
+  background: var(--wash);
+  color: var(--text);
+}
+
+.tool-button[aria-pressed="true"] {
+  color: var(--mint);
+}
+
+.tool-button:disabled {
+  opacity: 0.4;
+}
+
+.tool-button-destructive:hover:not(:disabled) {
+  color: var(--destructive);
+  background: var(--destructive-wash);
+}
+
+.tool-button-compact {
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+}
+
+/* The one action a toolbar asks for, such as enabling what is off. */
+.tool-button-primary,
+.tool-button-primary:hover:not(:disabled) {
+  background: var(--mint);
+  color: var(--background);
+  font-weight: 600;
+}
+
+.tool-button-primary:hover:not(:disabled) {
+  background: var(--mint-hover);
+}

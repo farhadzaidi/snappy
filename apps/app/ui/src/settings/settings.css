@@ -28,3 +28,28 @@
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-badge[data-good="true"] {
+  color: var(--mint);
+  background: var(--mint-wash);
+}
+
+.status-badge[data-good="false"] {
+  color: var(--destructive);
+  background: rgb(var(--destructive-rgb) / 12%);
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+}

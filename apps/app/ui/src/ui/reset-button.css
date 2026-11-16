@@ -1,0 +1,22 @@
+/* A panel's Reset, quiet beside its title. */
+.reset-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-small);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.reset-button:hover:not(:disabled),
+.reset-button[aria-expanded="true"] {
+  background: var(--wash);
+  color: var(--text);
+}
+
+.reset-button:disabled {
+  opacity: 0.45;
+}

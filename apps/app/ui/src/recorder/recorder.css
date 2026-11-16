@@ -1,0 +1,86 @@
+/* Shortcut recorder. It fills the column its group or list gives it, so recorders listed
+   together are as wide as the widest needs. */
+.recorder {
+  display: flex;
+  flex: auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* As wide as most shortcuts need, and wider for one whose modifiers are spelled out. */
+.recorder-button {
+  flex: auto;
+  min-width: 168px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-small);
+  border: 1px solid var(--line);
+  background: var(--background);
+  color: var(--muted);
+  font: 500 13px var(--font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recorder-button[data-assigned="true"] {
+  color: var(--text);
+}
+
+/* A shortcut longer than a narrow column can hold ends in an ellipsis rather than cut off;
+   the Snappy key's pill stays whole. */
+.recorder-button .chord {
+  max-width: 100%;
+}
+
+.recorder-button .chord-keys {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* While recording, the field reads like an input waiting for keys, with Escape's own button
+   at its end: clearly not the × that clears a shortcut. */
+.recorder-field {
+  position: relative;
+  display: flex;
+  flex: auto;
+  min-width: 0;
+}
+
+.recorder-button[data-recording="true"] {
+  padding: 0 44px 0 12px;
+  border-color: var(--mint);
+  color: var(--mint);
+  text-align: left;
+}
+
+.recorder-cancel {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font: 500 11px/18px var(--font);
+  transform: translateY(-50%);
+}
+
+.recorder-cancel:hover {
+  border-color: rgb(var(--text-rgb) / 18%);
+  color: var(--text);
+}
+
+.recorder-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.recorder-clear {
+  flex: none;
+  width: 26px;
+  height: 28px;
+}

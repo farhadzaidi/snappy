@@ -1,0 +1,16 @@
+.confirm-popover {
+  width: 240px;
+  padding: 12px;
+}
+
+.confirm-title {
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

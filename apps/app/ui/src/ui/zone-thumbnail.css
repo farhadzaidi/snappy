@@ -1,0 +1,24 @@
+/* A small schematic of a layout's zones, some of them lit. */
+.thumbnail {
+  align-self: center;
+}
+
+.thumbnail rect {
+  fill: rgb(var(--text-rgb) / 8%);
+  stroke: var(--line-strong);
+  stroke-width: 0.7;
+}
+
+.thumbnail [data-highlighted="true"] rect {
+  fill: rgb(var(--mint-rgb) / 25%);
+  stroke: rgb(var(--mint-rgb) / 55%);
+}
+
+.thumbnail text {
+  fill: var(--muted);
+  font: 500 10px var(--font);
+}
+
+.thumbnail [data-highlighted="true"] text {
+  fill: var(--mint);
+}

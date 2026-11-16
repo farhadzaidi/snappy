@@ -1,0 +1,9 @@
+/* A small dot marking what is live or current, such as snapping or the current workspace. */
+.status-dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mint);
+}
