@@ -1,15 +1,17 @@
 #!/bin/bash
-# Regenerate the README's screenshots, and drafts for the store listings, all in containers.
+# Regenerate the README's images, and drafts for the store listings, all in containers.
 #
 #   tools/screenshots/capture.sh            # the desktop, then the app
-#   tools/screenshots/capture.sh desktop    # Snappy's zones over a headless GNOME desktop
+#   tools/screenshots/capture.sh desktop    # the animation of windows snapping into zones
 #   tools/screenshots/capture.sh app        # Snappy's window, against the fake daemon
 #
 # The desktop: Snappy built as for the live suite, running in a headless GNOME 49 Shell
-# (tools/live/gnome) with real apps, captured by GNOME itself. The app: the UI in
-# Playwright's container (as tools/e2e.sh runs it), which also turns every capture into the
+# (tools/live/gnome) with real apps on a copy of this repository. GNOME captures each step of
+# the drags, and the frames become assets/screenshots/snapping.webp. The app: the UI in
+# Playwright's container (as tools/e2e.sh runs it), which turns its captures into the
 # README's WebP images in assets/screenshots/. Everything else lands in target/screenshots/:
-# the raw captures, and PNG drafts sized for the Microsoft Store and the Mac App Store.
+# the frames, the raw captures, and PNG drafts sized for the Microsoft Store and the Mac App
+# Store.
 #
 # Needs Docker, `pnpm -C apps/app/ui install`, and the WebAssembly tools from CONTRIBUTING.md.
 set -euo pipefail
@@ -25,8 +27,10 @@ desktop() {
         cargo build --release -p snappy
         mkdir -p /work/target/live/screenshots
         cp /target/release/snappy /work/target/live/screenshots/'
+    # The repository the apps in the animation show, as of the last commit.
+    git -C "$root" bundle create --quiet "$root/target/live/screenshots/snappy.bundle" HEAD
 
-    echo "Capturing the desktop in GNOME $gnome_version…"
+    echo "Recording the desktop in GNOME $gnome_version…"
     local base image=snappy-screenshots-gnome
     base="$(gnome_image "$gnome_version")"
     docker build --quiet --tag "$image" --build-arg "BASE=$base" "$screenshots/gnome" >/dev/null
@@ -37,7 +41,8 @@ desktop() {
         --env SNAPPY_GNOME_MONITORS=1 \
         --env SNAPPY_GNOME_PREINSTALL=1 \
         "$image" /work/tools/screenshots/gnome/in-container.sh \
-        /work/target/live/screenshots/snappy /work/target/screenshots/desktop
+        /work/target/live/screenshots/snappy /work/target/live/screenshots/snappy.bundle \
+        /work/target/screenshots/desktop /work/assets/screenshots/snapping.webp
 }
 
 app() {
@@ -69,4 +74,4 @@ case "$what" in
     *) echo "Usage: $0 [all|desktop|app]" >&2; exit 2 ;;
 esac
 echo "README images: $root/assets/screenshots"
-echo "Store drafts and raw captures: $root/target/screenshots"
+echo "Store drafts, frames, and raw captures: $root/target/screenshots"

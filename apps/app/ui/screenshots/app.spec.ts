@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { test, type Page } from "@playwright/test";
 
 import { layoutAction, layoutCard, openApp, showPage, zone } from "../e2e/support";
-import { CAPTURES, README_APP_CAPTURES } from "./paths";
+import { CAPTURES, README_SHOTS, readmeCapture } from "./paths";
 
 type Shot = "layouts" | "editor" | "workspaces" | "settings";
 
@@ -21,7 +21,9 @@ async function show(page: Page, shot: Shot): Promise<void> {
       await layoutAction(page, "Duplicate");
       break;
     case "workspaces":
+      // Turned on, the page shows each workspace's windows rather than how to start.
       await showPage(page, "Workspaces");
+      await page.getByRole("switch", { name: "Enable workspaces" }).click();
       break;
     case "settings":
       await showPage(page, "Settings");
@@ -36,20 +38,34 @@ async function show(page: Page, shot: Shot): Promise<void> {
   await page.waitForTimeout(300);
 }
 
-async function capture(page: Page, shot: Shot, file: URL): Promise<void> {
+/** The Settings group the README's shot of Settings ends after, so no group is cut in two. */
+const LAST_SETTINGS_GROUP = "Snappy key";
+/** Space kept under that group, in CSS pixels: less than the gap to the next one. */
+const MARGIN_BELOW = 14;
+
+/** Captures `shot`; `whole` cuts the capture after the last group that fits entirely. */
+async function capture(page: Page, shot: Shot, file: URL, { whole = false } = {}): Promise<void> {
   await show(page, shot);
+  let clip;
+  if (whole && shot === "settings") {
+    const group = await page.getByRole("region", { name: LAST_SETTINGS_GROUP }).boundingBox();
+    const viewport = page.viewportSize();
+    if (group && viewport) {
+      clip = { x: 0, y: 0, width: viewport.width, height: Math.ceil(group.y + group.height + MARGIN_BELOW) };
+    }
+  }
   mkdirSync(new URL(".", file), { recursive: true });
-  writeFileSync(file, await page.screenshot());
+  writeFileSync(file, await page.screenshot(clip ? { clip } : {}));
 }
 
 test.describe("for the README", () => {
   // As the e2e tests see the window, at twice the pixels for sharp text.
   test.use({ viewport: { width: 1080, height: 760 }, deviceScaleFactor: 2 });
 
-  for (const shot of ["layouts", "editor"] as const) {
+  for (const shot of README_SHOTS) {
     test(shot, async ({ page }) => {
       await openApp(page, "macos");
-      await capture(page, shot, README_APP_CAPTURES[shot]);
+      await capture(page, shot, readmeCapture(shot), { whole: true });
     });
   }
 });

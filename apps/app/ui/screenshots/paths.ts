@@ -8,11 +8,9 @@ export const CAPTURES = new URL("target/screenshots/", repository);
 /** The README's images, committed. */
 export const README_IMAGES = new URL("assets/screenshots/", repository);
 
-/** The app's captures that the README shows. */
-export const README_APP_CAPTURES = {
-  layouts: new URL("app/readme/layouts.png", CAPTURES),
-  editor: new URL("app/readme/editor.png", CAPTURES),
-};
+/** The app's pages that the README shows, each captured here and then made a WebP of its name. */
+export const README_SHOTS = ["layouts", "editor", "workspaces", "settings"] as const;
 
-/** The desktop capture that the README shows, from `tools/screenshots/capture.sh desktop`. */
-export const DESKTOP_CAPTURE = new URL("desktop/dragging.png", CAPTURES);
+export function readmeCapture(shot: (typeof README_SHOTS)[number]): URL {
+  return new URL(`app/readme/${shot}.png`, CAPTURES);
+}
