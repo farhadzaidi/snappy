@@ -1,6 +1,7 @@
 //! The main-thread side: NSApplication, the status item, and every observer that
 //! feeds the engine.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 use objc2::MainThreadMarker;
@@ -73,10 +74,26 @@ impl App {
     }
 }
 
-/// Asks the main thread to stop the run loop. Callable from any thread.
+/// Set while AppKit waits for the answer to `applicationShouldTerminate:`.
+static TERMINATION_DEFERRED: AtomicBool = AtomicBool::new(false);
+
+/// AppKit asked whether to quit, and waits for `request_termination` to answer.
+pub(crate) fn defer_termination() {
+    TERMINATION_DEFERRED.store(true, Ordering::SeqCst);
+}
+
+/// Asks the main thread to stop the run loop, or, when AppKit is waiting to quit, tells it
+/// to go ahead. Callable from any thread.
 pub fn request_termination() {
     main_thread::spawn(|mtm| {
         let application = NSApplication::sharedApplication(mtm);
+        if TERMINATION_DEFERRED.swap(false, Ordering::SeqCst) {
+            // Quitting this way ends the process without `run` returning, so its teardown
+            // happens first.
+            teardown();
+            application.replyToApplicationShouldTerminate(true);
+            return;
+        }
         application.stop(None);
         // `stop` takes effect after the next event, so post one.
         let wake = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(

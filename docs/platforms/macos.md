@@ -89,6 +89,7 @@ Snappy needs Accessibility (`src/permissions.rs`). While snapping is on and the 
 
 - **One daemon.** A lock on `daemon.lock` in the state folder keeps a second daemon from running (`src/instance.rs`). Opening Snappy.app again reaches the running daemon instead, which opens Snappy's window.
 - **Quitting.** `SIGTERM`, `SIGINT`, and `SIGHUP` quit as the menu's **Quit** does, so hidden workspace windows come back first. `SIGUSR2` stops for a restart, leaving them hidden.
+- **Quit Apple Events**, which logging out and scripts send, and Homebrew's `quit` when it uninstalls, quit the same way. The delegate answers `applicationShouldTerminate:` with "later", the engine quits, and `request_termination` then lets AppKit end the process, tearing down first (`src/delegate.rs`, `src/app.rs`).
 - **No Dock icon.** Neither the daemon nor the app shows a Dock icon or appears in Command-Tab.
 - **Open at login** registers the launch agent inside the app (`packaging/macos`), which runs the daemon with `--background` (`src/login_item.rs`).
 

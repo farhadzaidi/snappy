@@ -117,7 +117,7 @@ Some values exist on both sides, such as the protocol version, operation and eve
 
 The daemon can stop in two ways, and the difference is what happens to windows hidden in other workspaces.
 
-**Quitting** brings every hidden window back on screen first. The menu's **Quit** does this. So do `SIGTERM`, `SIGINT`, and `SIGHUP` on macOS and Linux, and on Windows a close request, the session ending, or Ctrl+C in a console.
+**Quitting** brings every hidden window back on screen first. The menu's **Quit** does this. So do `SIGTERM`, `SIGINT`, and `SIGHUP` on macOS and Linux, a quit Apple Event on macOS (logging out sends one, and so do scripts), and on Windows a close request, the session ending, or Ctrl+C in a console.
 
 **Stopping for a restart** leaves every window where it is. `SIGUSR2` does this on macOS and Linux, and `snappy --stop-for-restart` on Windows, which has no such signal. The next start puts each window back in its workspace without moving it.
 

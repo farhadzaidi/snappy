@@ -1,10 +1,12 @@
-//! Snappy's Objective-C delegate: the app's launch and reopen handlers, the menu bar menu's
+//! Snappy's Objective-C delegate: the app's launch, reopen, and quit handlers, the menu bar menu's
 //! delegate, and its items' action target. Every method only forwards.
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSApplication, NSApplicationDelegate, NSMenu, NSMenuDelegate, NSMenuItem};
+use objc2_app_kit::{
+    NSApplication, NSApplicationDelegate, NSApplicationTerminateReply, NSMenu, NSMenuDelegate, NSMenuItem,
+};
 #[cfg(feature = "mac-app-store")]
 use objc2_foundation::NSNotification;
 use snappy_platform::PlatformEvent;
@@ -12,7 +14,7 @@ use snappy_platform::PlatformEvent;
 use crate::events::emit;
 #[cfg(feature = "mac-app-store")]
 use crate::login_launch;
-use crate::tray;
+use crate::{app, tray};
 
 define_class!(
     // SAFETY: NSObject has no subclassing requirements, and `Delegate` has no `Drop`.
@@ -29,6 +31,16 @@ define_class!(
         fn should_handle_reopen(&self, _app: &NSApplication, _visible: bool) -> bool {
             emit(PlatformEvent::OpenAppRequested);
             false
+        }
+
+        /// A quit from outside, as an Apple Event sends at logout or from a script, quits as
+        /// the menu's Quit does: the engine brings back hidden windows first, and
+        /// `request_termination` gives AppKit its answer once it's done.
+        #[unsafe(method(applicationShouldTerminate:))]
+        fn should_terminate(&self, _app: &NSApplication) -> NSApplicationTerminateReply {
+            app::defer_termination();
+            emit(PlatformEvent::QuitRequested);
+            NSApplicationTerminateReply::TerminateLater
         }
 
         /// The Mac App Store build has no launch agent to start it with `--background`, so
