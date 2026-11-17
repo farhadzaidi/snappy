@@ -73,6 +73,14 @@ jobs:
           pattern: packages-*
           merge-multiple: true
           path: dist
+      # The uninstall scripts go with the packages, so the README's commands fetch the ones
+      # from the latest release.
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          sparse-checkout: tools/uninstall
+      - name: The uninstall scripts
+        run: cp source/tools/uninstall/uninstall.sh source/tools/uninstall/uninstall.ps1 dist/
       - name: Every package, and nothing else
         working-directory: dist
         run: |
@@ -89,6 +97,8 @@ jobs:
             "snappy-app-$v-1.aarch64.rpm"
             "snappy-app-$v-linux-x86_64.tar.gz"
             "snappy-app-$v-linux-aarch64.tar.gz"
+            uninstall.sh
+            uninstall.ps1
           )
           for file in "${expected[@]}"; do
             [[ -f "$file" ]] || { echo "::error::$file is missing"; exit 1; }

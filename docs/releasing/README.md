@@ -48,10 +48,11 @@ Two workflows in `.github/workflows/` do the work.
 
 1. checks that the tag matches the version in `Cargo.toml`;
 2. runs `build.yml` to build every package;
-3. checks that every expected file is there, and nothing else;
-4. writes `SHA256SUMS`;
-5. records where each file was built, as [build provenance](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations);
-6. creates a **draft** release, with notes generated from the merged pull requests.
+3. adds the uninstall scripts from `tools/uninstall/`, so `releases/latest/download/uninstall.sh` and `uninstall.ps1` are always the latest release's;
+4. checks that every expected file is there, and nothing else;
+5. writes `SHA256SUMS`;
+6. records where each file was built, as [build provenance](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations);
+7. creates a **draft** release, with notes generated from the merged pull requests.
 
 **`build.yml`** builds each package on its own kind of machine, and uploads them as artifacts named `packages-<system>`. You can also run it on its own from the Actions tab.
 
@@ -139,6 +140,7 @@ The workflow runs on the tag wherever it points. Keep `main`'s version ahead of 
 | `snappy-app_{v}_amd64.deb`, `snappy-app_{v}_arm64.deb` | Debian and Ubuntu packages |
 | `snappy-app-{v}-1.x86_64.rpm`, `snappy-app-{v}-1.aarch64.rpm` | Fedora, openSUSE, and other RPM-based distributions |
 | `snappy-app-{v}-linux-x86_64.tar.gz`, `snappy-app-{v}-linux-aarch64.tar.gz` | The same files as the Linux packages, for anywhere else |
+| `uninstall.sh`, `uninstall.ps1` | The uninstall scripts from `tools/uninstall/`, which the README runs from the latest release |
 | `SHA256SUMS` | The SHA-256 of every file above |
 
 ### Windows
@@ -149,7 +151,7 @@ The workflow runs on the tag wherever it points. Keep `main`'s version ahead of 
 
 **Open at login.** Uninstalling removes the `Snappy` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, if it starts the copy being removed. Upgrading keeps it.
 
-**Settings stay.** Snappy's settings, in `%APPDATA%\Snappy` and `%LOCALAPPDATA%\Snappy`, stay after an uninstall. Use one kind of package or the other, not both.
+**Settings stay.** Snappy's settings, in `%APPDATA%\Snappy` and `%LOCALAPPDATA%\Snappy`, stay after an uninstall from Settings → Apps; `uninstall.ps1` removes them too. Use one kind of package or the other, not both.
 
 **Not signed.** There's no budget for a Windows code signing certificate. So SmartScreen warns the first time Snappy runs: **More info**, then **Run anyway**. The build summary says so too.
 

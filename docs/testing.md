@@ -25,6 +25,7 @@ Most tests need nothing but `cargo test` and run on any machine. `tools/check.sh
 | The GNOME adapter against a fake GNOME Shell | `crates/gnome/tests/fake_shell/` | Linux with `dbus-daemon` |
 | Adapter integration tests | `crates/x11/tests/x11/`, `crates/gnome/tests/gnome/`, `crates/kwin/tests/kwin/`, `crates/windows/tests/windows.rs` | the adapter's sandbox |
 | The live suite | `crates/live` | each desktop's sandbox |
+| The Linux uninstall script against each kind of install | `tools/uninstall/test.sh` | throwaway Docker containers |
 | App unit tests (Vitest) | `*.test.ts` files beside the code in `apps/app/ui/src` | Node |
 | App end-to-end tests (Playwright) | `apps/app/ui/e2e/` | Chromium and WebKit |
 
@@ -71,7 +72,9 @@ The fake bus gets its own home folder and in-memory settings, so nothing reaches
 
 ## The daemon's own checks
 
-`apps/snappy/tests/` checks the daemon as a whole. `privacy.rs` fails the build if the daemon links a network client. `bundle.rs` checks what the macOS app declares and which system services the daemon calls.
+`apps/snappy/tests/` checks the daemon as a whole. `privacy.rs` fails the build if the daemon links a network client. `bundle.rs` checks what the macOS app declares and which system services the daemon calls. `uninstall_scripts.rs` checks that the uninstall scripts name what the packages install and what the daemon calls itself.
+
+`snappy --uninstall` is run for real by the live suite's last two scenarios: one with Snappy running and one after a crash, each with a window hidden in another workspace that has to come back. On GNOME they remove the extension, so `tools/live/gnome/suite.sh` runs the others first with `--skip uninstalling`, then each of these after installing the extension and logging in again. `tools/uninstall/test.sh` runs `uninstall.sh` in throwaway containers against a `.deb`, an `.rpm`, and copies of the tarball in `~/.local` and `/usr/local`. The macOS and Windows parts of the scripts run only on those systems.
 
 ## The app's tests
 
