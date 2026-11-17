@@ -17,18 +17,21 @@ command="$1"
 timeout="${2:-600}"
 folder='C:\Users\snappy\live'
 task=snappy-desktop
+# Each run gets its own output files: a program the command starts in the background, such
+# as Snappy itself, keeps the redirected output open and would block the next run's.
+run="task-$(date +%s)-$$"
 
 script="$(mktemp)"
 trap 'rm -f "$script"' EXIT
-printf '@echo off\r\ncd /d %s\r\nset SNAPPY_WINDOWS_TEST=1\r\nset SNAPPY_LIVE_SANDBOX=1\r\n%s > task.out 2>&1\r\necho %%ERRORLEVEL%% > task.done\r\n' \
-    "$folder" "$command" >"$script"
+printf '@echo off\r\ncd /d %s\r\nset SNAPPY_WINDOWS_TEST=1\r\nset SNAPPY_LIVE_SANDBOX=1\r\n%s > %s.out 2>&1\r\necho %%ERRORLEVEL%% > %s.done\r\n' \
+    "$folder" "$command" "$run" "$run" >"$script"
 
-vm_ssh "New-Item -ItemType Directory -Force -Path '$folder' | Out-Null; Remove-Item -ErrorAction Ignore '$folder\\task.out', '$folder\\task.done'; exit 0"
+vm_ssh "New-Item -ItemType Directory -Force -Path '$folder' | Out-Null; Remove-Item -ErrorAction Ignore '$folder\\task-*.out', '$folder\\task-*.done'; exit 0"
 "$here/copy.sh" "$script" "vm:live/task.cmd"
 vm_ssh "schtasks /create /tn $task /tr '$folder\\task.cmd' /sc once /st 23:59 /ru snappy /it /f | Out-Null; schtasks /run /tn $task | Out-Null"
 
 deadline=$((SECONDS + timeout))
-until vm_ssh "Test-Path '$folder\\task.done'" | grep -q True; do
+until vm_ssh "Test-Path '$folder\\$run.done'" | grep -q True; do
     if ((SECONDS >= deadline)); then
         echo "The desktop task didn't finish within $timeout seconds." >&2
         vm_ssh "schtasks /end /tn $task | Out-Null" || true
@@ -37,6 +40,6 @@ until vm_ssh "Test-Path '$folder\\task.done'" | grep -q True; do
     sleep 2
 done
 
-vm_ssh "Get-Content -Raw '$folder\\task.out'" || true
-status="$(vm_ssh "(Get-Content '$folder\\task.done').Trim()" | tr -d '\r')"
+vm_ssh "Get-Content -Raw '$folder\\$run.out'" || true
+status="$(vm_ssh "(Get-Content '$folder\\$run.done').Trim()" | tr -d '\r')"
 exit "${status:-1}"
