@@ -2,6 +2,8 @@
 # Inside a running GNOME test session (gnome-session.sh): install Snappy's extension the way
 # a first launch does, log out and back in by restarting GNOME Shell, check the extension
 # runs, then run the live scenarios with Wayland windows and again with Xwayland ones.
+# Uninstalling removes the extension, so the uninstalling scenarios run last, each after
+# installing it and logging in again.
 #
 #   suite.sh <binaries folder> <output folder> [scenario name prefix]
 set -uo pipefail
@@ -21,34 +23,37 @@ fail() {
 }
 
 mkdir -p "$out/install-home"
-{
-    echo "GNOME Shell $(gnome-shell --version)"
-    echo "Before the first launch: $(extension_info)"
-} >"$out/install.txt"
+echo "GNOME Shell $(gnome-shell --version)" >"$out/install.txt"
 
-SNAPPY_HOME="$out/install-home" SNAPPY_DEBUG=1 "$bin/snappy" --background >"$out/install-home/daemon.log" 2>&1 &
-daemon=$!
-for _ in $(seq 100); do
-    gsettings get org.gnome.shell enabled-extensions | grep -q "$uuid" && break
-    sleep 0.1
-done
-gsettings get org.gnome.shell enabled-extensions | grep -q "$uuid" \
-    || fail "the first launch didn't turn the extension on"
-[[ -f "$HOME/.local/share/gnome-shell/extensions/$uuid/metadata.json" ]] \
-    || fail "the first launch didn't install the extension"
-kill -TERM "$daemon"
-wait "$daemon"
-echo "After the first launch: installed and turned on; $(extension_info)" >>"$out/install.txt"
+# Installs the extension as a first launch does, then logs in again by restarting GNOME Shell
+# and checks the extension runs.
+install_and_log_in() {
+    echo "Before the first launch: $(extension_info)" >>"$out/install.txt"
+    SNAPPY_HOME="$out/install-home" SNAPPY_DEBUG=1 "$bin/snappy" --background >>"$out/install-home/daemon.log" 2>&1 &
+    local daemon=$!
+    for _ in $(seq 100); do
+        gsettings get org.gnome.shell enabled-extensions | grep -q "$uuid" && break
+        sleep 0.1
+    done
+    gsettings get org.gnome.shell enabled-extensions | grep -q "$uuid" \
+        || fail "the first launch didn't turn the extension on"
+    [[ -f "$HOME/.local/share/gnome-shell/extensions/$uuid/metadata.json" ]] \
+        || fail "the first launch didn't install the extension"
+    kill -TERM "$daemon"
+    wait "$daemon"
+    echo "After the first launch: installed and turned on; $(extension_info)" >>"$out/install.txt"
 
-restart-shell || fail "GNOME Shell didn't start again"
-info="$(extension_info)"
-echo "After logging in again: $info" >>"$out/install.txt"
-grep -q "'state': <1.0>" <<<"$info" || fail "the extension isn't running"
-version="$(gdbus call --session --dest org.gnome.Shell --object-path /io/github/farhadzaidi/Snappy/Shell \
-    --method org.freedesktop.DBus.Properties.Get io.github.farhadzaidi.Snappy.Shell Version)"
-echo "Protocol: $version" >>"$out/install.txt"
-expected="$(grep -o 'PROTOCOL_VERSION = [0-9]*' "$(dirname "$0")/../../../crates/gnome/extension/service.js" | grep -o '[0-9]*$')"
-grep -q "uint32 $expected" <<<"$version" || fail "the extension speaks another protocol version than $expected"
+    restart-shell || fail "GNOME Shell didn't start again"
+    local info version expected
+    info="$(extension_info)"
+    echo "After logging in again: $info" >>"$out/install.txt"
+    grep -q "'state': <1.0>" <<<"$info" || fail "the extension isn't running"
+    version="$(gdbus call --session --dest org.gnome.Shell --object-path /io/github/farhadzaidi/Snappy/Shell \
+        --method org.freedesktop.DBus.Properties.Get io.github.farhadzaidi.Snappy.Shell Version)"
+    echo "Protocol: $version" >>"$out/install.txt"
+    expected="$(grep -o 'PROTOCOL_VERSION = [0-9]*' "$(dirname "$0")/../../../crates/gnome/extension/service.js" | grep -o '[0-9]*$')"
+    grep -q "uint32 $expected" <<<"$version" || fail "the extension speaks another protocol version than $expected"
+}
 
 # GNOME's session manager would hand apps Xwayland's display and authorization; here they
 # come from the running GNOME Shell, which made new ones when it started again.
@@ -61,14 +66,29 @@ xwayland_environment() {
     [[ -n "${line}" && -n "$XAUTHORITY" ]] || fail "couldn't find Xwayland's display and authorization"
 }
 
+live() {
+    SNAPPY_LIVE_SANDBOX=1 "$bin/snappy-live" --app "$bin/snappy" --fixture "$bin/snappy-fixture" "$@"
+}
+
 status=0
-for display in wayland x11; do
-    [[ "$display" == x11 ]] && xwayland_environment
-    name="$display"
-    [[ "$display" == x11 ]] && name=xwayland
-    echo "== $name windows"
-    SNAPPY_LIVE_SANDBOX=1 SNAPPY_LIVE_FIXTURE_DISPLAY="$display" "$bin/snappy-live" --app "$bin/snappy" --fixture "$bin/snappy-fixture" \
-        --out "$out/$name" ${only:+--only "$only"} || status=1
+if [[ "$only" != uninstalling* ]]; then
+    install_and_log_in
+    for display in wayland x11; do
+        [[ "$display" == x11 ]] && xwayland_environment
+        name="$display"
+        [[ "$display" == x11 ]] && name=xwayland
+        echo "== $name windows"
+        SNAPPY_LIVE_FIXTURE_DISPLAY="$display" live --out "$out/$name" ${only:+--only "$only"} \
+            --skip uninstalling || status=1
+    done
+    unset DISPLAY XAUTHORITY
+fi
+
+for scenario in uninstalling_quits uninstalling_after_a_crash; do
+    [[ -z "$only" || "$scenario" == "$only"* || "$only" == "$scenario"* ]] || continue
+    echo "== $scenario"
+    install_and_log_in
+    SNAPPY_LIVE_FIXTURE_DISPLAY=wayland live --out "$out/$scenario" --only "$scenario" || status=1
 done
 cp "$SNAPPY_GNOME_LOGS/gnome-shell.log" "$out/"
 exit "$status"

@@ -29,6 +29,17 @@ pub fn is_session() -> bool {
     snappy_linux::session::current() == snappy_linux::session::Session::GnomeWayland
 }
 
+/// Whether Snappy's extension is installed, or on GNOME's list of extensions to turn on.
+pub fn snappy_extension_installed() -> bool {
+    let listed = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.shell", "enabled-extensions"])
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout).contains(snappy_gnome::protocol::EXTENSION_UUID)
+        });
+    listed || snappy_gnome::extension::install_folder().is_some_and(|folder| folder.exists())
+}
+
 fn connection() -> Result<&'static Connection, String> {
     static CONNECTION: OnceLock<Result<Connection, String>> = OnceLock::new();
     CONNECTION

@@ -10,6 +10,7 @@ mod snappy_key;
 mod support;
 mod swaps;
 mod tabs;
+mod uninstall;
 mod workspaces;
 
 use snappy_core::keys::Os;
@@ -31,6 +32,7 @@ use swaps::{
     floating_keyboard_swap, floating_swap, floating_swap_fallback, inverted_drag, keyboard_swap, swap_drag,
 };
 use tabs::tabs_along;
+use uninstall::{uninstalling_after_a_crash_returns_windows, uninstalling_quits_and_returns_windows};
 use workspaces::{
     display_change_keeps_windows_parked, quit_returns_windows, restart_keeps_workspaces, send_and_stay_batch,
     send_and_switch, send_to_workspace, step_workspaces, workspace_switch,
@@ -151,4 +153,13 @@ pub const ALL: &[(&str, Scenario)] = &[
     ),
     ("quitting_returns_parked_windows", quit_returns_windows),
     ("full_screen_windows_are_never_moved", full_screen_refused),
+    // Last, since on GNOME they remove the extension the others need.
+    (
+        "uninstalling_quits_snappy_brings_back_hidden_windows_and_deletes_its_files",
+        uninstalling_quits_and_returns_windows,
+    ),
+    (
+        "uninstalling_after_a_crash_brings_back_hidden_windows",
+        uninstalling_after_a_crash_returns_windows,
+    ),
 ];

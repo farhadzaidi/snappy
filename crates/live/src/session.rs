@@ -137,6 +137,39 @@ impl Daemon {
         self.start()
     }
 
+    /// Runs `snappy --uninstall` against this daemon's files, as the uninstall scripts do, and
+    /// waits for it. Returns what it said; errs with that when it fails.
+    pub fn uninstall(&self) -> Result<String, String> {
+        let output = Command::new(self.executable())
+            .arg(launch::UNINSTALL)
+            .env(launch::HOME_ENV, &self.home)
+            .output()
+            .map_err(|error| error.to_string())?;
+        self.reap();
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if output.status.success() {
+            Ok(said)
+        } else {
+            Err(format!(
+                "snappy --uninstall exited with {}: {said}",
+                output.status
+            ))
+        }
+    }
+
+    /// The daemon's own program: inside the bundle on macOS.
+    fn executable(&self) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            self.app.join("Contents/MacOS/snappy")
+        } else {
+            self.app.clone()
+        }
+    }
+
     /// The daemon's process ID while it runs.
     pub fn pid(&self) -> Option<i32> {
         processes::pid()

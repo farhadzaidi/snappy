@@ -3,7 +3,7 @@
 //! screenshots scenarios take of what they show.
 //!
 //! Usage: `snappy-live --app <Snappy.app or daemon> --fixture <snappy-fixture> --out <folder>
-//! [--only <scenario name prefix>]`
+//! [--only <scenario name prefix>] [--skip <scenario name prefix>]`
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -23,6 +23,7 @@ struct Options {
     fixture: PathBuf,
     out: PathBuf,
     only: Option<String>,
+    skip: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -65,7 +66,7 @@ fn main() -> ExitCode {
 }
 
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
-    let (mut app, mut fixture, mut out, mut only) = (None, None, None, None);
+    let (mut app, mut fixture, mut out, mut only, mut skip) = (None, None, None, None, None);
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
@@ -73,6 +74,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
             "--fixture" => fixture = Some(PathBuf::from(value)),
             "--out" => out = Some(PathBuf::from(value)),
             "--only" => only = Some(value),
+            "--skip" => skip = Some(value),
             _ => return Err(format!("unknown option {flag}")),
         }
     }
@@ -81,6 +83,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
         fixture: fixture.ok_or("--fixture is required")?,
         out: out.ok_or("--out is required")?,
         only,
+        skip,
     })
 }
 
@@ -277,6 +280,10 @@ fn run(options: &Options) -> Result<bool, String> {
                 .only
                 .as_ref()
                 .is_some_and(|only| !name.starts_with(only.as_str()))
+                || options
+                    .skip
+                    .as_ref()
+                    .is_some_and(|skip| name.starts_with(skip.as_str()))
             {
                 continue;
             }

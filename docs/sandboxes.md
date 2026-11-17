@@ -84,7 +84,7 @@ GNOME 46 is the default.
 
 - **It refuses to run outside a container.** The session script starts GNOME Shell and rewrites GNOME settings, so it checks first.
 - **Installing the extension is part of the test.** The daemon's first launch has to install it. Then GNOME Shell restarts, as it would at the next login, and the extension has to answer.
-- **Twice over.** The live scenarios run once with the fixture's windows on Wayland and once through Xwayland.
+- **Twice over.** The live scenarios run once with the fixture's windows on Wayland and once through Xwayland. The uninstalling scenarios remove the extension, so they run last, each after installing it and logging in again.
 - **A test-only extension**, `tools/live/gnome/test-extension`, loaded only in these containers, provides the input and frames. It adds virtual devices that GNOME Shell treats like hardware, and places and reads the fixture's windows, which Wayland apps can't do for themselves.
 
 ### KDE Plasma on Wayland
