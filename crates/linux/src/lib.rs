@@ -4,7 +4,8 @@
 //! recognizing the session, physical key codes, the menu's structure, how overlays look,
 //! stable display IDs, drawing overlays and the scenes desktop shells draw, the tray icon,
 //! warnings for the journal, the user's XDG folders, a minimal Wayland client, Caps Lock
-//! as the Snappy key through XKB, and the user-facing messages for it. For the adapters
+//! as the Snappy key through XKB, removing what Snappy added for `snappy --uninstall`, and
+//! the user-facing messages for it. For the adapters
 //! that work through a desktop shell over the session bus: D-Bus plumbing, and which of the
 //! windows the shell reports Snappy manages.
 #![cfg(target_os = "linux")]
@@ -27,9 +28,10 @@ pub mod process;
 pub mod scene;
 pub mod session;
 pub mod tray;
+pub mod uninstall;
 pub mod wayland;
 pub mod windows;
 pub mod xdg;
 pub mod xkb;
 
-pub use instance::{Claim, InstanceLock, claim, lock_path};
+pub use instance::{Claim, InstanceLock, claim, lock_path, request_quit};

@@ -1,7 +1,8 @@
 //! The interfaces every operating-system adapter implements, the events adapters report,
 //! the tray glyph the trays that take pixels draw (`glyph`), how every overlay looks
-//! (`overlay_style`), and how the daemon is started (`launch`). The engine calls the interfaces from its own thread; calls may block only up
-//! to the platform's messaging timeout.
+//! (`overlay_style`), how the daemon is started (`launch`), and what removing Snappy asks of
+//! adapters (`uninstall`). The engine calls the interfaces from its own thread; calls may
+//! block only up to the platform's messaging timeout.
 
 mod caps_lock;
 mod desktop_guard;
@@ -17,6 +18,7 @@ pub mod overlay_style;
 mod permissions;
 mod platform;
 mod tray;
+pub mod uninstall;
 mod windows;
 
 pub use snappy_core::window::WindowId;

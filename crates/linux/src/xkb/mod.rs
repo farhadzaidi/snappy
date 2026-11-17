@@ -21,6 +21,7 @@ mod refusal;
 pub use crate::messages::LAYOUT_REMAPS_CAPS_LOCK;
 pub use keymap::{CapsLockKey, caps_lock_key};
 pub use option::{
-    CapsLockSymbol, OPTION, install, rules_with_option, rules_without_option, symbols, uninstall, user_folder,
+    CapsLockSymbol, OPTION, install, is_installed, rules_with_option, rules_without_option, symbols,
+    uninstall, user_folder,
 };
 pub use refusal::{layout_refusal, options_refusal};

@@ -16,6 +16,8 @@ Snappy's diagnostics never hold window titles, window contents, or keystrokes. T
 
 When the daemon starts with `SNAPPY_HOME=<folder>`, everything goes in that folder instead: `settings.json`, a `state/` folder, and a `logs/` folder. The tests use this to run the daemon against scratch settings.
 
+`snappy --uninstall` deletes these folders, along with the folder the app's web view keeps its data in, named after the app's ID, `io.github.farhadzaidi.Snappy.App` ([Uninstalling](daemon-and-app.md#uninstalling)).
+
 Two builds lay their files out differently. The Mac App Store build keeps them inside its sandbox container ([The Mac App Store](releasing/mac-app-store.md)). A Snappy installed from the Microsoft Store keeps them in its package's `LocalState` folder, laid out as with `SNAPPY_HOME` ([Windows](platforms/windows.md#the-msix-package)).
 
 ## What's in them
@@ -27,7 +29,7 @@ The state folder holds what Snappy needs to pick up where it left off:
 - `workspace-membership.json`, which window belongs to which workspace;
 - `workspace-journal.json`, which windows are hidden and where, only while some are;
 - `caps-lock.json`, how to undo Caps Lock's change to the keyboard settings, only while it's in place;
-- on macOS, `daemon.lock`, which keeps a second daemon from starting.
+- on macOS, `daemon.lock`, which keeps a second daemon from starting and holds the running one's process ID.
 
 Linux keeps its lock, `snappy.lock`, in `$XDG_RUNTIME_DIR` instead, even with `SNAPPY_HOME` set. Windows uses a named mutex, with no file.
 

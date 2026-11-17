@@ -2,6 +2,7 @@
 
 use std::sync::mpsc::Receiver;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use snappy_engine::{Engine, Input, Paths};
 use snappy_platform::{Platform, PlatformEvent, launch};
@@ -9,8 +10,23 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::app_process::AppProcess;
 
-/// Start the engine on a thread of its own, fed by the adapter's `events`. `open_app`
-/// opens the app's window at launch.
+/// How long a settling run waits for control of the desktop before quitting anyway.
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long the engine runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Until the user quits; `open_app` opens the app's window at launch.
+    Run { open_app: bool },
+    /// Only until Snappy controls the desktop, or `SETTLE_TIMEOUT` passes, then quit, for
+    /// `snappy --uninstall` after a run that ended without quitting. Starting picks up what
+    /// that run left, the windows it hid and its change to Caps Lock, and quitting brings the
+    /// windows back and gives Caps Lock back.
+    Settle,
+}
+
+/// Start the engine on a thread of its own, fed by the adapter's `events`, for as long as
+/// `mode` says.
 ///
 /// `stop_adapter` ends the adapter's loop once the engine is done, however it ends. After a
 /// panic no engine is left to put anything back, so the daemon exits and its next start picks
@@ -20,7 +36,7 @@ pub fn spawn_engine<P: Platform + Send + 'static>(
     platform: P,
     paths: Paths,
     events: Receiver<PlatformEvent>,
-    open_app: bool,
+    mode: Mode,
     stop_adapter: impl FnOnce() + Send + 'static,
 ) -> std::io::Result<JoinHandle<std::io::Result<()>>> {
     let (inputs, incoming) = tokio::sync::mpsc::unbounded_channel();
@@ -29,7 +45,7 @@ pub fn spawn_engine<P: Platform + Send + 'static>(
         .name("snappy-engine".into())
         .spawn(move || {
             let _stop_adapter = OnDrop::new(stop_adapter);
-            run_engine(platform, paths, inputs, incoming, open_app)
+            run_engine(platform, paths, inputs, incoming, mode)
         })
 }
 
@@ -63,7 +79,7 @@ fn run_engine<P: Platform + 'static>(
     paths: Paths,
     inputs: UnboundedSender<Input>,
     mut incoming: UnboundedReceiver<Input>,
-    open_app: bool,
+    mode: Mode,
 ) -> std::io::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -76,12 +92,19 @@ fn run_engine<P: Platform + 'static>(
             engine.force_debug_log();
         }
         engine.start();
-        if open_app {
+        if mode == (Mode::Run { open_app: true }) {
             let _ = inputs.send(Input::Platform(PlatformEvent::OpenAppRequested));
         }
+        let mut settling = mode == Mode::Settle;
+        let settle_timeout = tokio::time::sleep(SETTLE_TIMEOUT);
+        tokio::pin!(settle_timeout);
 
         let outbox_ready = engine.outbox_ready();
         loop {
+            if settling && engine.controls_the_desktop() {
+                settling = false;
+                let _ = inputs.send(Input::Platform(PlatformEvent::QuitRequested));
+            }
             // Messages also come from work that finishes between inputs, such as a snap
             // that settles or fails, so a queued message wakes the loop too.
             let input = tokio::select! {
@@ -90,6 +113,10 @@ fn run_engine<P: Platform + 'static>(
                     None => break,
                 },
                 () = outbox_ready.notified() => None,
+                () = &mut settle_timeout, if settling => {
+                    settling = false;
+                    Some(Input::Platform(PlatformEvent::QuitRequested))
+                }
             };
             let Some(input) = input else {
                 app_process.send(engine.take_outbox());
@@ -99,10 +126,14 @@ fn run_engine<P: Platform + 'static>(
                 input,
                 Input::Platform(PlatformEvent::QuitRequested | PlatformEvent::RestartRequested)
             );
-            if input == Input::Platform(PlatformEvent::OpenAppRequested)
-                && let Err(error) = app_process.open()
-            {
-                eprintln!("snappy: couldn't open the app: {error}");
+            if input == Input::Platform(PlatformEvent::OpenAppRequested) {
+                // A settling run is on its way out, so it never opens the window.
+                if mode == Mode::Settle {
+                    continue;
+                }
+                if let Err(error) = app_process.open() {
+                    eprintln!("snappy: couldn't open the app: {error}");
+                }
             }
             engine.handle(input);
             app_process.send(engine.take_outbox());

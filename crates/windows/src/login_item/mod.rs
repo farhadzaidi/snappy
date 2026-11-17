@@ -5,4 +5,4 @@ mod mechanism;
 mod run_key;
 mod startup_task;
 
-pub use mechanism::{is_enabled, set_enabled};
+pub use mechanism::{is_enabled, remove_any_copy, set_enabled};

@@ -85,7 +85,8 @@ Windows asks for none.
 
 - **One daemon.** A named mutex keeps a second daemon from running (`src/instance.rs`). A second launch signals a named event, which opens Snappy's window, and exits.
 - **Stopping for a restart.** Windows has no `SIGUSR2`, so `snappy.exe --stop-for-restart` sets another named event and waits for the daemon to exit.
-- **Quitting.** A close request to the hidden window, the session ending, and Ctrl+C or closing a console all quit as the tray's **Quit** does.
+- **Quitting.** A close request to the hidden window, the session ending, and Ctrl+C or closing a console all quit as the tray's **Quit** does. `snappy --uninstall` sends that close request, then waits on the mutex for the daemon to exit.
+- **Uninstalling.** `snappy --uninstall` also removes the `Run` value when it starts any copy of Snappy (`src/uninstall.rs`). Caps Lock changes nothing in the system, so there's nothing to give back. The daemon is a windowed program with no console, so for a command it attaches to the terminal it was run from (`src/console.rs`). The Microsoft Store's copy can't be run from outside its package, so `tools/uninstall/uninstall.ps1` quits it with the same close request, then removes the package, which takes its files and startup task with it.
 - **`taskkill`** without `/F` can't close the daemon, because it only closes visible windows.
 - **Open at login** is a `Run` value under the current user's registry key, holding the daemon's path and `--background` (`src/login_item/`). Installed from the Microsoft Store, Snappy uses the package's startup task instead (below).
 

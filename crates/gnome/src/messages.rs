@@ -52,3 +52,8 @@ pub fn caps_lock_not_written(error: &std::io::Error) -> String {
 pub fn unavailable(message: &str) -> WindowError {
     WindowError::unavailable(message)
 }
+
+/// What `snappy --uninstall` says about the extension.
+pub const EXTENSION_REMOVED: &str = "Removed Snappy's GNOME extension.";
+pub const EXTENSION_NOT_REMOVED: &str =
+    "Snappy couldn't remove its GNOME extension. Remove it in the Extensions app.";

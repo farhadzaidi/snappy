@@ -4,12 +4,15 @@ This page is for anyone changing how Snappy starts, stops, or talks to its windo
 
 ## How the daemon starts
 
-The daemon, `snappy`, understands two flags and two environment variables. Their names are defined in `crates/platform/src/launch.rs`.
+The daemon, `snappy`, understands these flags and two environment variables. Their names are defined in `crates/platform/src/launch.rs`, and `apps/snappy/src/arguments.rs` reads them.
 
 - `--background` starts it quietly, as the login item does. Started any other way, as when someone opens Snappy from a launcher, it also opens Snappy's window.
 - `--stop-for-restart` is for Windows only. It asks the running daemon to stop for a restart, and waits for it to exit. [Quitting, or stopping for a restart](#quitting-or-stopping-for-a-restart) explains why that's different from quitting.
+- `--uninstall` removes everything Snappy added, and `--keep-settings` beside it keeps the settings file. [Uninstalling](#uninstalling) explains it.
 - `SNAPPY_HOME=<folder>` keeps every file Snappy writes in that folder instead of the usual places. The tests use it to run the daemon against scratch settings.
 - `SNAPPY_DEBUG=1` turns the debug log on, whatever the settings say.
+
+Anything else on the command line is refused with a short message and exit status 2, so a mistyped flag, or one a newer script passes to an older Snappy, never starts the daemon instead. The one exception is the `-psn_…` argument older macOS adds when it launches an app.
 
 On Linux, the daemon then picks an adapter for the session it's in: GNOME on Wayland, KDE Plasma on Wayland, or X11 for everything else. [Linux](platforms/linux.md#picking-an-adapter) explains how.
 
@@ -122,6 +125,17 @@ The daemon can stop in two ways, and the difference is what happens to windows h
 **Stopping for a restart** leaves every window where it is. `SIGUSR2` does this on macOS and Linux, and `snappy --stop-for-restart` on Windows, which has no such signal. The next start puts each window back in its workspace without moving it.
 
 A crash leaves things as stopping for a restart does. [Restarts](features.md#after-a-restart-or-a-crash) explains how windows are recognized again.
+
+## Uninstalling
+
+`snappy --uninstall` undoes everything Snappy added to the system and deletes its files, leaving only the program for whatever installed it to remove (`apps/snappy/src/uninstall/`). The uninstall scripts in `tools/uninstall/`, published with each release, run it first. It works through the same code that makes each change, so the scripts don't repeat any of it.
+
+1. **It quits the running daemon** as Quit does, so hidden windows come back and Caps Lock is given back, and waits up to 30 seconds. On macOS and Linux it sends `SIGTERM` to the process ID in the daemon's lock file; on Windows it sends the daemon's hidden window a close request and waits on its mutex. If the daemon doesn't quit, it stops there.
+2. **When nothing was running** but a run that didn't quit left windows hidden or Caps Lock changed, as a crash does, it starts Snappy once, in the same process, without opening its window. Starting picks up what that run left. As soon as Snappy controls the desktop, or after 15 seconds, it quits, which brings the windows back and gives Caps Lock back (`Mode::Settle` in `apps/snappy/src/runtime.rs`).
+3. **Each adapter removes what it added** outside Snappy's folders, in its `uninstall` module: Open at login everywhere, and on Linux the app icon, the GNOME extension, Snappy's XKB option, KDE's keyboard settings and its applications entry, and what KDE's shortcut service keeps. Linux runs every desktop's part, since Snappy may have run on more than one.
+4. **The folders go**: Snappy's settings, state, and logs folders, the web view's data that Tauri keeps for the app, and on macOS what the system keeps for it in `~/Library`, the same as the Homebrew cask's `--zap` list. With `SNAPPY_HOME` set, or in the Microsoft Store package, only Snappy's own entries in that folder go. `--keep-settings` keeps the settings file.
+
+It says what it did, one line at a time, and exits with status 1 if anything is left. On Windows the daemon has no console of its own, so it attaches to the terminal it was run from.
 
 ### Swapping in your own build
 

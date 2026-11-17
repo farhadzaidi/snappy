@@ -4,7 +4,7 @@
 //! parked windows come back first, and so do `SIGINT` and `SIGHUP`, from Ctrl+C or closing
 //! the terminal Snappy was started from. `SIGUSR2` stops for a restart, as when installing a
 //! new build: windows stay where they are, and the next launch puts them back in their
-//! workspaces.
+//! workspaces. `snappy --uninstall` sends the daemon `SIGTERM` (`request_quit`).
 
 use std::ffi::{c_int, c_void};
 use std::fs::{File, OpenOptions, TryLockError};
@@ -14,8 +14,10 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc::Sender;
+use std::time::{Duration, Instant};
 
 use snappy_platform::PlatformEvent;
+use snappy_platform::uninstall::QuitRequest;
 
 const LOCK_NAME: &str = "snappy.lock";
 const SIGHUP: c_int = 1;
@@ -91,6 +93,41 @@ pub fn claim(path: &Path) -> std::io::Result<Claim> {
             Ok(Claim::Secondary)
         }
         Err(TryLockError::Error(error)) => Err(error),
+    }
+}
+
+/// How often `request_quit` looks whether the daemon has let go of its lock.
+const QUIT_POLL: Duration = Duration::from_millis(100);
+
+/// Asks the daemon holding the lock at `path` to quit, as `SIGTERM` does, and waits up to
+/// `wait` for it to let go of the lock as it exits.
+pub fn request_quit(path: &Path, wait: Duration) -> QuitRequest {
+    let Ok(mut file) = OpenOptions::new().read(true).open(path) else {
+        return QuitRequest::NotRunning;
+    };
+    match file.try_lock() {
+        Ok(()) => return QuitRequest::NotRunning,
+        Err(TryLockError::Error(_)) => return QuitRequest::StillRunning,
+        Err(TryLockError::WouldBlock) => {}
+    }
+    let mut contents = String::new();
+    let pid = file
+        .read_to_string(&mut contents)
+        .ok()
+        .and_then(|_| contents.trim().parse::<i32>().ok())
+        .filter(|pid| *pid > 0);
+    let Some(pid) = pid else {
+        return QuitRequest::StillRunning;
+    };
+    // SAFETY: `kill` has no memory-safety preconditions.
+    unsafe { kill(pid, SIGTERM) };
+    let started = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return QuitRequest::Quit,
+            Err(TryLockError::WouldBlock) if started.elapsed() < wait => std::thread::sleep(QUIT_POLL),
+            Err(_) => return QuitRequest::StillRunning,
+        }
     }
 }
 
@@ -194,6 +231,20 @@ mod tests {
 
         drop(lock);
         assert!(matches!(claim(&path).unwrap(), Claim::Primary(_)));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn asking_to_quit_finds_nothing_when_no_daemon_holds_the_lock() {
+        let folder = std::env::temp_dir().join(format!("snappy-quit-{}", std::process::id()));
+        let path = folder.join(LOCK_NAME);
+        assert_eq!(request_quit(&path, Duration::ZERO), QuitRequest::NotRunning);
+
+        let Claim::Primary(lock) = claim(&path).unwrap() else {
+            panic!("the first claim must win");
+        };
+        drop(lock);
+        assert_eq!(request_quit(&path, Duration::ZERO), QuitRequest::NotRunning);
         std::fs::remove_dir_all(&folder).unwrap();
     }
 

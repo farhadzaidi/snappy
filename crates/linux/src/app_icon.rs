@@ -32,6 +32,19 @@ pub fn install() {
     }
 }
 
+/// Takes the icon out of the theme. True when it was there.
+pub fn remove() -> io::Result<bool> {
+    path().map_or(Ok(false), |path| remove_at(&path))
+}
+
+fn remove_at(path: &Path) -> io::Result<bool> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// Writes the icon unless the same one is already there.
 fn install_at(path: &Path) -> io::Result<()> {
     if fs::read(path).is_ok_and(|existing| existing == SVG) {
@@ -58,6 +71,9 @@ mod tests {
         fs::write(&path, "<svg/>").unwrap();
         install_at(&path).unwrap();
         assert_eq!(fs::read(&path).unwrap(), SVG);
+
+        assert!(remove_at(&path).unwrap());
+        assert!(!remove_at(&path).unwrap(), "removing again finds nothing");
         fs::remove_dir_all(&folder).unwrap();
     }
 

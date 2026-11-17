@@ -23,8 +23,9 @@ mod hold;
 mod kxkbrc;
 mod presses;
 
+pub use fake_input::{entry_path as applications_entry_path, remove_entry as remove_applications_entry};
 pub use hold::{
-    Hold, hold, modifiers_reported, prepare_xkb_folder, released_alone, restore, screen_locked,
-    settings_changed, toggle, undo,
+    Hold, hold, modifiers_reported, prepare_xkb_folder, released_alone, remove_option, restore,
+    screen_locked, settings_changed, toggle, undo,
 };
-pub use kxkbrc::CHANGED_GROUP;
+pub use kxkbrc::{CHANGED_GROUP, CHANGED_KEYS};

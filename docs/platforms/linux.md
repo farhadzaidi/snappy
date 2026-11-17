@@ -20,13 +20,17 @@ Everything that doesn't depend on the display server is in `crates/linux`.
 
 An exclusive lock on `snappy.lock` in `$XDG_RUNTIME_DIR` holds the running daemon's process ID (`instance.rs`). A second launch sends that process `SIGUSR1`, which opens Snappy's window, and exits.
 
-`SIGTERM`, `SIGINT`, and `SIGHUP` quit as the menu's **Quit** does, so hidden workspace windows come back first. `SIGUSR2` stops for a restart, leaving them hidden ([Quitting, or stopping for a restart](../daemon-and-app.md#quitting-or-stopping-for-a-restart)).
+`SIGTERM`, `SIGINT`, and `SIGHUP` quit as the menu's **Quit** does, so hidden workspace windows come back first. `SIGUSR2` stops for a restart, leaving them hidden ([Quitting, or stopping for a restart](../daemon-and-app.md#quitting-or-stopping-for-a-restart)). `snappy --uninstall` sends `SIGTERM` and waits for the lock to come free.
 
 ### Starting at login
 
 The login item is `snappy.desktop` in `~/.config/autostart`, which runs the daemon with `--background` (`login_item.rs`).
 
 It names the app icon, `io.github.farhadzaidi.Snappy`, rather than a file path, so it doesn't break when the program moves. Snappy installs the icon into the user's icon theme first (`app_icon.rs`).
+
+### Uninstalling
+
+`snappy --uninstall` removes the autostart entry, the icon, and Snappy's XKB option from `~/.config/xkb`, keeping the user's own rules (`uninstall.rs`). It also runs the GNOME and KDE adapters' parts, whichever desktop it runs on, since Snappy may have run on both ([GNOME](gnome.md#uninstalling), [KDE](kde.md#uninstalling)). The packages and the tarball install no files in the user's home, so removing them leaves nothing of Snappy's there.
 
 ### Recognizing windows after a restart
 

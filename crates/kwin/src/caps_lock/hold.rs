@@ -210,33 +210,38 @@ fn remove_files() {
     }
 }
 
-/// Takes Snappy's option out of `kxkbrc`. When the entries are still the ones Snappy wrote,
-/// `prior` comes back exactly; when the user changed the options since, only Snappy's
-/// option goes and their change stays.
+/// Takes Snappy's option out of `kxkbrc` and tells KWin.
 fn take_option_out(shared: &Shared, prior: &OptionEntries, written: &str) {
+    match remove_option(Some((prior, written))) {
+        Ok(true) => notify_kwin(shared),
+        Ok(false) => {}
+        Err(error) => journal::warn(format_args!("can't take Snappy's option out of kxkbrc: {error}")),
+    }
+}
+
+/// Takes Snappy's option out of `kxkbrc`, without telling KWin. Given `left`, the entries
+/// before Snappy's and the options it wrote, and when the entries are still the ones Snappy
+/// wrote, the earlier entries come back exactly; otherwise, as when the user changed the
+/// options since, only Snappy's option goes and the rest stays. True when the file changed.
+pub fn remove_option(left: Option<(&OptionEntries, &str)>) -> std::io::Result<bool> {
     let Some(path) = kxkbrc::path() else {
-        return;
+        return Ok(false);
     };
-    let Ok(text) = kxkbrc::load(&path) else {
-        return;
-    };
+    let text = kxkbrc::load(&path)?;
     let current = kxkbrc::read(&text);
     let options = current.options.clone().unwrap_or_default();
     if !kxkbrc::has_option(&options, OPTION) {
-        return;
+        return Ok(false);
     }
-    let entries = if current == OptionEntries::using(written) {
-        prior.clone()
-    } else {
-        OptionEntries {
+    let entries = match left {
+        Some((prior, written)) if current == OptionEntries::using(written) => prior.clone(),
+        _ => OptionEntries {
             options: Some(kxkbrc::without_option(&options, OPTION)),
             ..current
-        }
+        },
     };
-    match kxkbrc::store(&path, &kxkbrc::write(&text, &entries)) {
-        Ok(()) => notify_kwin(shared),
-        Err(error) => journal::warn(format_args!("can't take Snappy's option out of kxkbrc: {error}")),
-    }
+    kxkbrc::store(&path, &kxkbrc::write(&text, &entries))?;
+    Ok(true)
 }
 
 /// Puts Snappy's entries back as `hold` wrote them, over the `prior` ones taking the option

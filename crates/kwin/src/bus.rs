@@ -34,6 +34,7 @@ const GLOBAL_ACCEL_PATH: &str = "/kglobalaccel";
 const GLOBAL_ACCEL_INTERFACE: &str = "org.kde.KGlobalAccel";
 pub const COMPONENT_INTERFACE: &str = "org.kde.kglobalaccel.Component";
 /// KWin's own shortcut component, where the script's doorbell lives.
+const KWIN_COMPONENT: &str = "kwin";
 const KWIN_COMPONENT_PATH: &str = "/component/kwin";
 /// KConfig's change notifications: a signal on the file's name as a path, with the changed
 /// keys by group (`a{saay}`), which KConfigWatcher turns into a reload.
@@ -449,21 +450,8 @@ impl Bus {
 
     /// KConfig's change notification for `kxkbrc`'s `[Layout]` group, naming `keys`, as
     /// System Settings sends it when it saves the keyboard settings.
-    pub fn notify_config_changed(&self, keys: &[&str]) -> Result<(), CallError> {
-        let changed: HashMap<String, Vec<Vec<u8>>> = HashMap::from([(
-            crate::caps_lock::CHANGED_GROUP.to_owned(),
-            keys.iter().map(|key| key.as_bytes().to_vec()).collect(),
-        )]);
-        self.thread.call(move |conn| {
-            conn.emit_signal(
-                None::<&str>,
-                KXKBRC_PATH,
-                CONFIG_NOTIFY_INTERFACE,
-                CONFIG_CHANGED,
-                &(changed,),
-            )
-            .map_err(|error| CallError::Unreachable(error.to_string()))
-        })
+    pub fn notify_config_changed(&self, keys: &'static [&'static str]) -> Result<(), CallError> {
+        self.thread.call(move |conn| notify_config_changed(conn, keys))
     }
 
     /// Every action holding exactly this key sequence, as `(component, action)`.
@@ -485,6 +473,55 @@ impl Bus {
             .map(|(action, _, component, ..)| (component, action))
             .collect())
     }
+}
+
+/// KConfig's change notification for `kxkbrc`'s `[Layout]` group on `conn`, naming `keys`.
+pub fn notify_config_changed(conn: &Connection, keys: &[&str]) -> Result<(), CallError> {
+    let changed: HashMap<String, Vec<Vec<u8>>> = HashMap::from([(
+        crate::caps_lock::CHANGED_GROUP.to_owned(),
+        keys.iter().map(|key| key.as_bytes().to_vec()).collect(),
+    )]);
+    conn.emit_signal(
+        None::<&str>,
+        KXKBRC_PATH,
+        CONFIG_NOTIFY_INTERFACE,
+        CONFIG_CHANGED,
+        &(changed,),
+    )
+    .map_err(|error| CallError::Unreachable(error.to_string()))
+}
+
+/// Has KDE's shortcut service forget what it keeps of Snappy's once the daemon is gone: the
+/// shortcuts of Snappy's component, which its settings keep after the daemon lets go of them,
+/// and the doorbell the script registers among KWin's. True when the service had any of them.
+pub fn forget_shortcuts(conn: &Connection) -> Result<bool, CallError> {
+    let unreachable = |error: zbus::Error| CallError::Unreachable(error.to_string());
+    let component = conn.call_method(
+        Some(GLOBAL_ACCEL_NAME),
+        crate::hotkeys::COMPONENT_PATH,
+        Some(COMPONENT_INTERFACE),
+        "cleanUp",
+        &(),
+    );
+    let cleaned = match component {
+        Ok(reply) => reply.body().deserialize::<bool>().unwrap_or(false),
+        // The service has no component of Snappy's.
+        Err(zbus::Error::MethodError(..)) => false,
+        Err(error) => return Err(unreachable(error)),
+    };
+    let doorbell = conn
+        .call_method(
+            Some(GLOBAL_ACCEL_NAME),
+            GLOBAL_ACCEL_PATH,
+            Some(GLOBAL_ACCEL_INTERFACE),
+            "unregister",
+            &(KWIN_COMPONENT, DOORBELL),
+        )
+        .map_err(unreachable)?
+        .body()
+        .deserialize::<bool>()
+        .unwrap_or(false);
+    Ok(cleaned || doorbell)
 }
 
 #[cfg(test)]

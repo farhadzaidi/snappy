@@ -14,6 +14,7 @@ snappy-engine = { path = "../../crates/engine" }
 snappy-ipc = { path = "../../crates/ipc" }
 snappy-platform = { path = "../../crates/platform" }
 directories = "6"
+thiserror.workspace = true
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

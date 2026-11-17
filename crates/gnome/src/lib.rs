@@ -24,6 +24,7 @@ pub mod protocol;
 #[cfg(feature = "reference")]
 pub mod reference;
 mod shared;
+pub mod uninstall;
 mod windows;
 
 pub use app::{App, Stopper};

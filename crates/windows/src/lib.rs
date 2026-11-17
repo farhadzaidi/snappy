@@ -10,6 +10,7 @@
 mod app;
 mod caps_lock;
 mod class;
+mod console;
 mod desktop_guard;
 mod dispatch;
 mod displays;
@@ -32,10 +33,12 @@ mod platform;
 pub mod reference;
 mod shared;
 mod tray;
+pub mod uninstall;
 mod wide;
 
 pub use app::{App, Stopper};
+pub use console::attach_to_parent_console;
 pub use error::WindowsError;
-pub use instance::{Claim, Instance, RestartRequest, claim, request_restart};
+pub use instance::{Claim, Instance, RestartRequest, claim, request_quit, request_restart};
 pub use package::{package_data_folder, started_at_login};
 pub use platform::WindowsPlatform;

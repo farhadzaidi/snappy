@@ -17,6 +17,11 @@ pub const LOGIN_ITEM_BLOCKED_BY_POLICY: &str = "Your organization doesn't let Sn
 pub const LOGIN_ITEM_REQUIRED_BY_POLICY: &str =
     "Your organization has Snappy open at login, so it can't be turned off here.";
 
+/// What `snappy --uninstall` says about Open at login.
+pub const LOGIN_ITEM_REMOVED: &str = "Turned off Open at login.";
+pub const LOGIN_ITEM_NOT_REMOVED: &str =
+    "Snappy couldn't turn off Open at login. Turn it off in Settings > Apps > Startup.";
+
 pub fn unavailable(message: &str) -> WindowError {
     WindowError::unavailable(message)
 }

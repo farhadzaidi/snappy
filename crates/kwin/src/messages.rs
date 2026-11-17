@@ -24,3 +24,10 @@ pub const CAPS_LOCK_AFTER_LOGIN: &str = "Caps Lock becomes the Snappy key after 
 pub fn unavailable(message: &str) -> WindowError {
     WindowError::unavailable(message)
 }
+
+/// What `snappy --uninstall` says about KDE's settings.
+pub const KEYBOARD_SETTINGS_RESTORED: &str = "Took Snappy's Caps Lock option out of KDE's keyboard settings.";
+pub const KEYBOARD_SETTINGS_NOT_RESTORED: &str =
+    "Snappy couldn't take its Caps Lock option out of KDE's keyboard settings.";
+pub const SHORTCUTS_REMOVED: &str = "Removed Snappy's shortcuts from KDE's settings.";
+pub const SHORTCUTS_NOT_REMOVED: &str = "Snappy couldn't remove its shortcuts from KDE's settings.";

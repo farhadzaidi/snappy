@@ -13,6 +13,20 @@ pub fn is_enabled() -> bool {
     }
 }
 
+/// Turns opening at login off for every copy of Snappy, for `snappy --uninstall`. True when
+/// it was on.
+pub fn remove_any_copy() -> Result<bool, String> {
+    if package::is_packaged() {
+        let on = startup_task::is_enabled();
+        if on {
+            startup_task::set_enabled(false)?;
+        }
+        Ok(on)
+    } else {
+        run_key::remove_any_copy()
+    }
+}
+
 pub fn set_enabled(on: bool) -> Result<(), String> {
     if package::is_packaged() {
         startup_task::set_enabled(on)

@@ -140,6 +140,13 @@ impl<P: Platform + 'static> Engine<P> {
         self.shared.core.borrow().is_live()
     }
 
+    /// Whether Snappy has what it needs to act on the desktop: the permission, and live
+    /// control. Workspaces and Caps Lock depend on this, whether snapping is on or not.
+    pub fn controls_the_desktop(&self) -> bool {
+        let core = self.shared.core.borrow();
+        core.has_permission() && core.live_control.is_available()
+    }
+
     /// Direct access to the platform, for the app shell and tests.
     pub fn with_platform<R>(&self, f: impl FnOnce(&mut P) -> R) -> R {
         f(&mut self.shared.core.borrow_mut().platform)

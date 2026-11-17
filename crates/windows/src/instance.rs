@@ -3,22 +3,26 @@
 //! `Local\Snappy.OpenApp`, which carries no other command, and exits. Setting the
 //! named event `Local\Snappy.Restart`, as `snappy --stop-for-restart` does, stops the
 //! daemon for a restart: windows stay where they are, and the next launch puts them back
-//! in their workspaces.
+//! in their workspaces. `snappy --uninstall` sends the daemon's hidden window a close
+//! request instead, which quits it as its menu's Quit does.
 
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use snappy_platform::PlatformEvent;
+use snappy_platform::uninstall::QuitRequest;
 use windows::Win32::Foundation::{
-    ERROR_ALREADY_EXISTS, GetLastError, HANDLE, WAIT_ABANDONED, WAIT_EVENT, WAIT_OBJECT_0,
+    ERROR_ALREADY_EXISTS, GetLastError, HANDLE, LPARAM, WAIT_ABANDONED, WAIT_EVENT, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::System::Threading::{
     CreateEventW, CreateMutexW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, OpenMutexW, ReleaseMutex,
     SYNCHRONIZATION_SYNCHRONIZE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_CLOSE};
 use windows::core::{PCWSTR, w};
 
+use crate::app::CLASS;
 use crate::handle::OwnedHandle;
 
 const DAEMON_MUTEX: PCWSTR = w!(r"Local\Snappy.Daemon");
@@ -102,17 +106,48 @@ pub fn request_restart(wait: Duration) -> RestartRequest {
     if !set_named_event(RESTART_EVENT) {
         return RestartRequest::Unsupported;
     }
-    let millis = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
-    // The daemon owns the mutex for its whole life, so getting it means the daemon is gone.
-    // SAFETY: a valid mutex handle.
-    let woke = unsafe { WaitForSingleObject(mutex.0, millis) };
-    if woke == WAIT_OBJECT_0 || woke == WAIT_ABANDONED {
-        // SAFETY: this thread owns the mutex after a successful wait.
-        let _ = unsafe { ReleaseMutex(mutex.0) };
+    if waited_for_exit(&mutex, wait) {
         RestartRequest::Stopped
     } else {
         RestartRequest::StillRunning
     }
+}
+
+/// Asks the running daemon to quit as its menu's Quit does, with a close request to its
+/// hidden window, then waits up to `wait` for it to exit.
+pub fn request_quit(wait: Duration) -> QuitRequest {
+    // SAFETY: opens the daemon's mutex only to wait on it.
+    let Ok(mutex) = (unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, DAEMON_MUTEX) }) else {
+        return QuitRequest::NotRunning;
+    };
+    let mutex = OwnedHandle(mutex);
+    // SAFETY: looks up a top-level window by its class name.
+    let Ok(window) = (unsafe { FindWindowW(CLASS, PCWSTR::null()) }) else {
+        return QuitRequest::StillRunning;
+    };
+    // SAFETY: posts a plain message to another process's window.
+    if unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) }.is_err() {
+        return QuitRequest::StillRunning;
+    }
+    if waited_for_exit(&mutex, wait) {
+        QuitRequest::Quit
+    } else {
+        QuitRequest::StillRunning
+    }
+}
+
+/// Waits up to `wait` for the daemon owning `mutex` to exit. The daemon owns the mutex for
+/// its whole life, so getting it means the daemon is gone.
+fn waited_for_exit(mutex: &OwnedHandle, wait: Duration) -> bool {
+    let millis = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
+    // SAFETY: a valid mutex handle.
+    let woke = unsafe { WaitForSingleObject(mutex.0, millis) };
+    let exited = woke == WAIT_OBJECT_0 || woke == WAIT_ABANDONED;
+    if exited {
+        // SAFETY: this thread owns the mutex after a successful wait.
+        let _ = unsafe { ReleaseMutex(mutex.0) };
+    }
+    exited
 }
 
 impl Instance {

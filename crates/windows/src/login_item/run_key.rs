@@ -31,6 +31,38 @@ pub fn starts(command: &str, executable: &Path) -> bool {
     command.trim().to_lowercase().starts_with(&quoted)
 }
 
+/// The daemon's file name, which any copy's Run value starts.
+const DAEMON_FILE: &str = "snappy.exe";
+
+/// Whether a stored command starts a copy of Snappy, wherever it is.
+pub fn starts_any_copy(command: &str) -> bool {
+    let Some(path) = command
+        .trim()
+        .strip_prefix('"')
+        .and_then(|rest| rest.split('"').next())
+    else {
+        return false;
+    };
+    Path::new(path)
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case(DAEMON_FILE))
+}
+
+/// Removes the Run value when it starts any copy of Snappy, not only this one. True when
+/// there was one.
+pub fn remove_any_copy() -> Result<bool, String> {
+    if !stored().is_some_and(|command| starts_any_copy(&command)) {
+        return Ok(false);
+    }
+    // SAFETY: plain registry call with constant names.
+    let result = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN_KEY, VALUE) };
+    if result == ERROR_SUCCESS {
+        Ok(true)
+    } else {
+        Err(messages::LOGIN_ITEM_NOT_CHANGED.to_owned())
+    }
+}
+
 fn stored() -> Option<String> {
     let mut buffer = [0u16; 2048];
     let mut size = (buffer.len() * 2) as u32;
@@ -99,5 +131,16 @@ mod tests {
             &exe
         ));
         assert!(!starts(r#""C:\Other\snappy.exe" --background"#, &exe));
+    }
+
+    #[test]
+    fn uninstalling_recognizes_any_copy_of_snappy_and_nothing_else() {
+        assert!(starts_any_copy(r#""C:\Other\SNAPPY.EXE" --background"#));
+        assert!(starts_any_copy(&command_line(&PathBuf::from(
+            r"C:\Users\me\AppData\Local\Programs\Snappy\snappy.exe"
+        ))));
+        assert!(!starts_any_copy(r#""C:\Tools\snappy-helper.exe" --background"#));
+        assert!(!starts_any_copy(r"C:\Snappy\snappy.exe --background"));
+        assert!(!starts_any_copy(""));
     }
 }

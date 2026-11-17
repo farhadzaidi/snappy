@@ -27,6 +27,7 @@ pub mod protocol;
 pub mod reference;
 pub mod script;
 mod shared;
+pub mod uninstall;
 mod windows;
 pub mod wire;
 

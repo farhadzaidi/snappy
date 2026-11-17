@@ -3953,6 +3953,7 @@ dependencies = [
  "snappy-platform",
  "snappy-windows",
  "snappy-x11",
+ "thiserror 2.0.21",
  "tokio",
 ]
 

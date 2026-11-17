@@ -14,6 +14,10 @@ The extension's files are built into the daemon. At every start, the daemon writ
 
 GNOME Shell on Wayland only loads a new extension at the next login. So the first time, Snappy turns the extension on in GNOME's settings, and Snappy's window asks the user to log out and back in once, with a **Log out now** button. After that, turning the extension on or off is up to the user.
 
+## Uninstalling
+
+`snappy --uninstall` removes the extension (`src/uninstall.rs`). In a GNOME session it asks GNOME Shell, through `UninstallExtension`, which turns the extension off, bringing back any window it still hid, and deletes it without a logout. Elsewhere it deletes the extension's folder. Either way it takes the extension off GNOME's enabled and disabled lists. The xkb files Caps Lock used go with the Linux part.
+
 ## How the daemon and the extension talk
 
 They talk over D-Bus (`src/protocol.rs`, `src/bus.rs`, and `service.js` in the extension). The extension offers an interface under GNOME Shell's own bus name, with three parts:

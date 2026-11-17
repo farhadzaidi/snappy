@@ -91,6 +91,13 @@ Snappy's workspaces pause when the user switches to another desktop. When Snappy
 
 Besides what every Linux adapter does, quitting unloads the script, unregisters the shortcuts, and gives up the bus name.
 
+## Uninstalling
+
+Quitting already takes Snappy's option out of `kxkbrc`. After it, `snappy --uninstall` removes what's left (`src/uninstall.rs`):
+
+- **Keyboard settings.** An option a run that couldn't quit left in `kxkbrc` comes out, and a running KWin hears of it. So does the applications entry that lets Snappy toggle Caps Lock.
+- **Shortcuts.** KDE's shortcut service keeps a component's shortcuts in `kglobalshortcutsrc` after the program lets go of them, and the script's doorbell among KWin's. With the service running, Snappy has it clean up its component and forget the doorbell.
+
 ## KWin settings that get in the way
 
 KWin's own tiling keeps running alongside Snappy, and Snappy leaves KWin's settings alone. These act on the same drags and keys:

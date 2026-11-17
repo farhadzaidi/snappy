@@ -115,6 +115,23 @@ impl Bus {
         reply.body().deserialize::<ExtensionInfo>().ok()
     }
 
+    /// Has GNOME Shell turn the extension off and delete it. True when Shell had it.
+    pub fn uninstall_extension(&self, uuid: &str) -> Result<bool, CallError> {
+        let uuid = uuid.to_owned();
+        let reply = self.call_method(
+            SHELL_BUS_NAME,
+            EXTENSIONS_PATH,
+            EXTENSIONS_INTERFACE,
+            "UninstallExtension",
+            (uuid,),
+        )?;
+        let (uninstalled,): (bool,) = reply
+            .body()
+            .deserialize()
+            .map_err(|error| CallError::Malformed(error.to_string()))?;
+        Ok(uninstalled)
+    }
+
     /// Whether GNOME lets user extensions run at all.
     pub fn user_extensions_enabled(&self) -> Option<bool> {
         bool::try_from(self.property(

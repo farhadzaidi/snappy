@@ -118,6 +118,23 @@ pub fn enable_in_settings() -> Result<(), String> {
     Ok(())
 }
 
+/// Takes the extension off GNOME's enabled and disabled extensions, where it's on them.
+/// True when it was on either. Without GNOME's settings there's nothing to take it off.
+pub fn forget_in_settings() -> Result<bool, String> {
+    let mut forgotten = false;
+    for key in [ENABLED_KEY, DISABLED_KEY] {
+        let Ok(list) = read_list(key) else {
+            continue;
+        };
+        if list.iter().any(|uuid| uuid == EXTENSION_UUID) {
+            let kept: Vec<String> = list.into_iter().filter(|uuid| uuid != EXTENSION_UUID).collect();
+            write_list(key, &kept)?;
+            forgotten = true;
+        }
+    }
+    Ok(forgotten)
+}
+
 const SHELL_SCHEMA: &str = "org.gnome.shell";
 const ENABLED_KEY: &str = "enabled-extensions";
 const DISABLED_KEY: &str = "disabled-extensions";

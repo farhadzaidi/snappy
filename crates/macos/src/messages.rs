@@ -31,6 +31,11 @@ pub const SWAP_NOT_RESPONDING: &str = "An app in that zone isn't responding. The
 pub const SWAP_NOT_SWAPPABLE: &str = "A window in that zone doesn't allow swapping. The drag was cancelled.";
 pub const SWAP_UNIDENTIFIED: &str = "The window in that zone couldn't be identified safely. Try again.";
 
+/// What `snappy --uninstall` says about Open at login.
+pub const LOGIN_ITEM_REMOVED: &str = "Turned off Open at login.";
+pub const LOGIN_ITEM_NOT_REMOVED: &str =
+    "Snappy couldn't turn off Open at login. Turn it off in System Settings > General > Login Items.";
+
 /// An app rejected a position or size write.
 pub fn declined(code: i32) -> WindowError {
     WindowError::refused(format!(

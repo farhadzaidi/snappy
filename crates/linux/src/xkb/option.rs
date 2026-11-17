@@ -160,6 +160,14 @@ pub fn uninstall(folder: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Whether any of Snappy's option is in the XKB folder `folder`: its symbols file, or its
+/// lines in the rules file.
+pub fn is_installed(folder: &Path) -> bool {
+    let rules = fs::read_to_string(folder.join("rules").join("evdev"));
+    folder.join("symbols").join(SYMBOLS_FILE).exists()
+        || rules.is_ok_and(|rules| rules.lines().any(|line| line.trim() == BLOCK_START))
+}
+
 fn read_if_present(path: &Path) -> io::Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(contents) => Ok(Some(contents)),
@@ -287,7 +295,9 @@ mod tests {
         fs::create_dir_all(folder.join("rules")).unwrap();
         fs::write(folder.join("rules/evdev"), own).unwrap();
         install(&folder, SnappyKey::DEFAULT.modifiers(), CapsLockSymbol::Nothing).unwrap();
+        assert!(is_installed(&folder));
         uninstall(&folder).unwrap();
+        assert!(!is_installed(&folder));
         assert_eq!(fs::read_to_string(folder.join("rules/evdev")).unwrap(), own);
         assert!(!folder.join("symbols").exists());
         uninstall(&folder).unwrap();

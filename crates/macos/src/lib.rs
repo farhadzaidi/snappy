@@ -36,9 +36,10 @@ pub mod reference;
 mod system_shortcuts;
 mod thresholds;
 mod tray;
+pub mod uninstall;
 mod windows;
 
 pub use app::{App, request_termination};
 pub use error::MacError;
-pub use instance::{Claim, InstanceLock, claim};
+pub use instance::{Claim, InstanceLock, claim, request_quit};
 pub use platform::MacPlatform;
