@@ -35,7 +35,7 @@ qemu_command() {
         -accel hvf \
         -cpu host \
         -smp 4 \
-        -m 8G \
+        -m "${SNAPPY_WINDOWS_MEMORY:-8G}" \
         -drive "if=pflash,format=raw,readonly=on,file=$efi_code" \
         -drive "if=pflash,format=raw,file=$efi_vars" \
         -drive "if=none,id=disk0,format=qcow2,discard=unmap,file=$disk" \
