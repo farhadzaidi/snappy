@@ -13,7 +13,7 @@ done
 # The KWin script's files start with QML's `.import` and `.pragma` lines, which aren't
 # JavaScript; the rest is checked as a classic script.
 for file in crates/kwin/script/*.js; do
-    sed 's/^\.\(import\|pragma\) .*//' "$file" | node --check || { echo "in $file" >&2; exit 1; }
+    sed -E 's/^\.(import|pragma) .*//' "$file" | node --check || { echo "in $file" >&2; exit 1; }
 done
 if [[ -f apps/app/ui/package.json ]]; then
     pnpm -C apps/app/ui check
