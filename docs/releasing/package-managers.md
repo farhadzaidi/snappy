@@ -2,12 +2,29 @@
 
 When you publish a release on GitHub, the **Publish packages** workflow (`.github/workflows/publish-packages.yml`) brings two package managers up to date:
 
-| Channel | For | Package | Secret |
-|---|---|---|---|
-| Homebrew | macOS | cask `snappy` in `farhadzaidi/homebrew-tap` | `HOMEBREW_TAP_TOKEN` |
-| winget | Windows | `FarhadZaidi.Snappy` in `microsoft/winget-pkgs` | `WINGET_TOKEN` |
+| Channel | For | Package |
+|---|---|---|
+| Homebrew | macOS | cask `snappy` in `farhadzaidi/homebrew-tap` |
+| winget | Windows | `FarhadZaidi.Snappy` in `microsoft/winget-pkgs` |
 
-Each channel is a job of its own. A job whose secret isn't set still renders and checks its package, then skips publishing with a notice that names the missing secret. So you can turn the channels on one at a time, in any order.
+Both publish with one token, the `PACKAGE_PUBLISHING_TOKEN` secret. Each channel is a job of its own; without the secret, a job still renders and checks its package, then skips publishing with a notice that names it.
+
+## The publishing token
+
+One classic personal access token publishes to both channels. It has to be classic: winget's pull requests go to a repository you don't own, which fine-grained tokens can't reach.
+
+1. On GitHub, go to Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic):
+   - **Note:** Snappy releases
+   - **Scopes:** `public_repo` only. It covers pushing to the tap and opening pull requests on winget-pkgs.
+   - **Expiration:** up to a year. Note the date; publishing stops when it expires.
+
+2. Save it as a secret of the Snappy repository:
+
+   ```sh
+   gh secret set PACKAGE_PUBLISHING_TOKEN --repo farhadzaidi/snappy
+   ```
+
+When it expires, make a new one the same way and set the secret again.
 
 ## How it runs
 
@@ -53,17 +70,7 @@ The cask also says what to clean up: uninstalling stops the launch agent and qui
    gh repo create farhadzaidi/homebrew-tap --public --add-readme --description "Homebrew tap for Snappy"
    ```
 
-2. Make a fine-grained personal access token. On GitHub, go to Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token:
-   - **Resource owner:** farhadzaidi
-   - **Repository access:** Only select repositories → `farhadzaidi/homebrew-tap`
-   - **Permissions:** Repository permissions → Contents → **Read and write**. Metadata, read-only, is added for you.
-   - **Expiration:** up to a year. Note the date; publishing stops when it expires.
-
-3. Save it as a secret of the Snappy repository:
-
-   ```sh
-   gh secret set HOMEBREW_TAP_TOKEN --repo farhadzaidi/snappy
-   ```
+2. Set up [the publishing token](#the-publishing-token), if it isn't already.
 
 ### Installing
 
@@ -89,15 +96,7 @@ The workflow uses [Komac](https://github.com/russellbanks/Komac), a pinned relea
    gh repo fork microsoft/winget-pkgs --clone=false
    ```
 
-2. Make a classic personal access token. Fine-grained tokens can't open pull requests on a repository you don't own. On GitHub, go to Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic):
-   - **Scopes:** `public_repo` only
-   - **Expiration:** up to a year. Note the date.
-
-3. Save it as a secret of the Snappy repository:
-
-   ```sh
-   gh secret set WINGET_TOKEN --repo farhadzaidi/snappy
-   ```
+2. Set up [the publishing token](#the-publishing-token), if it isn't already.
 
 ### The first version
 
@@ -136,7 +135,7 @@ winget install FarhadZaidi.Snappy
 
 ## When something fails
 
-- **A token or key expired.** Make a new one the same way, set the secret again, and run the workflow by hand for the release with `dry_run=false`.
+- **The token expired.** Make a new one [the same way](#the-publishing-token), set the secret again, and run the workflow by hand for the release with `dry_run=false`.
 - **The cask needs a change.** Edit the template in `packaging/` and check it with a local render or a dry run. The next release carries it. To fix the current release, run the workflow by hand.
 - **winget's metadata needs a change.** After the first version, winget's description, tags, and the like come from the previous version in winget-pkgs, not from `packaging/winget/`. Change them in a pull request to winget-pkgs, and in `packaging/winget/` to keep the two alike.
 - **winget's pull request needs a fix.** Komac's branch is in your fork; push to it, or close the pull request and run the workflow again.

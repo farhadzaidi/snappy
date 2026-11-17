@@ -1,8 +1,9 @@
 name: Publish packages
 
-# Updates Homebrew and winget when a release is published. Each channel is its own
-# job and publishes only when its secret is set; docs/releasing/package-managers.md covers the
-# one-time setup. A dry run renders and checks everything, and pushes nothing.
+# Updates Homebrew and winget when a release is published. Each channel is its own job, and
+# both publish only when the PACKAGE_PUBLISHING_TOKEN secret is set;
+# docs/releasing/package-managers.md covers the one-time setup. A dry run renders and checks
+# everything, and pushes nothing.
 
 on:
   release:
@@ -95,7 +96,7 @@ jobs:
     # brew style and brew audit are surest on macOS.
     runs-on: macos-latest
     env:
-      HAS_SECRET: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+      HAS_SECRET: ${{ secrets.PACKAGE_PUBLISHING_TOKEN != '' }}
       DRY_RUN: ${{ needs.prepare.outputs.dry_run }}
       VERSION: ${{ needs.prepare.outputs.version }}
       HOMEBREW_NO_AUTO_UPDATE: 1
@@ -121,12 +122,12 @@ jobs:
             || echo "::warning title=brew audit::brew audit found problems with the cask. See the log above."
       - name: No token
         if: env.HAS_SECRET != 'true'
-        run: echo "::notice title=Homebrew skipped::Add the HOMEBREW_TAP_TOKEN secret to publish the cask. See $DOCS."
+        run: echo "::notice title=Homebrew skipped::Add the PACKAGE_PUBLISHING_TOKEN secret to publish the cask. See $DOCS."
       - uses: actions/checkout@v4
         if: env.HAS_SECRET == 'true' && env.DRY_RUN != 'true'
         with:
           repository: farhadzaidi/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          token: ${{ secrets.PACKAGE_PUBLISHING_TOKEN }}
           path: tap
       - name: Push the cask to the tap
         if: env.HAS_SECRET == 'true' && env.DRY_RUN != 'true'
@@ -149,7 +150,7 @@ jobs:
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     env:
-      HAS_SECRET: ${{ secrets.WINGET_TOKEN != '' }}
+      HAS_SECRET: ${{ secrets.PACKAGE_PUBLISHING_TOKEN != '' }}
       DRY_RUN: ${{ needs.prepare.outputs.dry_run }}
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG: ${{ needs.prepare.outputs.tag }}
@@ -169,12 +170,12 @@ jobs:
           done
       - name: No token
         if: env.HAS_SECRET != 'true'
-        run: echo "::notice title=winget skipped::Add the WINGET_TOKEN secret to publish to winget. See $DOCS."
+        run: echo "::notice title=winget skipped::Add the PACKAGE_PUBLISHING_TOKEN secret to publish to winget. See $DOCS."
       - name: Check that winget has the package
         id: upstream
         if: env.HAS_SECRET == 'true'
         env:
-          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          GH_TOKEN: ${{ secrets.PACKAGE_PUBLISHING_TOKEN }}
         run: |
           if gh api "repos/microsoft/winget-pkgs/contents/manifests/f/FarhadZaidi/Snappy" --silent; then
             echo "listed=true" >>"$GITHUB_OUTPUT"
@@ -195,7 +196,7 @@ jobs:
       - name: Update the package
         if: steps.upstream.outputs.listed == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PACKAGE_PUBLISHING_TOKEN }}
         run: |
           releases="https://github.com/$GITHUB_REPOSITORY/releases"
           args=(
