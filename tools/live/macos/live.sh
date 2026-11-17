@@ -36,7 +36,7 @@ in_vm() { "$tart" exec "$vm" /bin/sh -c "$1"; }
 tar -C "$stage/payload" -cf - . | "$tart" exec -i "$vm" /bin/sh -c 'rm -rf ~/live && mkdir -p ~/live && tar -C ~/live -xf -'
 
 # Grant Accessibility to this exact build, matched by its code signature.
-codesign -d -r- dist/Snappy.app 2>&1 | sed -n 's/^designated => //p' >"$stage/requirement.txt"
+codesign -d -r- dist/Snappy.app 2>&1 | sed -n 's/^\(# \)\{0,1\}designated => //p' >"$stage/requirement.txt"
 csreq -r "$stage/requirement.txt" -b "$stage/requirement.bin"
 csreq="$(xxd -p "$stage/requirement.bin" | tr -d '\n')"
 in_vm "sudo sqlite3 '/Library/Application Support/com.apple.TCC/TCC.db' \"INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags) VALUES ('kTCCServiceAccessibility', 'io.github.farhadzaidi.Snappy', 0, 2, 4, 1, X'$csreq', 0);\" && sudo killall tccd 2>/dev/null; true"
