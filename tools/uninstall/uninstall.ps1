@@ -72,16 +72,31 @@ function Invoke-SnappyQuit {
     if (-not (Get-Process -Name snappy -ErrorAction SilentlyContinue)) { return $true }
     if (-not ('SnappyUninstall.Window' -as [type])) {
         Add-Type -Namespace SnappyUninstall -Name Window -MemberDefinition @'
+public delegate bool EnumWindowsProc(System.IntPtr window, System.IntPtr lParam);
+[DllImport("user32.dll")]
+public static extern bool EnumWindows(EnumWindowsProc callback, System.IntPtr lParam);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-public static extern System.IntPtr FindWindowW(string className, string windowName);
+public static extern int GetClassNameW(System.IntPtr window, System.Text.StringBuilder name, int size);
 [DllImport("user32.dll")]
 public static extern bool PostMessageW(System.IntPtr window, uint message, System.IntPtr wParam, System.IntPtr lParam);
 '@
     }
-    $window = [SnappyUninstall.Window]::FindWindowW($DaemonWindowClass, $null)
-    if ($window -eq [IntPtr]::Zero) { return $false }
+    # FindWindow doesn't see the daemon's window when Snappy runs from its package, so walk the
+    # top-level windows and compare class names instead.
+    $found = New-Object 'System.Collections.Generic.List[System.IntPtr]'
+    $callback = [SnappyUninstall.Window+EnumWindowsProc] {
+        param($window, $lParam)
+        $name = New-Object System.Text.StringBuilder 256
+        [void] [SnappyUninstall.Window]::GetClassNameW($window, $name, $name.Capacity)
+        if ($name.ToString() -eq $DaemonWindowClass) { $found.Add($window) }
+        return $true
+    }
+    [void] [SnappyUninstall.Window]::EnumWindows($callback, [IntPtr]::Zero)
+    if ($found.Count -eq 0) { return $false }
     $closeMessage = 0x0010
-    [void] [SnappyUninstall.Window]::PostMessageW($window, $closeMessage, [IntPtr]::Zero, [IntPtr]::Zero)
+    foreach ($window in $found) {
+        [void] [SnappyUninstall.Window]::PostMessageW($window, $closeMessage, [IntPtr]::Zero, [IntPtr]::Zero)
+    }
     Get-Process -Name snappy -ErrorAction SilentlyContinue | Wait-Process -Timeout $QuitWaitSeconds -ErrorAction SilentlyContinue
     return -not (Get-Process -Name snappy -ErrorAction SilentlyContinue)
 }
