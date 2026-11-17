@@ -143,7 +143,7 @@ The workflow runs on the tag wherever it points. Keep `main`'s version ahead of 
 
 ### Windows
 
-**Where it installs.** Both kinds of package install for the current user only, with no administrator rights, into `%LOCALAPPDATA%\Programs\Snappy`, the same folder as the README's manual install. They add a Start menu shortcut, **Snappy**, and an entry in Settings → Apps to uninstall. The setup program ends with a page that offers to open Snappy.
+**Where it installs.** Both kinds of package install for the current user only, with no administrator rights, into `%LOCALAPPDATA%\Programs\Snappy`, the folder Windows uses for per-user programs. They add a Start menu shortcut, **Snappy**, and an entry in Settings → Apps to uninstall. The setup program ends with a page that offers to open Snappy.
 
 **Replacing a running Snappy.** Installing over a running Snappy, or uninstalling it, first quits it the way its menu's **Quit** does, so every hidden workspace window comes back on screen. The setup program sends Snappy's hidden window a close request and waits for it to exit. The MSI sends the messages for the session ending, which Snappy also quits on, and ends the process only if it's still running after 30 seconds.
 

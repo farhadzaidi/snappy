@@ -15,12 +15,13 @@ ui=apps/app/ui
 version="$(node -p "require('./$ui/package.json').devDependencies['@playwright/test']")"
 pnpm_version="$(node -p "require('./$ui/package.json').packageManager.split('@')[1]")"
 
-# The container runs as root; hand its results back to whoever ran this.
+# The container runs as root; hand its results, and the caches Vite writes into node_modules,
+# back to whoever ran this, or the next local test run can't write them.
 exec docker run --rm --init --ipc=host \
     -v "$PWD:/work" -w "/work/$ui" \
     -e CI -e SNAPPY_UI_PORT -e OWNER="$(id -u):$(id -g)" -e PNPM="pnpm@$pnpm_version" \
     "mcr.microsoft.com/playwright:v$version-noble" \
     bash -c 'npx -y "$PNPM" exec playwright test "$@"
         status=$?
-        chown -R "$OWNER" test-results playwright-report 2>/dev/null
+        chown -R "$OWNER" test-results playwright-report node_modules/.vite node_modules/.vite-temp 2>/dev/null
         exit $status' bash "$@"
