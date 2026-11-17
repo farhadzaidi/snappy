@@ -1,91 +1,112 @@
 # macOS
 
-`crates/macos` uses public APIs only: AppKit and Core Graphics through `objc2`, and hand-written FFI for Accessibility, Carbon hotkeys, and the HID event system (`src/ffi/`).
+This page is for anyone working on Snappy's macOS adapter, `crates/macos`. It explains how Snappy finds and moves windows on macOS, watches drags, registers shortcuts, draws zones, and handles Caps Lock, Spaces, and native tabs, and what's different in the Mac App Store build.
 
-## Finding and moving windows
+The adapter uses public APIs only. AppKit and Core Graphics come through the `objc2` crates. Accessibility, Carbon hotkeys, and the HID event system, which have no such crates, are declared by hand in `src/ffi/`.
 
-`src/windows/`. Windows are Accessibility elements.
+## How Snappy finds and moves windows
 
-- **The window under the pointer** comes from asking Accessibility for the element at that point and walking up to its window. Where Snappy has a window of its own at the point, such as its menu bar item or an overlay, it asks only the app beneath instead. Accessibility answers questions about Snappy's own windows inside the daemon, on the asking thread, and AppKit used off the main thread crashes.
-- **Frames** are read as position and size together. Writes set one at a time, after checking that access is still granted, the app still runs, and the window isn't full screen.
-- **Visible windows** are each app's windows matched against the window server's on-screen list, which gives owner, layer, and bounds only, never names.
-- **Timeouts.** Every Accessibility call has a short timeout (`src/thresholds.rs`), so a hung app costs a fraction of a second.
-- **Focusing** a window activates its app, raises the window, and makes it the app's focused window.
+On macOS, other apps' windows are reached through Accessibility, the API screen readers use. That's why Snappy needs the Accessibility permission. The code is in `src/windows/`.
 
-## Observing
+**The window under the pointer** comes from asking Accessibility which element is at that point, then walking up to its window. One catch: when one of Snappy's own windows is at that point, such as the menu bar item or an overlay, Accessibility would answer inside Snappy itself, on the asking thread, and AppKit crashes when used off the main thread. So in that case Snappy asks only the app underneath.
 
-`src/observers/`. Per app, Snappy watches for windows being created and focus changing. Per tracked window, it watches for the window being destroyed, moved, resized, and restored. NSWorkspace reports app activation, launch, and termination, Space changes, and sleep.
+**Frames** are read as position and size together. Writes set one at a time, after checking that access is still granted, the app is still running, and the window isn't full screen.
 
-Registering an observer is a round trip to the app, so it never happens on the main thread.
+**Which windows are on screen** comes from matching each app's windows against the window server's list. That list gives each window's owner, layer, and bounds, never its name.
 
-## Input
+**Hung apps** can't hold Snappy up for long: every Accessibility call has a short timeout (`src/thresholds.rs`).
 
-`src/input.rs`. NSEvent monitors watch the left button's presses and releases while live control runs, and, only during a drag, drags and modifier changes. Modifiers come from each event's own flags, so a release carries the modifiers held when the button came up.
+**Focusing** a window activates its app, raises the window, and makes it the app's focused window.
 
-NSEvent monitors need only Accessibility. A listen-only keyboard tap would add an Input Monitoring prompt, so none is used.
+## How Snappy notices changes
+
+Snappy asks each app to tell it when a window is created and when focus changes. For each window it tracks, it also asks to hear when the window closes, moves, resizes, or comes back from the Dock (`src/observers/`).
+
+The system tells Snappy when apps launch, activate, and quit, when the Space changes, and when the Mac sleeps.
+
+Setting up each of these is a round trip to the app, which can be slow, so it never happens on the main thread.
+
+## How Snappy watches a drag
+
+Snappy watches the left mouse button with AppKit's event monitors, while it's live (`src/input.rs`). Only during a drag does it also watch the pointer moving and the modifier keys. Each event carries the modifiers held at that moment, so a release reports exactly what was held when the button came up.
+
+Event monitors need only the Accessibility permission. A keyboard event tap would add an Input Monitoring prompt, so Snappy doesn't use one for drags.
 
 ## Shortcuts
 
-`src/hotkeys.rs`, `src/system_shortcuts.rs`. Shortcuts are Carbon `RegisterEventHotKey` with physical key codes, so they stay on the same keys on every layout. The availability probe registers a chord under a separate signature and releases it at once.
+Shortcuts are Carbon hotkeys, registered by physical key, so they stay on the same keys whatever the keyboard layout (`src/hotkeys.rs`). To check whether a chord is free, Snappy registers it under a separate signature and releases it at once.
 
-Carbon accepts chords macOS consumes before any app, such as Mission Control's Control-arrows. So Snappy also reads the system's symbolic hotkeys and treats the enabled ones as taken.
+Carbon happily accepts some chords macOS uses before any app sees them, such as Mission Control's Control-arrows. So Snappy also reads the system's own shortcuts, and treats the ones that are turned on as taken (`src/system_shortcuts.rs`).
 
-One chord gets past both: the window server swallows Control-Option-Command-Delete from a real keyboard. Core lists it among the chords the OS keeps and never offers it, which is why clearing the selection uses Snappy + `\`.
+One chord gets past both checks. The window server swallows Control-Option-Command-Delete from a real keyboard. Core lists it among the chords the OS keeps and never offers it, which is why clearing the selection uses Snappy + `\` instead.
 
-## Overlay
+## Drawing the zones
 
-`src/overlay/`. Each display gets a borderless, non-activating, click-through `NSPanel` at the floating level, joining every Space and full-screen apps. It's drawn with Core Animation layers that are updated only where they changed. Panels are made ahead of the first drag and kept. Zones are filled with the system accent color.
+Each display gets a panel of Snappy's own that never takes focus or clicks, floats above other windows, and shows on every Space and over full-screen apps (`src/overlay/`). It's drawn with Core Animation layers, updated only where something changed, and filled with the system accent color.
 
-Window outlines get a second panel of the same kind per display, made the first time there's something to outline and hidden while there's nothing.
+Panels are made before the first drag and kept, so the first drag doesn't wait for them. Window outlines get a second panel of the same kind per display, made the first time something needs an outline and hidden while nothing does.
 
 ## Caps Lock as the Snappy key
 
-`src/caps_lock/`.
+Making Caps Lock act as the Snappy key takes four pieces on macOS (`src/caps_lock/`).
 
-- **The mapping.** Snappy adds one pair to the HID event system's user key mapping, the one `hidutil` writes, turning Caps Lock into F18 on every keyboard and leaving the user's own pairs alone. Caps Lock then never locks, lights, or repeats by itself.
-- **Down and up.** A Carbon hotkey on F18 reports when it goes down and up.
-- **While held.** An active event tap adds the Snappy key's modifier flags to every other key and click. So Caps Lock + J is Snappy + J, for Snappy's shortcuts and drags alike. The tap notes only that something else was used.
-- **A tap** toggles Caps Lock and its light through the HID system.
-- **Refusing.** Snappy refuses when the user's key mapping or System Settings' Modifier Keys already remap Caps Lock.
-- **Undoing.** The mapping comes out when the setting goes off, at quit, when stopping for a restart, and as the daemon exits. macOS forgets it at reboot.
+1. **A key remapping.** Snappy adds one entry to the system's key remapping, the same one the `hidutil` command edits, turning Caps Lock into F18 on every keyboard. The user's own entries are left alone. Caps Lock then never locks, lights up, or repeats by itself.
+2. **A hotkey on F18**, which tells Snappy when Caps Lock goes down and comes up.
+3. **An event tap** that, while Caps Lock is held, adds the Snappy key's modifiers to every other key and click. So Caps Lock + J is Snappy + J, for shortcuts and drags alike. The tap notes only that something else was used, never what.
+4. **A toggle.** On a tap, Snappy flips Caps Lock and its light through the HID system.
+
+Snappy refuses to set this up when the user's own key remapping, or the Modifier Keys setting in System Settings, already changes Caps Lock.
+
+The remapping comes out when the setting is turned off, when Snappy quits or stops for a restart, and as the daemon exits. macOS also forgets it at reboot.
 
 ## Native tabs
 
-`src/windows/tabs.rs`, `src/windows/tab_matching.rs`. macOS makes each tab of a window an Accessibility window of its own, lists only the selected tab of each group, and keeps answering for hidden tabs with the frame they last showed at. Nothing ties a hidden tab to its group but its title, which Snappy never reads.
+On macOS, each tab of a window is a separate Accessibility window. Accessibility lists only the tab that's showing in each group, and keeps answering for hidden tabs with the frame they last had. Nothing links a hidden tab to its group except its title, which Snappy never reads.
 
-So Snappy learns tabs as they're focused. A tracked window that has dropped out of the list, without being minimized or closed, is a possible hidden tab. It's matched to a group by where it was last seen, by having exactly the shown tab's frame, or by filling the only group with room, never more than the group's tab bar holds. The engine then moves each group as one window.
+So Snappy learns which tabs belong together as the user switches between them (`src/windows/tabs.rs`, `src/windows/tab_matching.rs`). A tracked window that drops out of the list without being minimized or closed may be a hidden tab. Snappy matches it to a group:
+
+- where it was last seen, or
+- because it has exactly the showing tab's frame, or
+- because only one group has room for it.
+
+A group never gets more tabs than its tab bar holds. The engine then moves each group as one window.
 
 ## Workspaces
 
-- **Parking.** Windows are parked at an exposed lower corner of the screen with a sliver left showing, because macOS pulls windows that are fully off screen back.
-- **Display changes.** When displays change, as when a Mac wakes with an external display, macOS moves windows itself, parked ones included. The engine parks them again once the displays settle.
-- **Recovery key.** A window's recovery key is its process ID, the process's start time, and the hash of its Accessibility element, which stays the same while the window exists.
-- **Spaces.** The desktop guard (`src/desktop_guard.rs`) keeps an invisible 1×1 window on each display and asks whether it's on the active Space, to tell when the user changed Spaces.
+**Hiding windows.** macOS pulls windows that are fully off screen back on. So Snappy hides workspace windows at an exposed bottom corner of the screen, with a sliver still showing.
+
+**Display changes.** When displays change, as when a Mac wakes up with an external monitor, macOS moves windows itself, hidden ones included. Snappy hides them again once the displays settle.
+
+**Recognizing windows after a restart.** A window's recovery key is its process ID, when that process started, and a hash of its Accessibility element, which stays the same for as long as the window exists.
+
+**Spaces.** Workspaces pause when the user switches to another Space. To notice, Snappy keeps an invisible 1×1 window on each display and asks whether it's on the active Space (`src/desktop_guard.rs`).
 
 ## Permissions
 
-`src/permissions.rs`. Snappy needs Accessibility. While snapping is on and access is missing, Snappy checks once a second for a grant, and only then. A revocation is noticed without polling, from the system's accessibility notification and from Accessibility calls failing.
+Snappy needs Accessibility (`src/permissions.rs`). While snapping is on and the permission is missing, Snappy checks for it once a second, and only then. When the permission is taken away, Snappy notices without polling: from the system's accessibility notification, and from Accessibility calls failing.
 
-## Single instance, quitting, and login
+## Starting, quitting, and starting at login
 
-`src/instance.rs`, `src/login_item.rs`.
-
-- A lock on `daemon.lock` in the state folder keeps one daemon running. A second launch exits, and opening Snappy.app again reaches the running daemon as a reopen, which opens the app's window.
-- `SIGTERM`, `SIGINT`, and `SIGHUP` quit like the menu's Quit, so parked windows return first. `SIGUSR2` stops for a restart.
-- Both programs use the accessory activation policy: no Dock icon and no Command-Tab entry.
-- The login item registers the launch agent bundled in the app (`packaging/macos`), which runs the daemon with `--background`.
+- **One daemon.** A lock on `daemon.lock` in the state folder keeps a second daemon from running (`src/instance.rs`). Opening Snappy.app again reaches the running daemon instead, which opens Snappy's window.
+- **Quitting.** `SIGTERM`, `SIGINT`, and `SIGHUP` quit as the menu's **Quit** does, so hidden workspace windows come back first. `SIGUSR2` stops for a restart, leaving them hidden.
+- **No Dock icon.** Neither the daemon nor the app shows a Dock icon or appears in Command-Tab.
+- **Open at login** registers the launch agent inside the app (`packaging/macos`), which runs the daemon with `--background` (`src/login_item.rs`).
 
 ## The Mac App Store build
 
-The `mac-app-store` feature builds the adapter for the App Sandbox. `tools/macos/app-store.sh` builds it, and [The Mac App Store](../releasing/mac-app-store.md) goes through what the sandbox allows, the signing, and the release.
+Apps on the Mac App Store run in Apple's App Sandbox. The `mac-app-store` feature builds the adapter for it, and `tools/macos/app-store.sh` builds the app. [The Mac App Store](../releasing/mac-app-store.md) goes through what the sandbox allows, the signing, and the release. In the code, five things differ.
 
-- **Caps Lock** can't be the Snappy key. `src/caps_lock/unavailable.rs` stands in for the module, and none of the HID, event tap, or F18 hotkey code is compiled. The platform declares it unavailable with its message, so the app shows the setting disabled with the message under it ([The Snappy key and Caps Lock](../snappy-key.md#where-it-can-never-be)), and a hold is still refused.
-- **Open at login** registers the app itself (`SMAppService.mainApp`) instead of the launch agent, which the bundle leaves out. macOS then opens Snappy at login without `--background`, so the daemon starts without the window, and the delegate asks for it when the launch's Apple event isn't a login (`src/login_launch.rs`).
-- **The app** is signed to inherit the daemon's sandbox, so the pipes between them work as they are.
-- **Files** live in the app's container, where a sandboxed process's home points.
-- **Import and export.** The file picker grants the chosen file to the process that showed it, the app, which reads or writes it on every platform ([Talking to the app](../ipc.md#import-and-export)). The app needs `com.apple.security.files.user-selected.read-write` to show the picker, and it's on the daemon (`AppStore.entitlements`), not the app: a helper signed with `com.apple.security.inherit` may have only that and `app-sandbox`, or it won't start, and it runs with the daemon's entitlements. So `AppStoreApp.entitlements` stays as it is.
+**Caps Lock can't be the Snappy key.** The sandbox doesn't let apps remap keys. So `src/caps_lock/unavailable.rs` stands in for the Caps Lock module, and none of the remapping, event tap, or F18 code is compiled. The adapter says up front that Caps Lock is unavailable, with a sentence for the user, and Snappy's window shows the setting disabled with that sentence underneath ([Builds where it can't work](../features.md#builds-where-it-cant-work)).
+
+**Open at login** registers the app itself, rather than the launch agent, which the store build leaves out. macOS then opens Snappy at login without `--background`. So when the app is opened, the daemon checks whether the launch was a login, and opens its window only if it wasn't (`src/login_launch.rs`).
+
+**The app** is signed to run inside the daemon's sandbox, so the pipes between them work unchanged.
+
+**Files** live in the app's sandbox container, where a sandboxed program's home folder points.
+
+**Import and export.** The file picker grants the chosen file only to the program that showed it, which is the app ([Why the app opens import and export files](../daemon-and-app.md#why-the-app-opens-import-and-export-files)). Showing the picker needs the `com.apple.security.files.user-selected.read-write` entitlement. That entitlement goes on the daemon, in `AppStore.entitlements`, not on the app: a helper signed to run inside another program's sandbox may hold only `app-sandbox` and `com.apple.security.inherit`, or it won't start, and it gets the daemon's entitlements. So `AppStoreApp.entitlements` stays as it is.
 
 ## Limitations
 
-- Chrome blocks frame changes while its enhanced accessibility is on. Snappy turns it off for one change, unless VoiceOver or Switch Control needs it, and turns it back on.
-- Posted key events join the event stream past the HID remap and past where the window server drops Control-Option-Command-Delete. So the live suite can't show what a real keyboard does with either ([The live suite](../live-suite.md#what-posted-input-cant-show)).
+- **Chrome** blocks moves while its enhanced accessibility is on. Snappy turns it off for each move and back on afterwards, unless VoiceOver or Switch Control needs it.
+- **The live tests' limits.** Key presses the live suite sends join the event stream after the point where Caps Lock is remapped, and after the point where the window server swallows Control-Option-Command-Delete. So the live suite can't show what a real keyboard does with either ([Testing on a real desktop](../sandboxes.md#the-live-suite)).
