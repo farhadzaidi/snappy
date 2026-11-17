@@ -23,13 +23,12 @@ The package's version is the daemon's Cargo version with a fourth part of 0, suc
 
 ### 2. Access for the workflow
 
-The workflow signs in to Partner Center as a Microsoft Entra application.
+The workflow signs in to Partner Center as a Microsoft Entra application: a login for software, with its own ID and key. It belongs to the Partner Center account, not to Snappy, so one serves every app the account publishes. Entra's free tier is all it needs; nothing here asks for an Azure subscription or payment.
 
-1. If the Partner Center account has no Microsoft Entra tenant yet, create one under **Account settings** → **Tenants**.
-2. In the [Microsoft Entra admin center](https://entra.microsoft.com), under **Applications** → **App registrations**, register a new application, such as "Snappy Store submissions". Single tenant is enough, and it needs no redirect URI.
-3. On its **Certificates & secrets** page, add a client secret and copy its value; it's shown once. Note when it expires, since submissions fail after that until it's replaced.
-4. In Partner Center, under **Account settings** → **User management** → **Microsoft Entra applications**, add that application and give it the **Manager** role.
-5. Note the tenant ID and the application (client) ID from the registration's **Overview** page, and the seller ID from Partner Center's **Account settings** → **Legal info** (or **Developer settings**).
+1. **A tenant.** In Partner Center, under **Account settings** → **Tenants**, choose **Create Microsoft Entra ID**. It asks for a domain, which becomes `<name>.onmicrosoft.com`, and a new global admin login for it. Keep that login: it's how the tenant is managed later. If the tenant doesn't appear in the table afterwards, choose **Associate Microsoft Entra ID** and sign in with the new admin login.
+2. **The application.** Under **Account settings** → **User management** → **Microsoft Entra applications**, choose **Add Microsoft Entra application** → **Create Microsoft Entra application**. Name it for what it does, such as "GitHub Store publishing". If it asks for a reply URL or App ID URI, use addresses on the tenant's own domain, such as `https://<name>.onmicrosoft.com`; they aren't used. Give it the **Developer** role, which can upload packages and submit them and nothing more. If a submission is ever refused for lack of permission, raise it to **Manager**.
+3. **Its key.** Open the application and, under **Keys**, choose **Add new key**. Copy the **Client ID** and the **Key**; the key is shown once. Note when it expires, since submissions fail after that until it's replaced the same way.
+4. **The IDs.** The **tenant ID** is on the application's page and on the **Tenants** page. The **seller ID** is under **Account settings** → **Legal info** → **Developer**.
 
 ### 3. The repository's secrets and variables
 
@@ -39,8 +38,8 @@ Under the repository's **Settings** → **Secrets and variables** → **Actions*
 |---|---|
 | `MS_STORE_TENANT_ID` | the Microsoft Entra tenant ID |
 | `MS_STORE_SELLER_ID` | the Partner Center seller ID |
-| `MS_STORE_CLIENT_ID` | the application (client) ID |
-| `MS_STORE_CLIENT_SECRET` | the client secret's value |
+| `MS_STORE_CLIENT_ID` | the application's client ID |
+| `MS_STORE_CLIENT_SECRET` | the application's key |
 
 | Variable | Value |
 |---|---|
