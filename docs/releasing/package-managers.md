@@ -1,13 +1,15 @@
 # Package managers
 
-When you publish a release on GitHub, the **Publish packages** workflow (`.github/workflows/publish-packages.yml`) brings two package managers up to date:
+This page is for the maintainer keeping Snappy's Homebrew and winget packages up to date. It covers the one token both need, how the workflow runs, the one-time setup for each, and what to do when something fails.
+
+When you publish a release on GitHub, the **Publish packages** workflow (`.github/workflows/publish-packages.yml`) updates both:
 
 | Channel | For | Package |
 |---|---|---|
 | Homebrew | macOS | cask `snappy` in `farhadzaidi/homebrew-tap` |
 | winget | Windows | `FarhadZaidi.Snappy` in `microsoft/winget-pkgs` |
 
-Both publish with one token, the `PACKAGE_PUBLISHING_TOKEN` secret. Each channel is a job of its own; without the secret, a job still renders and checks its package, then skips publishing with a notice that names it.
+Both publish with one token, the `PACKAGE_PUBLISHING_TOKEN` secret. Each channel is a job of its own. Without the secret, a job still builds and checks its package, then skips publishing, with a notice that names the missing secret.
 
 ## The publishing token
 
@@ -36,7 +38,9 @@ When it expires, make a new one the same way and set the secret again.
   gh workflow run publish-packages.yml --repo farhadzaidi/snappy -f tag=v0.1.0 -f dry_run=true
   ```
 
-  A dry run renders every package, checks it, and prints it in the log, but pushes nothing. Running again with `dry_run=false` publishes, which is how you retry a channel that failed or catch one up after adding its secret. Channels that already have the version are left as they are: the tap sees nothing to change, and Komac looks for an existing pull request first.
+  A dry run renders every package, checks it, and prints it in the log, but pushes nothing.
+
+  Running again with `dry_run=false` publishes. That's how you retry a channel that failed, or catch one up after adding its secret. Channels that already have the version are left alone: the tap sees nothing to change, and Komac, the tool that opens winget's pull requests, looks for an existing one first.
 
 The release has to be published for the workflow to see it. To look at the packages while the release is still a draft, render them yourself.
 
