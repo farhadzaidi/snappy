@@ -33,6 +33,7 @@ mod platform;
 /// Snappy's own view of the desktop, for the tests to check against; built only for them.
 #[cfg(feature = "reference")]
 pub mod reference;
+mod space_visits;
 mod system_shortcuts;
 mod thresholds;
 mod tray;

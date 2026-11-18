@@ -1,12 +1,12 @@
 //! Bringing windows into the session and dropping closed ones, and keeping each tab group
 //! in one workspace.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use snappy_core::geometry::Rect;
 use snappy_core::placement::bounds::fitted_origin;
 use snappy_core::workspace::{Member, Session, Tabs, is_parked};
-use snappy_platform::{Platform, WindowId, WindowInfo};
+use snappy_platform::{Platform, TabGroup, WindowId, WindowInfo};
 
 use crate::log_event::LogEvent;
 use crate::state::EngineState;
@@ -54,7 +54,7 @@ pub(super) fn enroll<P: Platform>(core: &mut EngineState<P>, session: &mut Sessi
             .tab_groups(&[info.id])
             .into_iter()
             .find(|group| group.shown.id == info.id)
-        && join_tab_group(core, session, info, &group.hidden)
+        && join_tab_group(core, session, &group)
     {
         return;
     }
@@ -116,12 +116,9 @@ pub(super) fn enroll<P: Platform>(core: &mut EngineState<P>, session: &mut Sessi
 /// A shown tab Snappy hasn't met, such as a new tab, joins the tabs hidden behind it where
 /// they are: in their workspace, with their frame and parking. False when none of them is a
 /// member.
-fn join_tab_group<P: Platform>(
-    core: &mut EngineState<P>,
-    session: &mut Session,
-    info: &WindowInfo,
-    hidden: &[WindowId],
-) -> bool {
+fn join_tab_group<P: Platform>(core: &mut EngineState<P>, session: &mut Session, group: &TabGroup) -> bool {
+    let info = &group.shown;
+    let hidden = group.hidden_windows();
     let sibling = session
         .recently_focused()
         .find(|window| hidden.contains(window))
@@ -141,24 +138,20 @@ fn join_tab_group<P: Platform>(
         member.frame = info.frame;
     }
     core.workspaces.keys.insert(info.id, key);
-    let tabs: Vec<u64> = hidden.iter().map(|window| window.0).collect();
+    let behind: Vec<u64> = hidden.iter().map(|window| window.0).collect();
     core.trace(LogEvent::WorkspaceJoin, || {
         serde_json::json!({
             "window": info.id.0,
             "app": info.app,
             "workspace": member.workspace,
             "frame": member.frame,
-            "tabOf": tabs,
+            "hiddenTabs": behind,
         })
     });
     session.enroll(info.id, member);
-    let mut refreshed = hidden.to_vec();
+    let mut refreshed = hidden;
     refreshed.push(info.id);
-    let group = Tabs {
-        shown: info.id,
-        hidden: hidden.to_vec(),
-    };
-    session.update_tabs(&[group], &refreshed);
+    learn_tabs(core, session, std::slice::from_ref(group), &refreshed);
     save_journal(core, session);
     true
 }
@@ -176,7 +169,7 @@ pub(super) fn sync_tabs<P: Platform>(core: &mut EngineState<P>, session: &mut Se
     let groups = core.platform.tab_groups(windows);
     for group in &groups {
         if session.member(group.shown.id).is_none() {
-            join_tab_group(core, session, &group.shown, &group.hidden);
+            join_tab_group(core, session, group);
         }
     }
     let pids: BTreeSet<u32> = windows
@@ -195,29 +188,78 @@ pub(super) fn sync_tabs<P: Platform>(core: &mut EngineState<P>, session: &mut Se
                 .is_some_and(|key| pids.contains(&key.pid))
         })
         .collect();
-    let tabs: Vec<Tabs> = groups
-        .iter()
-        .map(|group| Tabs {
-            shown: group.shown.id,
-            hidden: group.hidden.clone(),
-        })
-        .collect();
-    let moved = session.update_tabs(&tabs, &refreshed);
+    let moved = learn_tabs(core, session, &groups, &refreshed);
     if moved.is_empty() {
         return;
     }
-    let unified: Vec<serde_json::Value> = tabs
+    let unified: Vec<serde_json::Value> = groups
         .iter()
-        .filter(|group| group.hidden.iter().any(|window| moved.contains(window)))
+        .filter(|group| group.hidden.iter().any(|tab| moved.contains(&tab.window)))
         .map(|group| {
-            let workspace = session.member(group.shown).map(|member| member.workspace.clone());
-            let hidden: Vec<u64> = group.hidden.iter().map(|window| window.0).collect();
-            serde_json::json!({ "shown": group.shown.0, "hidden": hidden, "workspace": workspace })
+            let workspace = session
+                .member(group.shown.id)
+                .map(|member| member.workspace.clone());
+            let hidden: Vec<u64> = group.hidden.iter().map(|tab| tab.window.0).collect();
+            serde_json::json!({ "shown": group.shown.id.0, "hidden": hidden, "workspace": workspace })
         })
         .collect();
     core.trace(LogEvent::TabsUnified, || serde_json::json!({ "groups": unified }));
     save_journal(core, session);
     save_membership(core, session);
+}
+
+/// Replace what the session knows of the tab groups of the `refreshed` members with
+/// `groups`, and log each member that starts or stops counting as a hidden tab, with the
+/// platform's evidence and its group's tab count. Returns the hidden tabs that changed
+/// workspace.
+fn learn_tabs<P: Platform>(
+    core: &mut EngineState<P>,
+    session: &mut Session,
+    groups: &[TabGroup],
+    refreshed: &[WindowId],
+) -> Vec<WindowId> {
+    let behind_before: BTreeMap<WindowId, WindowId> = refreshed
+        .iter()
+        .filter(|window| session.is_hidden_tab(**window))
+        .map(|window| (*window, session.tab_root(*window)))
+        .collect();
+    let tabs: Vec<Tabs> = groups
+        .iter()
+        .map(|group| Tabs {
+            shown: group.shown.id,
+            hidden: group.hidden_windows(),
+        })
+        .collect();
+    let moved = session.update_tabs(&tabs, refreshed);
+
+    let joined: Vec<serde_json::Value> = groups
+        .iter()
+        .flat_map(|group| group.hidden.iter().map(move |tab| (group, tab)))
+        .filter(|(group, tab)| {
+            session.tab_root(tab.window) == group.shown.id
+                && behind_before.get(&tab.window) != Some(&group.shown.id)
+        })
+        .map(|(group, tab)| {
+            serde_json::json!({
+                "window": tab.window.0,
+                "shown": group.shown.id.0,
+                "tabs": group.tabs,
+                "evidence": tab.evidence.name(),
+            })
+        })
+        .collect();
+    let left: Vec<serde_json::Value> = behind_before
+        .iter()
+        .filter(|(window, _)| !session.is_hidden_tab(**window))
+        .map(|(window, shown)| serde_json::json!({ "window": window.0, "shown": shown.0 }))
+        .collect();
+    if !joined.is_empty() || !left.is_empty() {
+        core.trace(
+            LogEvent::TabsChanged,
+            || serde_json::json!({ "joined": joined, "left": left }),
+        );
+    }
+    moved
 }
 
 /// Stop tracking members that closed without the platform saying so, then learn every

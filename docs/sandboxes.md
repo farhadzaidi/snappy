@@ -27,7 +27,7 @@ The live suite, in `crates/live`, is the closest thing to a person using Snappy.
 
 It's two programs:
 
-- **`snappy-fixture`** opens plain windows on request: ordinary ones, ones with a minimum size, ones that size in steps like a terminal, and, on macOS, native tabs. Each window reports its own frame, which is the ground truth.
+- **`snappy-fixture`** opens plain windows on request: ordinary ones, ones with a minimum size, ones that size in steps like a terminal, and, on macOS, native tabs. On macOS it can also move a window to the desktop showing, as a window set to follow the user moves. Each window reports its own frame, which is the ground truth.
 - **`snappy-live`** writes scratch settings, starts the daemon with `SNAPPY_HOME` pointing at a scratch folder and the debug log on, and runs the scenarios. It moves the pointer and presses keys the way hardware does, and writes `results.json` and a screenshot of each failure.
 
 `snappy-live` stops any running Snappy and takes over the pointer and keyboard. So it refuses to start unless a sandbox script has set `SNAPPY_LIVE_SANDBOX=1`.
@@ -37,7 +37,7 @@ The scenarios are in `crates/live/src/scenarios/`, one file per feature. How eac
 - **Shortcuts come from the run's settings**, with the Snappy key expanded. So the same scenario presses Control+Option+Command+1 on macOS and Ctrl+Alt+Super+1 on Linux.
 - **Scenarios read the debug log** for what Snappy measured and decided, such as how long a move took to settle or what a zone's caption said.
 - **Drags let go fast.** They release the drag key right after the mouse button, as fast as input allows. An adapter that reads the modifiers too late loses the drop.
-- **Some scenarios don't apply everywhere**, and skip with the reason, which counts as a pass. Tabs and display-size changes run only on macOS. Snapping to a terminal's cell grid is skipped for Wayland windows, which can't ask to be sized in steps.
+- **Some scenarios don't apply everywhere**, and skip with the reason, which counts as a pass. Tabs, desktops, and display-size changes run only on macOS. Snapping to a terminal's cell grid is skipped for Wayland windows, which can't ask to be sized in steps.
 
 Posted input doesn't take exactly the path a real keyboard does. On macOS it joins after the point where Caps Lock is remapped, and after the point where the window server swallows Control-Option-Command-Delete. So the Caps Lock scenario presses F18 there instead, and a passing scenario doesn't prove a chord reaches apps ([macOS](platforms/macos.md#limitations)).
 
@@ -121,6 +121,8 @@ tools/live/macos/live.sh
 ```
 
 **How it works.** The script starts the VM if it isn't running, copies in the signed build, the runner, and the fixture, grants Accessibility to that exact build, and runs the scenarios. Turning System Integrity Protection off is what lets the script grant Accessibility. The VM runs headless, so nothing appears on your screen.
+
+One scenario leaves a window on a second desktop. The runner adds the desktop, goes between desktops, and removes the desktop again by pressing Mission Control's own buttons through Accessibility (`crates/live/src/desktop/mission_control.rs`), since the VM keeps Mission Control's Control-arrow shortcuts off for Snappy's defaults.
 
 There's no adapter test script for macOS. Its unit tests run on a Mac with:
 

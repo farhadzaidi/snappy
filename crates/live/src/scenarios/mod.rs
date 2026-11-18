@@ -31,7 +31,7 @@ pub use support::{Context, TITLE_BAR_GRIP};
 use swaps::{
     floating_keyboard_swap, floating_swap, floating_swap_fallback, inverted_drag, keyboard_swap, swap_drag,
 };
-use tabs::tabs_along;
+use tabs::{tabs_along, tabs_beside_another_desktop};
 use uninstall::{uninstalling_after_a_crash_returns_windows, uninstalling_quits_and_returns_windows};
 use workspaces::{
     display_change_keeps_windows_parked, quit_returns_windows, restart_keeps_workspaces, send_and_stay_batch,
@@ -121,6 +121,10 @@ pub const ALL: &[(&str, Scenario)] = &[
     (
         "a_tabbed_window_taken_along_keeps_every_tab_there_once_they_are_dragged_out",
         tabs_along,
+    ),
+    (
+        "a_window_left_on_another_desktop_never_joins_the_tab_group_opened_in_its_place",
+        tabs_beside_another_desktop,
     ),
     ("focus_shortcuts_move_focus_between_windows", focus_directions),
     (

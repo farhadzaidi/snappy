@@ -213,3 +213,69 @@ fn a_tab_group_is_selected_as_one_and_only_its_shown_tab_counts_as_a_zone_occupa
         assert_eq!(frame_of(&engine, 1), RIGHT_ZONE, "the shown tab swaps");
     });
 }
+
+#[test]
+fn a_window_that_shows_is_focused_even_while_still_taken_for_a_hidden_tab() {
+    scenario(|| async {
+        let engine = visited_tabs("tabs-focus-unheard", TABBED);
+        // Tab 1 comes out of its group, below the editor, before Snappy hears of it.
+        engine.with_platform(|p| {
+            p.tear_out(WindowId(1), Rect::new(950.0, 640.0, 300.0, 200.0));
+            p.focused = Some(WindowId(4));
+        });
+
+        press_default(&engine, "KeyK").await;
+        assert_eq!(focused(&engine), Some(WindowId(1)));
+    });
+}
+
+#[test]
+fn a_tab_that_came_out_of_its_group_unheard_of_isnt_taken_along_with_it() {
+    scenario(|| async {
+        let name = "tabs-along-unheard";
+        let engine = visited_tabs(name, TABBED);
+        engine.force_debug_log();
+        press_default(&engine, "Enter").await;
+        engine.with_platform(|p| {
+            p.tear_out(WindowId(1), Rect::new(80.0, 120.0, 500.0, 360.0));
+            p.focused = Some(WindowId(3));
+        });
+
+        press_default(&engine, "Quote").await;
+        assert_eq!(active(&engine), "workspace-2");
+        assert!(is_parked(&engine, 1), "it stays with the workspace left");
+        let taken_along = logged(name, LogEvent::SelectionTakenAlong);
+        assert_eq!(taken_along[0]["tabs"], serde_json::json!({ "3": [2] }));
+    });
+}
+
+#[test]
+fn the_debug_log_says_why_a_window_counts_as_a_hidden_tab_and_when_it_stops() {
+    scenario(|| async {
+        let name = "tabs-logged";
+        let engine = visited_tabs(name, TABBED);
+        engine.force_debug_log();
+        engine.with_platform(|p| {
+            p.add_tab(5, WindowId(3));
+        });
+        event(&engine, PlatformEvent::WindowCreated { pid: TERMINAL });
+        let changed = logged(name, LogEvent::TabsChanged);
+        let joined = changed[0]["joined"].as_array().unwrap();
+        assert_eq!(joined.len(), 3, "every tab is behind the new one now");
+        for tab in joined {
+            assert_eq!(
+                (&tab["shown"], &tab["tabs"]),
+                (&serde_json::json!(5), &serde_json::json!(4))
+            );
+            assert_eq!(tab["evidence"], "remembered");
+        }
+
+        engine.with_platform(|p| p.tear_out(WindowId(1), Rect::new(80.0, 120.0, 500.0, 360.0)));
+        terminal_focused(&engine);
+        let changed = logged(name, LogEvent::TabsChanged);
+        assert_eq!(
+            changed.last().unwrap()["left"],
+            serde_json::json!([{ "window": 1, "shown": 5 }])
+        );
+    });
+}

@@ -24,6 +24,7 @@ use super::ax;
 use crate::apps;
 use crate::events::emit;
 use crate::permissions;
+use crate::space_visits;
 
 type Token = Retained<ProtocolObject<dyn NSObjectProtocol>>;
 
@@ -47,9 +48,13 @@ pub fn start() {
     observe(&workspace, activated, app_activated);
     observe(&workspace, launched, app_launched);
     observe(&workspace, terminated, app_terminated);
-    observe(&workspace, space, |_| emit(PlatformEvent::NativeDesktopChanged));
+    observe(&workspace, space, |_| {
+        space_visits::start_new();
+        emit(PlatformEvent::NativeDesktopChanged)
+    });
     observe(&workspace, sleep, |_| emit(PlatformEvent::WillSleep));
     observe(&NSNotificationCenter::defaultCenter(), screens, |_| {
+        space_visits::start_new();
         emit(PlatformEvent::DisplaysChanged)
     });
     let distributed: Retained<NSNotificationCenter> =

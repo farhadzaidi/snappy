@@ -10,3 +10,4 @@ pub mod protocol;
 pub mod scenarios;
 pub mod screen;
 pub mod session;
+pub mod spaces;

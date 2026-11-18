@@ -36,6 +36,13 @@ pub enum Request {
         id: String,
         at: Point,
     },
+    /// Make the window follow the user to the native desktop showing, as some apps' windows
+    /// do, and bring it there now without activating the fixture; or let it stay on its
+    /// desktop again. Only macOS keeps windows on desktops that aren't showing this way.
+    FollowActiveSpace {
+        id: String,
+        on: bool,
+    },
     /// Enter or leave the system's full screen.
     FullScreen {
         id: String,

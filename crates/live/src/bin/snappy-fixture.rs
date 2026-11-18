@@ -127,6 +127,12 @@ impl Fixture {
                 }
                 Err(error) => Reply::error(error),
             }),
+            Request::FollowActiveSpace { id, on } => {
+                self.with_window(&id, |window| match spaces::follow_active(window, on) {
+                    Ok(()) => Reply::frame(outer_frame(window)),
+                    Err(error) => Reply::error(error),
+                })
+            }
             Request::Frame { id } => self.with_window(&id, |window| Reply::frame(outer_frame(window))),
             Request::Focus { id } => self.with_window(&id, |window| {
                 window.focus_window();
@@ -159,18 +165,15 @@ impl Fixture {
     }
 }
 
-/// Native window tabs, which only macOS makes windows of their own.
+/// The AppKit window behind a winit window, for what winit doesn't offer.
 #[cfg(target_os = "macos")]
-mod tabs {
+mod appkit {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use winit::window::Window;
 
-    /// `NSWindowAbove`: the new tab goes after the receiver's.
-    const ABOVE: isize = 1;
-
-    fn ns_window(window: &Window) -> Result<*mut AnyObject, String> {
+    pub fn ns_window(window: &Window) -> Result<*mut AnyObject, String> {
         let handle = window.window_handle().map_err(|error| error.to_string())?;
         let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
             return Err("not an AppKit window".to_owned());
@@ -185,6 +188,19 @@ mod tabs {
             Ok(ns_window)
         }
     }
+}
+
+/// Native window tabs, which only macOS makes windows of their own.
+#[cfg(target_os = "macos")]
+mod tabs {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use winit::window::Window;
+
+    use crate::appkit::ns_window;
+
+    /// `NSWindowAbove`: the new tab goes after the receiver's.
+    const ABOVE: isize = 1;
 
     /// Add `tab` to `lead`'s tab group and show it, as an app's New Tab does.
     pub fn add(lead: &Window, tab: &Window) -> Result<(), String> {
@@ -213,6 +229,37 @@ mod tabs {
     }
 }
 
+/// Moving a window between native desktops, which the live suite does only on macOS.
+#[cfg(target_os = "macos")]
+mod spaces {
+    use objc2::msg_send;
+    use winit::window::Window;
+
+    use crate::appkit::ns_window;
+
+    /// `NSWindowCollectionBehaviorMoveToActiveSpace`: ordered front, the window comes to
+    /// the Space showing instead of macOS going to the window's.
+    const MOVE_TO_ACTIVE_SPACE: usize = 1 << 1;
+
+    /// Make `window` follow the user to the Space showing and bring it there now, without
+    /// activating the fixture; or let it stay on its Space again. macOS moves it only after
+    /// this turn of the run loop, so following ends with a request of its own.
+    pub fn follow_active(window: &Window, on: bool) -> Result<(), String> {
+        let window = ns_window(window)?;
+        // SAFETY: a live window of this thread; the collection behavior is a bit mask.
+        unsafe {
+            let behavior: usize = msg_send![window, collectionBehavior];
+            if on {
+                let _: () = msg_send![window, setCollectionBehavior: behavior | MOVE_TO_ACTIVE_SPACE];
+                let _: () = msg_send![window, orderFrontRegardless];
+            } else {
+                let _: () = msg_send![window, setCollectionBehavior: behavior & !MOVE_TO_ACTIVE_SPACE];
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 mod tabs {
     use winit::window::Window;
@@ -225,6 +272,15 @@ mod tabs {
 
     pub fn tear_out(_tab: &Window) -> Result<(), String> {
         Err(NONE.to_owned())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod spaces {
+    use winit::window::Window;
+
+    pub fn follow_active(_window: &Window, _on: bool) -> Result<(), String> {
+        Err("the live suite moves windows between desktops only on macOS".to_owned())
     }
 }
 

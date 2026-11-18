@@ -61,15 +61,18 @@ The remapping comes out when the setting is turned off, when Snappy quits or sto
 
 ## Native tabs
 
-On macOS, each tab of a window is a separate Accessibility window. Accessibility lists only the tab that's showing in each group, and keeps answering for hidden tabs with the frame they last had. Nothing links a hidden tab to its group except its title, which Snappy never reads.
+On macOS, each tab of a window is a separate Accessibility window. Accessibility lists only the tab that's showing in each group, and only that tab has the tab bar, which says how many tabs the group holds. Hidden tabs keep answering with the frame they had when they last showed. Nothing links a hidden tab to its group except its title, which Snappy never reads.
 
-So Snappy learns which tabs belong together as the user switches between them (`src/windows/tabs.rs`, `src/windows/tab_matching.rs`). A tracked window that drops out of the list without being minimized or closed may be a hidden tab. Snappy matches it to a group:
+A window on another Space drops out of the list too, and the window server reports it off screen, just as it reports a hidden tab. No public API tells the two apart. Taking a window for a hidden tab when it isn't one is worse than missing a tab: the window can't be focused with the focus shortcuts, and it moves with another window. So Snappy puts a window in a group only on evidence it saw itself, learned as the user opens and switches tabs (`src/windows/tabs.rs`, `src/windows/tab_matching.rs`):
 
-- where it was last seen, or
-- because it has exactly the showing tab's frame, or
-- because only one group has room for it.
+- **It was in the group before**, and the group still shows a tab with room for it. This keeps tabs together after their group moves and their frames go stale.
+- **Snappy saw it go.** It was listed earlier while the same Spaces were showing, then dropped out of the list, not minimized and without a tab bar of its own, right where exactly one group now shows. Right where means the group's frame, or the same left edge and width with the top and bottom off by no more than a tab bar's height: a group's first new tab adds the tab bar, and a new tab can push the group up to keep it on screen.
 
-A group never gets more tabs than its tab bar holds. The engine then moves each group as one window.
+Every change of Space or display starts a new visit (`src/space_visits.rs`), counted before the engine hears of the change. A window Snappy last saw listed on an earlier visit may be on another Space, so its place never puts it in a group, however exactly it fits. A window that still has a tab bar is showing in a group of its own somewhere else, so it's never a hidden tab.
+
+A group never gets more tabs than its tab bar holds. When more windows fit a group than it has room for, none of them joins, since they can't be told apart. A window shown on its own leaves its group, and a group whose tab bar goes away lets all its tabs go.
+
+The engine then moves each group as one window. It logs each window that starts or stops counting as a hidden tab as `tabsChanged`, with the evidence and the group's tab count. Focus shortcuts don't ask about tab groups: a window Accessibility lists as showing can always be focused.
 
 ## Workspaces
 

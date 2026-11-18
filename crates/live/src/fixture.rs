@@ -10,6 +10,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use snappy_core::geometry::{Point, Rect, Size};
 
+use crate::input::pause;
 use crate::protocol::{Reply, Request};
 
 /// Set to `x11` to open the fixture's windows through Xwayland in a Wayland session.
@@ -17,6 +18,8 @@ pub const DISPLAY_SERVER: &str = "SNAPPY_LIVE_FIXTURE_DISPLAY";
 /// How long a new window may take to appear and take its place.
 #[cfg(target_os = "linux")]
 const APPEAR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long macOS takes to bring a window following the user to the desktop showing.
+const SPACE_MOVE_MS: u64 = 500;
 
 /// Where frames come from: the fixture's own windows, or the Wayland desktop shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +141,6 @@ impl Fixture {
     /// until it is there.
     #[cfg(target_os = "linux")]
     fn place(shell: crate::desktop::wayland::Shell, title: &str, content: Rect) -> Result<Rect, String> {
-        use crate::input::pause;
         let started = std::time::Instant::now();
         while shell.window_frame(title)?.is_none_or(|frame| frame.width <= 1.0) {
             if started.elapsed() > APPEAR_TIMEOUT {
@@ -212,6 +214,17 @@ impl Fixture {
             id: id.to_owned(),
             at,
         })
+    }
+
+    /// Move `id` to the native desktop showing now, where it then stays; returns its frame.
+    pub fn move_to_active_space(&mut self, id: &str) -> Result<Rect, String> {
+        let follow = |on| Request::FollowActiveSpace {
+            id: id.to_owned(),
+            on,
+        };
+        self.request(&follow(true))?;
+        pause(SPACE_MOVE_MS);
+        self.framed(&follow(false))
     }
 
     pub fn close(&mut self, id: &str) -> Result<(), String> {

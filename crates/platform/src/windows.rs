@@ -7,6 +7,8 @@ use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::window::WindowId;
 
+use crate::tabs::TabGroup;
+
 /// A connected display.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,17 +74,6 @@ impl WindowState {
     pub fn movable(self) -> bool {
         !self.full_screen && !self.has_sheet
     }
-}
-
-/// One window's native tabs, where the platform makes each tab a window of its own and
-/// shows only the selected one, as macOS does. Moving the shown tab moves the group.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TabGroup {
-    /// The selected tab, the only one on screen.
-    pub shown: WindowInfo,
-    /// Other tabs of the group that the platform has seen. Their frames are stale until
-    /// they show, and moving one changes nothing on screen.
-    pub hidden: Vec<WindowId>,
 }
 
 pub trait WindowSystem {

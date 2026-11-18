@@ -112,7 +112,7 @@ To recognize a window across a restart, Snappy combines three things: the proces
 
 ### Native tabs on macOS
 
-On macOS, each native tab is a window of its own. Workspaces treat a group of tabs as one window: they act on the tab that's showing and carry the hidden ones along. [macOS](platforms/macos.md#native-tabs) explains how Snappy learns which tabs belong together.
+On macOS, each native tab is a window of its own. Workspaces treat a group of tabs as one window: they act on the tab that's showing and carry the hidden ones along. Before every workspace switch, and whenever focus changes in an app, the engine asks the adapter again which windows are tabs, so a tab that comes out of its group is on its own from then on. [macOS](platforms/macos.md#native-tabs) explains how Snappy learns which tabs belong together, and why it would rather miss a tab than take a window for one.
 
 ## The Snappy key
 

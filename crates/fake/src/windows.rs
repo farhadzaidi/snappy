@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_platform::{Display, TabGroup, WindowId, WindowInfo, WindowState, WindowSystem};
+use snappy_platform::{
+    Display, HiddenTab, TabEvidence, TabGroup, WindowId, WindowInfo, WindowState, WindowSystem,
+};
 
 use crate::platform::FakePlatform;
 
@@ -105,6 +107,7 @@ impl WindowSystem for FakePlatform {
         Ok(found)
     }
 
+    /// The fake knows its groups, so every hidden tab it reports is one it remembers.
     fn tab_groups(&mut self, windows: &[WindowId]) -> Vec<TabGroup> {
         let pids: BTreeSet<u32> = windows
             .iter()
@@ -114,14 +117,21 @@ impl WindowSystem for FakePlatform {
             .iter()
             .filter(|(_, window)| window.tab_of.is_none() && pids.contains(&window.pid))
             .filter_map(|(id, _)| {
-                let hidden: Vec<WindowId> = self
+                let hidden: Vec<HiddenTab> = self
                     .windows
                     .iter()
                     .filter(|(_, window)| window.tab_of == Some(*id))
-                    .map(|(hidden, _)| *hidden)
+                    .map(|(hidden, _)| HiddenTab {
+                        window: *hidden,
+                        evidence: TabEvidence::Remembered,
+                    })
                     .collect();
                 let shown = self.info(*id)?;
-                (!hidden.is_empty()).then_some(TabGroup { shown, hidden })
+                (!hidden.is_empty()).then_some(TabGroup {
+                    shown,
+                    tabs: hidden.len() + 1,
+                    hidden,
+                })
             })
             .collect()
     }

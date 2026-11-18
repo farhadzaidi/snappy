@@ -1,5 +1,5 @@
-//! macOS timings and limits: Accessibility timeouts, permission checks, window matching,
-//! and the Chrome workaround.
+//! macOS timings and limits: Accessibility timeouts, permission checks, window and tab
+//! matching, and the Chrome workaround.
 
 use std::time::Duration;
 
@@ -19,6 +19,10 @@ pub const PERMISSION_RECHECK_DELAY: Duration = Duration::from_millis(500);
 /// Largest difference between an Accessibility frame and a window server frame, on each
 /// of x, y, width, and height, for both to count as the same window.
 pub const WINDOW_LIST_MATCH: f64 = 3.0;
+/// Most a native tab group's frame differs from where one of its tabs went out of sight, at
+/// the top or the bottom: the group's first new tab adds a tab bar, about 28 points tall,
+/// and a new tab can push the group up to keep it on screen.
+pub const TAB_BAR_HEIGHT_LIMIT: f64 = 40.0;
 /// How long Chrome needs after enhanced accessibility is turned back on before its
 /// window's frame is final.
 pub const CHROME_RESTORE_DELAY: Duration = Duration::from_millis(25);

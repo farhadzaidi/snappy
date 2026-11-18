@@ -95,9 +95,10 @@ fn pointer_display_center<P: Platform>(core: &mut EngineState<P>) -> Point {
     }
 }
 
-/// The windows focus can move to: visible, not minimized, on the active workspace, and not
-/// a hidden tab, other than `focused`. They come in the order ties go: the most recently
-/// focused first, then the rest in the order the platform lists them.
+/// The windows focus can move to: visible, not minimized, and on the active workspace,
+/// other than `focused`. They come in the order ties go: the most recently focused first,
+/// then the rest in the order the platform lists them. Hidden tabs are never visible, so a
+/// window that shows counts even while the workspaces still take it for a hidden tab.
 fn focus_candidates<P: Platform>(
     core: &mut EngineState<P>,
     focused: Option<WindowId>,
@@ -105,7 +106,7 @@ fn focus_candidates<P: Platform>(
     let visible = core.platform.visible_windows(None);
     let mut candidates: Vec<WindowSnapshot> = Vec::new();
     for info in visible {
-        if Some(info.id) == focused || core.workspaces.is_hidden_tab(info.id) {
+        if Some(info.id) == focused {
             continue;
         }
         if core.is_on_screen(info.id) {

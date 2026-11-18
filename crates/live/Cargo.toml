@@ -27,7 +27,13 @@ winit = "0.30"
 [target.'cfg(target_os = "macos")'.dependencies]
 snappy-macos = { path = "../macos", features = ["reference"] }
 objc2 = "0.6"
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "CFArray",
+    "CFBase",
+    "CFCGTypes",
+    "CFString",
+] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "std",
     "CGDirectDisplay",
