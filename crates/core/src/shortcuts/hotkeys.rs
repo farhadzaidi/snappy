@@ -29,6 +29,8 @@ pub enum HotKeyAction {
     /// Add the focused window to the selection, or take it out.
     SelectWindow,
     ClearSelection,
+    /// Send the focused window to the back; held, put it back when let go.
+    SendToBack,
     SelectLayout(String),
     /// A zone chord, resolved against the focused window's display layout.
     Zone,
@@ -59,11 +61,18 @@ impl HotKeyAction {
             HotKeyAction::FocusWindow(Direction::Down) => "focusDown",
             HotKeyAction::SelectWindow => "selectWindow",
             HotKeyAction::ClearSelection => "clearSelection",
+            HotKeyAction::SendToBack => "sendToBack",
             HotKeyAction::SelectLayout(_) => "selectLayout",
             HotKeyAction::Zone => "zone",
             HotKeyAction::UndoMove => "undoMove",
             HotKeyAction::RedoMove => "redoMove",
         }
+    }
+
+    /// Whether the action needs to hear when its shortcut is let go: sending to the back
+    /// acts as it's pressed, and a hold undoes that as it's let go.
+    pub fn reports_release(&self) -> bool {
+        matches!(self, HotKeyAction::SendToBack)
     }
 
     /// The workspace an action is for, by ID.
@@ -93,6 +102,7 @@ impl HotKeyAction {
                 NavigationShortcut::Focus(direction) => HotKeyAction::FocusWindow(*direction),
                 NavigationShortcut::SelectWindow => HotKeyAction::SelectWindow,
                 NavigationShortcut::ClearSelection => HotKeyAction::ClearSelection,
+                NavigationShortcut::SendToBack => HotKeyAction::SendToBack,
             },
             ShortcutId::History { step } => match step {
                 HistoryStep::Undo => HotKeyAction::UndoMove,
@@ -205,6 +215,18 @@ mod tests {
             Some("halves")
         );
         assert_eq!(HotKeyAction::Zone.workspace(), None);
+    }
+
+    #[test]
+    fn only_sending_to_the_back_hears_its_shortcut_let_go() {
+        let live = desired_hotkeys(&Settings::defaults(MAC), &["d".to_owned()], true);
+        let reporting: Vec<(&Combo, &HotKeyAction)> = live
+            .iter()
+            .filter(|hotkey| hotkey.action.reports_release())
+            .map(|hotkey| (&hotkey.combo, &hotkey.action))
+            .collect();
+        let snappy_b = snappy("KeyB").combo(SnappyKey::DEFAULT);
+        assert_eq!(reporting, [(&snappy_b, &HotKeyAction::SendToBack)]);
     }
 
     #[test]

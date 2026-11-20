@@ -1,7 +1,7 @@
 //! Caps Lock held as the Snappy key: its presses, taps, and giving it back.
 
 use snappy_core::keys::{Combo, Mods};
-use snappy_platform::{CapsLock, CapsLockInput, CapsLockRefusal, HotKeys, PlatformEvent};
+use snappy_platform::{CapsLock, CapsLockInput, CapsLockRefusal, HotKeyRequest, HotKeys, PlatformEvent};
 use x11rb::protocol::xproto::ConnectionExt as _;
 
 use crate::support::{Desktop, SNAPPY_KEY, desktop, key, wait_until};
@@ -93,7 +93,12 @@ fn caps_lock_held_is_the_snappy_key_a_lone_tap_comes_alone_and_restoring_gives_i
     assert_eq!(held.rows, SNAPPY_KEY_ROWS);
     assert!(!held.repeats);
     let to_right = Combo::new("ArrowRight", SNAPPY_KEY);
-    assert!(desktop.platform.register(&[(3, to_right)]).is_empty());
+    assert!(
+        desktop
+            .platform
+            .register(&[HotKeyRequest::new(3, to_right)])
+            .is_empty()
+    );
     desktop.drain();
 
     desktop.key(key::CAPS_LOCK, true);
@@ -151,6 +156,36 @@ fn caps_lock_held_is_the_snappy_key_a_lone_tap_comes_alone_and_restoring_gives_i
     assert!(desktop.caps_lock_events().is_empty());
     desktop.tap(&[key::CAPS_LOCK]);
     assert!(wait_until(|| !desktop.caps_lock_on()));
+}
+
+#[test]
+fn a_shortcut_completed_by_caps_lock_is_let_go_as_its_key_comes_up_after_caps_lock() {
+    let mut desktop = desktop!();
+    let snappy_key: Mods = SNAPPY_KEY.into_iter().collect();
+    desktop.platform.hold_caps_lock_as(snappy_key).unwrap();
+    let send_to_back = HotKeyRequest {
+        reports_release: true,
+        ..HotKeyRequest::new(4, Combo::new("KeyB", SNAPPY_KEY))
+    };
+    assert!(desktop.platform.register(&[send_to_back]).is_empty());
+    desktop.drain();
+
+    desktop.key(key::CAPS_LOCK, true);
+    desktop.key(key::KEY_B, true);
+    desktop.key(key::CAPS_LOCK, false);
+    desktop.key(key::KEY_B, false);
+    let shortcut: Vec<PlatformEvent> = desktop
+        .drain()
+        .into_iter()
+        .filter(|event| matches!(event, PlatformEvent::HotKey(_) | PlatformEvent::HotKeyReleased(_)))
+        .collect();
+    assert_eq!(
+        shortcut,
+        [PlatformEvent::HotKey(4), PlatformEvent::HotKeyReleased(4)],
+        "the key's release still reaches the grab"
+    );
+    desktop.platform.unregister_all();
+    desktop.platform.restore_caps_lock();
 }
 
 #[test]

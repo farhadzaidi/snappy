@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use snappy_core::keys::Mods;
 use snappy_linux::journal;
-use snappy_platform::{LiveControl, OverlayScene, TrayMenu};
+use snappy_platform::{HeldShortcuts, KeyRepeat, LiveControl, OverlayScene, TrayMenu};
 
 use crate::bus::Bus;
 use crate::caps_lock;
@@ -24,6 +24,8 @@ pub enum Incoming {
     Modifiers(Mods, Instant),
     /// One of Snappy's shortcuts, by the action KDE knows it as.
     Shortcut(String),
+    /// One of Snappy's shortcuts let go.
+    ShortcutReleased(String),
     /// The held modifiers, while Caps Lock is the Snappy key.
     CapsLockModifiers(Mods),
     /// The session was locked, or unlocked.
@@ -55,11 +57,13 @@ pub struct Shared {
     state: Mutex<State>,
 }
 
-#[derive(Default)]
 pub struct State {
     pub press_monitoring: bool,
     pub drag_monitoring: bool,
     pub registered: Vec<Grab>,
+    /// Which registered shortcuts report being let go, and which of those are down. KDE's
+    /// shortcut service reports a held shortcut pressed again as its key repeats.
+    pub held: HeldShortcuts,
     pub followed: BTreeSet<u64>,
     /// The scene shown, by display, to skip drawing one already on screen.
     pub overlay_shown: Option<(String, OverlayScene)>,
@@ -92,7 +96,17 @@ impl Shared {
             overlays,
             incoming,
             live_control: Mutex::new(live_control),
-            state: Mutex::new(State::default()),
+            state: Mutex::new(State {
+                press_monitoring: false,
+                drag_monitoring: false,
+                registered: Vec::new(),
+                held: HeldShortcuts::new(KeyRepeat::Reported),
+                followed: BTreeSet::new(),
+                overlay_shown: None,
+                targets: HashMap::new(),
+                modifiers: None,
+                caps_lock: None,
+            }),
         }
     }
 

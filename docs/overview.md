@@ -96,7 +96,7 @@ These shape almost every file. [AGENTS.md](../AGENTS.md) has the full list.
 
 **Privacy.** Snappy makes no network connections of any kind. It never reads, logs, or stores window titles, URLs, window contents, or keystrokes. A test, `apps/snappy/tests/privacy.rs`, fails the build if the daemon links a network client.
 
-**Quiet when idle.** Nothing polls or wakes up while nobody's using Snappy. The keyboard is watched only during a drag or a window move, and Caps Lock alone when it stands in for the Snappy key.
+**Quiet when idle.** Nothing polls or wakes up while nobody's using Snappy. The keyboard is watched only during a drag or a window move, while the shortcut that sends a window to the back is held, and Caps Lock alone when it stands in for the Snappy key.
 
 **Never freeze the desktop.** No OS call that can block runs on a thread that handles input or drawing. A hung app can slow down a move, but it can't freeze the pointer or the overlay.
 

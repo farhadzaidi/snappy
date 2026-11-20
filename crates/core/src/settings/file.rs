@@ -315,6 +315,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_file_from_before_sending_to_the_back_gets_snappy_b() {
+        let bytes = written_without_navigation(Settings::defaults(MAC), &["sendToBack"]);
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
+        assert_eq!(
+            loaded
+                .navigation
+                .send_to_back
+                .map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("KeyB")
+        );
+    }
+
+    #[test]
+    fn a_file_from_before_sending_to_the_back_leaves_it_unassigned_when_snappy_b_is_taken() {
+        let mut settings = Settings::defaults(MAC);
+        settings.history.undo = Some(KeyChord::snappy("KeyB", []));
+        let bytes = written_without_navigation(settings, &["sendToBack"]);
+        let loaded = Settings::from_json(&bytes, MAC).unwrap();
+        assert_eq!(loaded.navigation.send_to_back, None);
+        assert_eq!(
+            loaded.history.undo.map(|c| c.combo(SnappyKey::DEFAULT)),
+            snappy("KeyB")
+        );
+    }
+
     /// The defaults written with the Snappy key and Delete clearing the selection, as
     /// files saved before macOS was known to keep that chord are.
     fn written_clearing_with_delete(settings: Settings) -> Vec<u8> {

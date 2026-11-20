@@ -9,7 +9,7 @@ use snappy_core::keys::{KeyChord, Modifier, Mods, SnappyKey};
 use snappy_gnome::protocol::{CALL_METHOD, INTERFACE, OBJECT_PATH, SHELL_BUS_NAME};
 use snappy_linux::xkb::CapsLockKey;
 use snappy_linux::{key_codes, xkb};
-use snappy_platform::{CapsLock, CapsLockInput, CapsLockRefusal, HotKeys, PlatformEvent};
+use snappy_platform::{CapsLock, CapsLockInput, CapsLockRefusal, HotKeyRequest, HotKeys, PlatformEvent};
 use zbus::blocking::Connection;
 
 use crate::support::{CAPS_LOCK, Shell, shell};
@@ -47,7 +47,12 @@ fn caps_lock_held_is_the_snappy_key_and_each_press_is_reported_without_its_keys(
     let mut shell = shell!();
     let key = SnappyKey::DEFAULT;
     let right = KeyChord::snappy("ArrowRight", []);
-    assert!(shell.platform.register(&[(11, right.combo(key))]).is_empty());
+    assert!(
+        shell
+            .platform
+            .register(&[HotKeyRequest::new(11, right.combo(key))])
+            .is_empty()
+    );
     shell.platform.hold_caps_lock_as(key.modifiers()).unwrap();
     assert!(xkb_folder().join("symbols/snappy").exists());
     std::thread::sleep(Duration::from_millis(300));
@@ -154,6 +159,45 @@ fn caps_lock_held_is_the_snappy_key_and_each_press_is_reported_without_its_keys(
     tap(&shell, CAPS_LOCK);
     shell.wait_caps_lock(false);
     assert!(caps_lock_events(&shell.drain()).is_empty());
+}
+
+#[test]
+fn a_shortcut_completed_by_caps_lock_is_let_go_as_its_key_or_caps_lock_comes_up() {
+    let mut shell = shell!();
+    let key = SnappyKey::DEFAULT;
+    let send_to_back = HotKeyRequest {
+        reports_release: true,
+        ..HotKeyRequest::new(9, KeyChord::snappy("KeyB", []).combo(key))
+    };
+    assert!(shell.platform.register(&[send_to_back]).is_empty());
+    shell.platform.hold_caps_lock_as(key.modifiers()).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    shell.drain();
+    let released = |event: &PlatformEvent| *event == PlatformEvent::HotKeyReleased(9);
+
+    let key_b = key_codes::evdev_keycode("KeyB").unwrap();
+    shell.key(CAPS_LOCK, true);
+    std::thread::sleep(Duration::from_millis(60));
+    shell.key(key_b, true);
+    std::thread::sleep(Duration::from_millis(60));
+    shell.key(key_b, false);
+    let pressed = shell.wait_for("its release as B comes up", released);
+    assert!(pressed.contains(&PlatformEvent::HotKey(9)), "{pressed:?}");
+    shell.key(CAPS_LOCK, false);
+    std::thread::sleep(Duration::from_millis(300));
+    shell.drain();
+
+    shell.key(CAPS_LOCK, true);
+    std::thread::sleep(Duration::from_millis(60));
+    shell.key(key_b, true);
+    shell.wait_for("the shortcut", |event| *event == PlatformEvent::HotKey(9));
+    shell.key(CAPS_LOCK, false);
+    shell.wait_for("its release as Caps Lock comes up", released);
+    shell.key(key_b, false);
+
+    shell.platform.restore_caps_lock();
+    shell.platform.unregister_all();
+    std::thread::sleep(Duration::from_millis(300));
 }
 
 /// Sets one of GNOME's input source settings, and gives GNOME Shell time to build the keymap.

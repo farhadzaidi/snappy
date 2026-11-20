@@ -8,9 +8,10 @@ use snappy_core::geometry::{Point, Rect, Size};
 use snappy_platform::{WindowId, WindowInfo, WindowState};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GA_ROOT, GetAncestor, GetForegroundWindow, IsWindow, SET_WINDOW_POS_FLAGS, SW_RESTORE,
-    SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
-    SetForegroundWindow, SetWindowPos, ShowWindowAsync, WindowFromPoint,
+    EnumWindows, GA_ROOT, GWL_EXSTYLE, GetAncestor, GetForegroundWindow, GetWindowLongW, HWND_BOTTOM,
+    HWND_TOP, IsWindow, SET_WINDOW_POS_FLAGS, SW_RESTORE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindowAsync,
+    WS_EX_TOPMOST, WindowFromPoint,
 };
 use windows::core::BOOL;
 
@@ -19,7 +20,9 @@ use super::identity::handle_of;
 use super::record::{self, Record, hwnd, visible_frame, window_rect};
 use crate::dispatch::Dispatcher;
 use crate::events::cursor;
-use crate::messages::{NO_FOCUSED_WINDOW, NOT_STANDARD, WINDOW_GONE, unavailable};
+use crate::messages::{
+    NO_FOCUSED_WINDOW, NOT_STANDARD, STAYS_ON_TOP, UNDER_ONE_ON_TOP, WINDOW_GONE, unavailable,
+};
 use crate::shared::{Shared, lock};
 
 /// Writes run on the window's own thread. Wait this long for the window to change,
@@ -35,6 +38,10 @@ const PLACE_TOLERANCE: f64 = 3.0;
 /// Async positioning keeps a hung window from blocking the engine thread.
 const WRITE_FLAGS: SET_WINDOW_POS_FLAGS =
     SET_WINDOW_POS_FLAGS(SWP_NOZORDER.0 | SWP_NOACTIVATE.0 | SWP_NOOWNERZORDER.0 | SWP_ASYNCWINDOWPOS.0);
+/// Lowering and raising change only the window's place in the z-order, asynchronously like
+/// every write.
+const RESTACK_FLAGS: SET_WINDOW_POS_FLAGS =
+    SET_WINDOW_POS_FLAGS(SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOACTIVATE.0 | SWP_ASYNCWINDOWPOS.0);
 
 pub struct Windows {
     shared: Arc<Shared>,
@@ -251,8 +258,39 @@ impl Windows {
         }
     }
 
+    /// Puts a window behind every other, leaving its frame, a maximized state, and focus
+    /// alone. A window that stays on top would lose that for good, so it's left in front.
+    pub fn lower(&self, id: WindowId) -> Result<(), WindowError> {
+        let window = self.resolve(id)?;
+        if stays_on_top(window) {
+            return Err(unavailable(STAYS_ON_TOP));
+        }
+        // SAFETY: posts the change to the window's thread.
+        unsafe { SetWindowPos(window, Some(HWND_BOTTOM), 0, 0, 0, 0, RESTACK_FLAGS) }
+            .map_err(|_| unavailable(WINDOW_GONE))
+    }
+
+    /// Puts a window directly behind `sibling` in the z-order, leaving its frame, a maximized
+    /// state, and focus alone. Behind a window that stays on top, it would stay on top too,
+    /// so it's left where it is, at the top of the others.
+    pub fn stack_below(&self, id: WindowId, sibling: WindowId) -> Result<(), WindowError> {
+        let window = self.resolve(id)?;
+        let sibling = self.resolve(sibling)?;
+        if stays_on_top(sibling) && !stays_on_top(window) {
+            return Err(unavailable(UNDER_ONE_ON_TOP));
+        }
+        // SAFETY: posts the change to the window's thread, after any focusing on its way.
+        unsafe { SetWindowPos(window, Some(sibling), 0, 0, 0, 0, RESTACK_FLAGS) }
+            .map_err(|_| unavailable(WINDOW_GONE))
+    }
+
+    /// Raises a window and makes it the foreground window. Activating alone leaves a window
+    /// that's already the foreground one where it is in the z-order, as a lowered one is, so
+    /// it's raised first, on its own thread, after any lowering still on its way there.
     pub fn focus(&self, id: WindowId) {
         if let Ok(window) = self.resolve(id) {
+            // SAFETY: posts the change to the window's thread.
+            let _ = unsafe { SetWindowPos(window, Some(HWND_TOP), 0, 0, 0, 0, RESTACK_FLAGS) };
             // SAFETY: a plain request; Windows refuses it unless input just happened.
             let _ = unsafe { SetForegroundWindow(window) };
         }
@@ -267,6 +305,13 @@ impl Windows {
     pub fn pointer(&self) -> Point {
         cursor()
     }
+}
+
+/// Whether a window stays on top of the others.
+fn stays_on_top(window: HWND) -> bool {
+    // SAFETY: a plain read of the window's extended style.
+    let extended = unsafe { GetWindowLongW(window, GWL_EXSTYLE) } as u32;
+    extended & WS_EX_TOPMOST.0 != 0
 }
 
 /// A window fills a zone by the same rule snapping uses.

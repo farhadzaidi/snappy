@@ -9,7 +9,10 @@ use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_platform::{WindowId, WindowInfo, WindowState};
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{Atom, ClientMessageEvent, ConnectionExt, EventMask, InputFocus, Window};
+use x11rb::protocol::xproto::{
+    Atom, CONFIGURE_REQUEST_EVENT, ClientMessageEvent, ConfigWindow, ConfigureRequestEvent,
+    ConfigureWindowAux, ConnectionExt, EventMask, InputFocus, StackMode, Window,
+};
 use x11rb::rust_connection::RustConnection;
 
 use super::frames::MoveResize;
@@ -262,6 +265,48 @@ impl Windows {
         };
         let _ = self.client_message(window, self.atoms._NET_ACTIVE_WINDOW, [FROM_PAGER, 0, 0, 0, 0]);
         let _ = self.conn.flush();
+    }
+
+    /// Asks the window manager to put a window behind the others, with the request a client
+    /// makes to lower itself, which window managers that follow ICCCM carry out. Xfwm4
+    /// doesn't offer EWMH's restack message, `_NET_RESTACK_WINDOW`.
+    pub fn lower(&self, id: WindowId) -> Result<(), WindowError> {
+        let record = self.record(id)?;
+        let below = ConfigureWindowAux::new().stack_mode(StackMode::BELOW);
+        self.conn
+            .configure_window(record.window, &below)
+            .map_err(|_| unavailable(WINDOW_GONE))?
+            .check()
+            .map_err(|_| unavailable(WINDOW_GONE))
+    }
+
+    /// Asks the window manager to put a window directly behind `sibling`. The X server
+    /// refuses a client's own request to restack under another client, whose frame, not
+    /// its window, is the sibling, so ICCCM has the client send the request to the root
+    /// window as an event instead, for the window manager.
+    pub fn stack_below(&self, id: WindowId, sibling: WindowId) -> Result<(), WindowError> {
+        let window = self.record(id)?.window;
+        let sibling = self.record(sibling)?.window;
+        let request = ConfigureRequestEvent {
+            response_type: CONFIGURE_REQUEST_EVENT,
+            stack_mode: StackMode::BELOW,
+            sequence: 0,
+            parent: self.screen.root,
+            window,
+            sibling,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            border_width: 0,
+            value_mask: ConfigWindow::SIBLING | ConfigWindow::STACK_MODE,
+        };
+        let mask = EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY;
+        self.conn
+            .send_event(false, self.screen.root, mask, request)
+            .map_err(|_| unavailable(WINDOW_GONE))?
+            .check()
+            .map_err(|_| unavailable(WINDOW_GONE))
     }
 
     /// Moves keyboard focus off every client, so typing reaches no parked window.

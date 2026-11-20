@@ -53,6 +53,7 @@ impl ShortcutSection {
                 NavigationShortcut::Focus(Direction::Left),
                 NavigationShortcut::Focus(Direction::Down),
                 NavigationShortcut::Focus(Direction::Right),
+                NavigationShortcut::SendToBack,
                 NavigationShortcut::SelectWindow,
                 NavigationShortcut::ClearSelection,
             ]),

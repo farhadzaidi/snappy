@@ -25,7 +25,7 @@ Snappy moves other apps' windows, registers global shortcuts, and changes keyboa
 - The GNOME extension (`crates/gnome/extension`) and the KWin script (`crates/kwin/script`) stay thin: they carry out requests and report events.
 - The app computes no rules itself; it asks core through `crates/wasm`.
 - Shipped code has no test-only branches. Tests use `crates/fake` or their own fakes; read-only helpers for tests live in each adapter's `reference` module, built only with its `reference` feature.
-- No blocking OS call on a UI thread, and nothing polls or wakes up while Snappy is idle. Keyboard events are observed only during a drag or a window operation, and, with Caps Lock as the Snappy key, Caps Lock itself.
+- No blocking OS call on a UI thread, and nothing polls or wakes up while Snappy is idle. Keyboard events are observed only during a drag or a window operation, while a shortcut that reports its release is held, and, with Caps Lock as the Snappy key, Caps Lock itself.
 
 ## Code
 

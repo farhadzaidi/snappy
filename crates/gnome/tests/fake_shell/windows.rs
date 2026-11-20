@@ -49,6 +49,19 @@ fn windows_are_followed_once_and_refusals_read_as_messages() {
 }
 
 #[test]
+fn lowering_asks_the_extension_and_a_closed_window_reads_as_gone() {
+    let fake = fake!();
+    let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);
+    fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
+    fake.state().windows = vec![record(7, 0, 0.0)];
+    let mut adapter = Adapter::start();
+    adapter.platform.lower(WindowId(7)).unwrap();
+    assert_eq!(fake.requests("lower"), vec![json!({"op": "lower", "id": 7})]);
+    let error = adapter.platform.lower(WindowId(99)).unwrap_err();
+    assert!(error.to_string().contains("no longer available"), "{error}");
+}
+
+#[test]
 fn showing_a_parked_window_puts_it_back_in_place_before_it_returns() {
     let fake = fake!();
     let _turn = fake.turn.lock().unwrap_or_else(PoisonError::into_inner);

@@ -1,4 +1,5 @@
-//! The navigation section: moving windows between zones, moving focus, and selecting.
+//! The navigation section: moving windows between zones, moving focus, sending the focused
+//! window to the back, and selecting.
 
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +7,7 @@ use crate::keys::KeyChord;
 use crate::placement::navigate::Direction;
 
 /// Shortcuts for getting around: moving the focused window between zones, moving focus
-/// between windows, and selecting windows.
+/// between windows, sending the focused window to the back, and selecting windows.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Navigation {
@@ -31,10 +32,16 @@ pub struct Navigation {
     pub select_window: Option<KeyChord>,
     #[serde(default)]
     pub clear_selection: Option<KeyChord>,
+    /// Send the focused window to the back; held, put it back when let go.
+    #[serde(default)]
+    pub send_to_back: Option<KeyChord>,
 }
 
 /// The name the app and conflict messages give the nearest-empty-zone shortcut.
 pub const NEAREST_EMPTY_ZONE_TITLE: &str = "Move to the nearest empty zone";
+/// What the shortcut that sends a window to the back does, as help lists it and the app's
+/// hint under its title says.
+pub const SEND_TO_BACK_DOES: &str = "Press to send the window to the back; hold to peek";
 
 /// Every shortcut in the navigation section, so each is listed once: for validation,
 /// conflicts, registration, the defaults a file without it gets, and the command that
@@ -52,11 +59,13 @@ pub enum NavigationShortcut {
     /// Add the focused window to the selection, or take it out.
     SelectWindow,
     ClearSelection,
+    /// Send the focused window to the back; held, put it back when let go.
+    SendToBack,
 }
 
 impl NavigationShortcut {
     /// In the order conflicts are looked for.
-    pub const ALL: [NavigationShortcut; 11] = [
+    pub const ALL: [NavigationShortcut; 12] = [
         NavigationShortcut::Move(Direction::Left),
         NavigationShortcut::Move(Direction::Right),
         NavigationShortcut::Move(Direction::Up),
@@ -68,6 +77,7 @@ impl NavigationShortcut {
         NavigationShortcut::Focus(Direction::Right),
         NavigationShortcut::SelectWindow,
         NavigationShortcut::ClearSelection,
+        NavigationShortcut::SendToBack,
     ];
 
     /// The name the app and conflict messages use.
@@ -78,6 +88,15 @@ impl NavigationShortcut {
             NavigationShortcut::Focus(direction) => format!("Focus {}", direction.name()),
             NavigationShortcut::SelectWindow => "Select window".to_owned(),
             NavigationShortcut::ClearSelection => "Clear selection".to_owned(),
+            NavigationShortcut::SendToBack => "Send to back".to_owned(),
+        }
+    }
+
+    /// What the app says under the shortcut's title, for one whose title doesn't say it all.
+    pub fn hint(self) -> Option<String> {
+        match self {
+            NavigationShortcut::SendToBack => Some(format!("{SEND_TO_BACK_DOES}.")),
+            _ => None,
         }
     }
 
@@ -92,6 +111,7 @@ impl NavigationShortcut {
             NavigationShortcut::Focus(Direction::Right) => "focusRight",
             NavigationShortcut::SelectWindow => "selectWindow",
             NavigationShortcut::ClearSelection => "clearSelection",
+            NavigationShortcut::SendToBack => "sendToBack",
         }
     }
 }
@@ -132,6 +152,7 @@ impl Navigation {
             NavigationShortcut::Focus(Direction::Right) => self.focus_right.as_ref(),
             NavigationShortcut::SelectWindow => self.select_window.as_ref(),
             NavigationShortcut::ClearSelection => self.clear_selection.as_ref(),
+            NavigationShortcut::SendToBack => self.send_to_back.as_ref(),
         }
     }
 
@@ -152,6 +173,7 @@ impl Navigation {
             NavigationShortcut::Focus(Direction::Right) => &mut self.focus_right,
             NavigationShortcut::SelectWindow => &mut self.select_window,
             NavigationShortcut::ClearSelection => &mut self.clear_selection,
+            NavigationShortcut::SendToBack => &mut self.send_to_back,
         }
     }
 
@@ -165,8 +187,9 @@ impl Navigation {
 
 impl Navigation {
     /// The arrows move the focused window, and I, J, K, and L, which sit like arrows under
-    /// the right hand, move focus. Return selects and backslash clears the selection;
-    /// Delete can't, since macOS never passes the Snappy key with Delete on to apps.
+    /// the right hand, move focus; B sends it to the back. Return selects and backslash
+    /// clears the selection; Delete can't, since macOS never passes the Snappy key with
+    /// Delete on to apps.
     pub fn defaults() -> Self {
         let chord = |code: &str, label: &str| Some(KeyChord::snappy(code, []).with_label(label));
         let key = |code: &str| Some(KeyChord::snappy(code, []));
@@ -182,6 +205,7 @@ impl Navigation {
             focus_down: key("KeyK"),
             select_window: key("Enter"),
             clear_selection: chord("Backslash", "\\"),
+            send_to_back: key("KeyB"),
         }
     }
 }

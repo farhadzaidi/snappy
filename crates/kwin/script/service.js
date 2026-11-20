@@ -10,7 +10,7 @@
 .import "parking.js" as Parking
 
 /** Changes whenever a request, answer, or event changes shape. The daemon checks it. */
-var PROTOCOL_VERSION = 3;
+var PROTOCOL_VERSION = 4;
 
 var BUS_NAME = 'io.github.farhadzaidi.Snappy';
 var OBJECT_PATH = '/io/github/farhadzaidi/Snappy/KWin';
@@ -177,6 +177,9 @@ function handle(request) {
         return Parking.park(windowById(request.id));
     case 'unpark':
         Parking.unpark(windowById(request.id));
+        return null;
+    case 'lower':
+        Windows.lower(workspace, windowById(request.id));
         return null;
     default:
         throw new Error(`unknown request ${request.op}`);

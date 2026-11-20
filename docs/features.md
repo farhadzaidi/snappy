@@ -5,6 +5,7 @@ This page follows each of Snappy's features through the code, from the adapter t
 - [How a drag becomes a snap](#how-a-drag-becomes-a-snap)
 - [How a shortcut moves a window](#how-a-shortcut-moves-a-window)
 - [Focus, selected windows, and outlines](#focus-selected-windows-and-outlines)
+- [Sending a window to the back](#sending-a-window-to-the-back)
 - [How workspaces hide and bring back windows](#how-workspaces-hide-and-bring-back-windows)
 - [The Snappy key](#the-snappy-key)
 - [Caps Lock as the Snappy key](#caps-lock-as-the-snappy-key)
@@ -65,6 +66,44 @@ The **nearest empty zone** shortcut picks the closest free zone (`placement/empt
 **Selection shortcuts** keep a list of windows, in the order they were picked (`crates/engine/src/selection.rs`). Sending windows to another workspace, and switching workspaces, take the selected windows along. The list lives only in memory.
 
 **Outlines** around selected and just-focused windows are drawn on a layer of their own, apart from the zones (`crates/engine/src/marks.rs`). They're redrawn only on displays where something changed.
+
+## Sending a window to the back
+
+Windows end up stacked: several in one zone, or one floating over another. One shortcut, Snappy + B by default, sends the focused window to the back as it's pressed, so the windows it covers show without anything moving. Held, it shows what's behind the window for as long as it's held, a peek, and letting go puts the window back.
+
+### A press or a hold
+
+It's the one shortcut whose release matters, so it's registered asking the adapter to report its release too (`HotKeyAction::reports_release`, in `shortcuts/hotkeys.rs`). Each desktop learns of a release its own way; [Adapters](platforms/adapters.md#how-the-desktops-compare) compares them. What the adapters make of it is the same everywhere. macOS, Windows, X11, and KDE keep that bookkeeping in one shared piece, `HeldShortcuts` in `crates/platform`, and GNOME's extension, which hears the keys itself, follows the same rules:
+
+- One press and one release each time the shortcut goes down, never a key repeating. KDE reports a held key's repeats as presses, so there a press counts as a repeat only within a second of the last; elsewhere the OS never repeats a held shortcut, or the adapter knows the key is still down.
+- A press while the shortcut still counts as down, its release unseen, is reported alone, as a new press: reported let go first, the press before would be timed as a hold. On X11 the grab always sees the key come up, so there a press while it's down is only ever the key repeating.
+- Registering the shortcuts again forgets one held, and its release is never reported. The engine leaves the window at the back then.
+
+The window goes to the back as the shortcut goes down, so the windows behind show at once. Core tells a quick press from a hold as it's let go (`send_to_back/press.rs`): down a fifth of a second or longer, it was a hold, and the window goes back where it was ([Putting it back](#putting-it-back)). A hand's quick press lasts well under a tenth. The engine times both by when each event reached the daemon, which takes events in on a thread of its own (`Input::platform`), so a quick press let go while a slow call held the engine up is still quick (`crates/engine/src/send_to_back/press.rs`). A press whose release went unseen counts as quick, since how long it was held is unknown.
+
+### Sending
+
+A press sends the focused window behind every window it covers (`send_to_back/plan.rs`): the windows visible on the active workspace that are behind it and overlap it, front to back as the adapter lists them. Windows that only touch, as neighbors in adjacent zones may once their frames are rounded, don't count. A focused window the adapter doesn't list, so that what's behind it is unknown, stays where it is.
+
+It's the only window that moves: every other window stays in front of or behind each window it overlaps, as it was. Focus goes to a window over where it was, and since every platform raises the window it focuses, core picks one that focusing won't bring in front of a window it was behind (`SendToBack::focus`):
+
+- A window floating over three zones' windows goes behind all three, and the frontmost of them takes focus.
+- Pressed again, that window goes behind the floating one. The floating window is the only window over its frame now, but the other two zones' windows overlap it from in front, so the front of those two takes focus, and the floating window stays behind them.
+
+So press after press goes through the windows stacked there. Platforms report the focus a press gives a moment later. So the engine remembers the last send, and a press while focus is still reported on the window sent back, which is still behind the window it focused, sends that one (`Sent::next_target`). Once focus is reported to change, wherever to, the next press sends the focused window.
+
+A send changes the stack, so it waits in the [move queue](engine.md#every-move-waits-in-one-queue) like any move (`crates/engine/src/send_to_back/sends.rs`). Sends queue behind one another there rather than cancel, so quick presses each count; any other operation still cancels the sends waiting, while the send under way finishes without waiting. The engine does it one of two ways, as the platform's capabilities say how it restacks another app's window (`Restacking`):
+
+- **Lowered** behind every other window, then the window core picks is focused, wherever the platform can lower another app's window: on Windows and Linux (`WindowSystem::lower`).
+- **Raised over**, on macOS, where Accessibility can raise another app's window but not lower one. Core picks the windows to raise (`send_to_back/raised_over.rs`) and the steps that raise them (`send_to_back/raises.rs`), and the engine awaits a step in the platform's window list where core says, without holding up the engine (`crates/engine/src/send_to_back/raising.rs`). [macOS](platforms/macos.md#sending-a-window-to-the-back) has how it looks.
+
+### Putting it back
+
+A press held a fifth of a second or longer has sent the window to the back as any press does, and it stays there while the shortcut is held. Letting go puts it back where it was, focused (`crates/engine/src/send_to_back/put_back.rs`): focusing it brings it to the front, where it was, as a focused window is, and where a window in front of it overlapped it, it goes back under the window just in front of it on the platforms that can restack a window under another, Windows and X11 (`Restacking::Lower { stack_below: true }`, `WindowSystem::stack_below`). With none overlapping it, the front is where it was among the windows it overlaps. The windows raised over it on macOS stay where they are, behind it as they were. Nothing moves, so nothing needs to come back after a crash or a quit.
+
+Focus is reported on the window focused while it was held for a moment after, so the engine remembers the put-back as a send of that window, and a press meanwhile sends the window put back (`Sent::put_back`). Putting it back waits its turn in the send queue, after its own send. Anything else that acts on the windows meanwhile leaves the window at the back instead: any other operation, a click, which may start a drag and gives focus to what it presses, another shortcut, changes to the displays, the desktop, or Snappy's control, and the shortcuts registered again, after which putting it back would pull the user away.
+
+The debug log records each send as `sentToBack`, with the window sent back, the window focused, how many windows it went behind, how many raises it took on macOS and whether the window list showed their last order (`reached`), and how long the send took, or an error. It records each window put back as `putBack`, with the window it went back under and, where the platform can restack it there, whether it did.
 
 ## How workspaces hide and bring back windows
 

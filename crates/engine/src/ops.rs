@@ -19,6 +19,7 @@ use crate::debug_log::Level;
 use crate::diagnostics::{DropRecord, Step, millis};
 use crate::log_event::LogEvent;
 use crate::outcome::Outcome;
+use crate::send_to_back;
 use crate::state::EngineState;
 
 /// Everything the engine and its in-flight operation share on the engine thread.
@@ -45,9 +46,16 @@ impl<P: Platform + 'static> Shared<P> {
         })
     }
 
+    /// Cancel the operation in flight, if any, and forget where it was headed, a window held
+    /// back to be put back included.
+    pub fn cancel_current(&self) {
+        self.stop_current();
+        send_to_back::cancel_put_back(&mut self.core.borrow_mut());
+    }
+
     /// Cancel the operation in flight, if any, and forget where it was headed. A cancelled
     /// operation that hadn't started is skipped, so nothing else would clear that.
-    pub fn cancel_current(&self) {
+    fn stop_current(&self) {
         if let Some(cancel) = &self.queue.borrow().cancel {
             cancel.cancel();
         }
@@ -64,6 +72,26 @@ impl<P: Platform + 'static> Shared<P> {
         Fut: Future<Output = ()> + 'static,
     {
         self.cancel_current();
+        self.enqueue(operation);
+    }
+
+    /// Run sending to the back's own turns as `submit` runs an operation, but leave a window
+    /// held back to be put back, as putting it back is one of those turns. Returns what
+    /// cancels them, to tell whether they still have their turn.
+    pub fn submit_send_to_back<F, Fut>(self: &Rc<Self>, operation: F) -> CancelToken
+    where
+        F: FnOnce(Rc<Self>, CancelToken) -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        self.stop_current();
+        self.enqueue(operation)
+    }
+
+    fn enqueue<F, Fut>(self: &Rc<Self>, operation: F) -> CancelToken
+    where
+        F: FnOnce(Rc<Self>, CancelToken) -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
         let cancel = CancelToken::default();
         let (generation, previous) = {
             let mut queue = self.queue.borrow_mut();
@@ -74,6 +102,7 @@ impl<P: Platform + 'static> Shared<P> {
         self.core.borrow_mut().op_in_flight = true;
 
         let shared = Rc::clone(self);
+        let token = cancel.clone();
         let task = tokio::task::spawn_local(async move {
             if let Some(previous) = previous {
                 let _ = previous.await;
@@ -84,6 +113,7 @@ impl<P: Platform + 'static> Shared<P> {
             shared.finish(generation);
         });
         self.queue.borrow_mut().running = Some(task);
+        token
     }
 
     fn finish(&self, generation: u64) {

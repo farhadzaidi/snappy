@@ -9,7 +9,7 @@ pub use snappy_linux::scene::{Frame, OverlayMarks, OverlayOutline, OverlayScene,
 use snappy_platform::CapsLockInput;
 
 /// Matches `PROTOCOL_VERSION` in the extension's `service.js`.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 pub const EXTENSION_UUID: &str = "snappy@farhadzaidi.github.io";
 /// GNOME Shell owns this name; the extension exports its object on Shell's connection.
@@ -123,12 +123,28 @@ pub enum Request {
     Unpark {
         id: u64,
     },
+    /// Put a window behind every other, to send it to the back.
+    Lower {
+        id: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Accelerator {
     pub id: u32,
     pub accelerator: String,
+    /// For a shortcut that reports being let go, how the extension follows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release: Option<Release>,
+}
+
+/// How the extension sees a held shortcut let go: its key coming up, which it watches for in
+/// a keyboard grab of its own, or the modifier bits `mask` no longer all held, which it
+/// samples meanwhile, so the grab never outlasts the Snappy key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Release {
+    pub keycode: u8,
+    pub mask: u32,
 }
 
 /// The facts the extension reports about a managed window.
@@ -220,6 +236,11 @@ pub enum Event {
     Hotkey {
         id: u32,
     },
+    /// A shortcut that reports being let go was: its key came up in the extension's keyboard
+    /// grab, or its modifiers aren't all held any more.
+    HotkeyReleased {
+        id: u32,
+    },
     WindowAdded {
         id: u64,
         pid: u32,
@@ -303,6 +324,8 @@ mod tests {
                 window: 12
             }
         );
+        let event: Event = serde_json::from_str(r#"{"type":"hotkeyReleased","id":9}"#).unwrap();
+        assert_eq!(event, Event::HotkeyReleased { id: 9 });
         let event: Event = serde_json::from_str(r#"{"type":"capsLock","phase":"otherInput"}"#).unwrap();
         assert_eq!(
             event,
@@ -422,6 +445,7 @@ mod tests {
             Request::ClearWorkspaces,
             Request::Park { id: 0 },
             Request::Unpark { id: 0 },
+            Request::Lower { id: 0 },
         ];
         for request in &all {
             match request {
@@ -454,7 +478,8 @@ mod tests {
                 | Request::OnBoundWorkspace
                 | Request::ClearWorkspaces
                 | Request::Park { .. }
-                | Request::Unpark { .. } => {}
+                | Request::Unpark { .. }
+                | Request::Lower { .. } => {}
             }
         }
         all

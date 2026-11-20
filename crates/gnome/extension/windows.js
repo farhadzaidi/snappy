@@ -70,6 +70,11 @@ export function activate(window) {
     window.activate(global.get_current_time());
 }
 
+/** Puts a window behind every other, where it stays until something raises it. */
+export function lower(window) {
+    window.lower();
+}
+
 /** Moves keyboard focus off every window, so typing reaches no hidden one. */
 export function clearFocus() {
     global.display.unset_input_focus(global.get_current_time());

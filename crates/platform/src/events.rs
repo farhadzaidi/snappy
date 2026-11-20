@@ -34,6 +34,9 @@ pub enum PlatformEvent {
         mods: Mods,
     },
     HotKey(u32),
+    /// A shortcut registered to report its release was let go, once for each press and
+    /// never for a key repeat.
+    HotKeyReleased(u32),
     /// Caps Lock went down or up, or something else was used meanwhile, while it is the
     /// Snappy key.
     CapsLock(CapsLockInput),

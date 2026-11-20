@@ -11,6 +11,7 @@ pub const SIZE: &str = "AXSize";
 pub const FULL_SCREEN: &str = "AXFullScreen";
 pub const MINIMIZED: &str = "AXMinimized";
 pub const FOCUSED_WINDOW: &str = "AXFocusedWindow";
+pub const MAIN: &str = "AXMain";
 pub const TABS: &str = "AXTabs";
 pub const ENHANCED_USER_INTERFACE: &str = "AXEnhancedUserInterface";
 

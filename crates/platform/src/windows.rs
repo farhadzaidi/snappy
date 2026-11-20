@@ -5,8 +5,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
-use snappy_core::window::WindowId;
+use snappy_core::window::{WindowId, WindowSnapshot};
 
+use crate::messages::UNSUPPORTED;
 use crate::tabs::TabGroup;
 
 /// A connected display.
@@ -87,7 +88,8 @@ pub trait WindowSystem {
     fn set_position(&mut self, window: WindowId, origin: Point) -> Result<(), WindowError>;
     fn state(&mut self, window: WindowId) -> Result<WindowState, WindowError>;
     fn is_closed(&mut self, window: WindowId) -> bool;
-    /// Visible managed windows on the current native desktop, optionally of one app.
+    /// Visible managed windows on the current native desktop, optionally of one app,
+    /// frontmost first.
     fn visible_windows(&mut self, app: Option<&str>) -> Vec<WindowInfo>;
     /// Every managed window, including minimized and parked ones.
     fn all_windows(&mut self) -> Vec<WindowInfo>;
@@ -99,7 +101,31 @@ pub trait WindowSystem {
     fn tab_groups(&mut self, _windows: &[WindowId]) -> Vec<TabGroup> {
         Vec::new()
     }
+    /// Focus and raise a window, as clicking it would.
     fn focus(&mut self, window: WindowId);
+    /// Put a window behind every other, leaving its frame, desktop, and focus alone, to send
+    /// it to the back. `focus` raises it again. A platform that can't lower another app's
+    /// window leaves this out, and its capabilities say so (`Restacking::RaiseOnly`).
+    fn lower(&mut self, _window: WindowId) -> Result<(), WindowError> {
+        Err(WindowError::unavailable(UNSUPPORTED))
+    }
+    /// Put a window directly behind `sibling`, leaving its frame, desktop, and focus alone,
+    /// to put a window sent to the back where it was. A platform with no way to restack a
+    /// window under another leaves this out, and its capabilities say so
+    /// (`Restacking::Lower { stack_below: false }`).
+    fn stack_below(&mut self, _window: WindowId, _sibling: WindowId) -> Result<(), WindowError> {
+        Err(WindowError::unavailable(UNSUPPORTED))
+    }
+    /// Raise a window without focusing it or activating its app, to send another window to
+    /// the back where the platform can't lower it. A platform that lowers leaves this out.
+    fn raise(&mut self, _window: WindowId) -> Result<(), WindowError> {
+        Err(WindowError::unavailable(UNSUPPORTED))
+    }
+    /// Whether the platform's list of windows on screen shows `windows` in this order, front
+    /// to back, so the raises before have landed. Only a platform that raises asks.
+    fn shows_in_order(&mut self, _windows: &[WindowSnapshot]) -> bool {
+        false
+    }
     /// Prepare an app for a bounds change and undo it afterwards, for apps that block
     /// bounds changes in some mode, such as Chrome with enhanced accessibility on macOS.
     /// Ending returns how long the app needs before the window's frame is final.

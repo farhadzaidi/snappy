@@ -230,17 +230,53 @@ test("the focus and selection group shows its shortcuts", async ({ page }) => {
   );
   await expect
     .poll(() => chordsIn(focus))
-    .toEqual(["Snappy + I", "Snappy + J", "Snappy + K", "Snappy + L", "Snappy + ↩", "Snappy + \\"]);
+    .toEqual([
+      "Snappy + I",
+      "Snappy + J",
+      "Snappy + K",
+      "Snappy + L",
+      "Snappy + B",
+      "Snappy + ↩",
+      "Snappy + \\",
+    ]);
   for (const name of [
     "Focus up",
     "Focus left",
     "Focus down",
     "Focus right",
+    "Send to back",
     "Select window",
     "Clear selection",
   ]) {
     await expect(focus.getByRole("button", { name, exact: true })).toBeVisible();
   }
+});
+
+test("sending to the back says what a press and a hold do, and is recorded like the others", async ({
+  page,
+}) => {
+  const focus = group(page, "Focus and selection");
+  const sendToBack = focus.getByRole("button", { name: "Send to back", exact: true });
+  const hint = focus.locator(".row-hint");
+  await expect(hint).toHaveCount(1);
+  await expect(hint).toHaveText("Press to send the window to the back; hold to peek.");
+  const hintId = await hint.getAttribute("id");
+  expect((await sendToBack.getAttribute("aria-describedby"))?.split(" ")).toContain(hintId);
+
+  await sendToBack.click();
+  await page.keyboard.press("Control+Alt+Meta+KeyV");
+  await expect(chordIn(sendToBack)).toHaveAttribute("aria-label", "Snappy + V");
+  expect(await lastCommandOf(page, "setNavigationShortcut")).toEqual({
+    kind: "setNavigationShortcut",
+    shortcut: "sendToBack",
+    chord: { code: "KeyV", mods: ["snappy"] },
+  });
+
+  await sendToBack.click();
+  await page.keyboard.press("Control+Alt+Meta+KeyJ");
+  await expect.poll(() => spokenText(toast(page))).toContain("Snappy + J is already assigned to Focus left.");
+  await page.keyboard.press("Escape");
+  await expect(chordIn(sendToBack)).toHaveAttribute("aria-label", "Snappy + V");
 });
 
 test("the select shortcut can be changed and refuses a chord in use", async ({ page }) => {
@@ -322,7 +358,15 @@ test("the workspace, focus, and selection defaults use the Snappy key on Windows
       .toEqual(["Snappy + ;", "Snappy + '", "Snappy + .", "Snappy + /"]);
     await expect
       .poll(() => chordsIn(group(page, "Focus and selection")))
-      .toEqual(["Snappy + I", "Snappy + J", "Snappy + K", "Snappy + L", "Snappy + ↩", "Snappy + \\"]);
+      .toEqual([
+        "Snappy + I",
+        "Snappy + J",
+        "Snappy + K",
+        "Snappy + L",
+        "Snappy + B",
+        "Snappy + ↩",
+        "Snappy + \\",
+      ]);
   }
 });
 
@@ -448,6 +492,7 @@ test("the help popover explains snapping", async ({ page }) => {
     .toContain("Send the window or selection to the previous or next workspaceSnappy + . /");
   await expect.poll(spoken).toContain("Move to the neighboring zoneSnappy + ← → ↑ ↓");
   await expect.poll(spoken).toContain("Focus the window up, left, down, or rightSnappy + I J K L");
+  await expect.poll(spoken).toContain("Press to send the window to the back; hold to peekSnappy + B");
   await expect.poll(spoken).toContain("Select or unselect the windowSnappy + ↩");
   await expect.poll(spoken).toContain("Clear the selectionSnappy + \\");
   await expect
@@ -729,7 +774,7 @@ test("a group's recorders are one width, as wide as its longest shortcut needs",
   await expect(chordIn(right)).toHaveAttribute("aria-label", "Control ⌃ + Option ⌥ + Shift ⇧ + F");
   expect(await expectRecordersLinedUp(moves, 5)).toBeGreaterThan(usual);
 
-  await expectRecordersLinedUp(group(page, "Focus and selection"), 6);
+  await expectRecordersLinedUp(group(page, "Focus and selection"), 7);
   await expectRecordersLinedUp(group(page, "Workspaces"), 4);
   await expectRecordersLinedUp(group(page, "Window history"), 2);
 });

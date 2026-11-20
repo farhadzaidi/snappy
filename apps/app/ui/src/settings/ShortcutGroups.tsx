@@ -2,6 +2,8 @@
 // sections there are, their titles, and their shortcuts come from `snappy-core`; this file
 // adds only what each says about itself and how a change reaches the daemon.
 
+import { useId } from "react";
+
 import type { Command } from "../bridge/protocol";
 import { coreLimits } from "../core/limits";
 import { DIRECTIONS, type Direction, type KeyChord, type ShortcutSection } from "../core/model";
@@ -93,10 +95,14 @@ function ShortcutSectionGroup({ section }: { section: SectionOfShortcuts }) {
   );
 }
 
-/** A row recording one shortcut, with an arrow before its title when it moves a window that way. */
+/**
+ * A row recording one shortcut, with an arrow before its title when it moves a window that way,
+ * and a hint under it when its title doesn't say it all.
+ */
 function ShortcutRow({ shortcut }: { shortcut: ListedShortcut }) {
   const { settings, platform } = useAppState();
   const send = useSend();
+  const hintId = useId();
   const direction = movesToward(shortcut.id);
   return (
     <Row
@@ -106,6 +112,8 @@ function ShortcutRow({ shortcut }: { shortcut: ListedShortcut }) {
           {shortcut.title}
         </span>
       }
+      hint={shortcut.hint}
+      hintId={hintId}
     >
       <ShortcutRecorder
         shortcut={shortcut.id}
@@ -113,6 +121,7 @@ function ShortcutRow({ shortcut }: { shortcut: ListedShortcut }) {
         chord={shortcut.chord}
         conflictOf={(chord) => core.recordingConflict(settings, shortcut.id, chord, platform)}
         onChange={(chord) => void send(setShortcut(shortcut.id, chord))}
+        describedBy={shortcut.hint === undefined ? undefined : hintId}
       />
     </Row>
   );

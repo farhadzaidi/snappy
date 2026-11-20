@@ -1,7 +1,7 @@
 //! The event thread: reads X events on the event connection and forwards them to the
 //! engine as `PlatformEvent`s. It never moves windows.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
@@ -32,8 +32,9 @@ pub struct EventLoop {
     button_down: bool,
     /// Pointer motion seen but not yet reported; consecutive motion is coalesced.
     motion_pending: bool,
-    /// Shortcut keys held down, so key repeat doesn't trigger them again.
-    held: HashSet<u8>,
+    /// Shortcut keys held down, each with its shortcut, so key repeat doesn't trigger them
+    /// again, and the key coming up lets its shortcut go whatever was let go first.
+    held: HashMap<u8, u32>,
     /// Modifier keys followed through the current stretch of drag monitoring.
     modifiers: Option<HeldModifiers>,
 }
@@ -57,7 +58,7 @@ impl EventLoop {
             clients,
             button_down: false,
             motion_pending: false,
-            held: HashSet::new(),
+            held: HashMap::new(),
             modifiers: None,
         }
     }
@@ -121,7 +122,11 @@ impl EventLoop {
             }
             Event::KeyRelease(key) => {
                 self.caps_lock(caps_lock::key_released(&self.shared, key.detail));
-                self.held.remove(&key.detail);
+                if let Some(id) = self.held.remove(&key.detail)
+                    && let Some(event) = lock(&self.shared.hotkeys).released(id)
+                {
+                    self.emit(event);
+                }
             }
             Event::PropertyNotify(change) if change.window == self.shared.screen.root => {
                 self.root_property(change.atom)
@@ -262,11 +267,18 @@ impl EventLoop {
     /// ignored until the key is released.
     fn hotkey(&mut self, keycode: u8, state: u16) {
         let relevant = lock(&self.shared.keyboard).masks.relevant(state);
-        let Some(id) = lock(&self.shared.hotkeys).lookup(keycode, relevant) else {
-            return;
+        let event = {
+            let mut hotkeys = lock(&self.shared.hotkeys);
+            let Some(id) = hotkeys.lookup(keycode, relevant) else {
+                return;
+            };
+            if self.held.insert(keycode, id).is_some() {
+                return;
+            }
+            hotkeys.pressed(id)
         };
-        if self.held.insert(keycode) {
-            self.emit(PlatformEvent::HotKey(id));
+        if let Some(event) = event {
+            self.emit(event);
         }
     }
 

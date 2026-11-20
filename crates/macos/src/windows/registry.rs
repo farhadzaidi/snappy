@@ -20,6 +20,8 @@ pub fn lock<E>(shared: &Mutex<Registry<E>>) -> MutexGuard<'_, Registry<E>> {
 pub struct Entry<E> {
     pub element: E,
     pub pid: i32,
+    /// The window's number in the window server's list, once matched to a row there.
+    pub number: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -54,12 +56,26 @@ impl<E: Eq + Hash + Clone> Registry<E> {
         let id = WindowId(self.next);
         self.next += 1;
         self.ids.insert(element.clone(), id);
-        self.entries.insert(id, Entry { element, pid });
+        self.entries.insert(
+            id,
+            Entry {
+                element,
+                pid,
+                number: None,
+            },
+        );
         Identified { id, new: true }
     }
 
     pub fn get(&self, id: WindowId) -> Option<Entry<E>> {
         self.entries.get(&id).cloned()
+    }
+
+    /// Remember the window's number in the window server's list.
+    pub fn set_number(&mut self, id: WindowId, number: u32) {
+        if let Some(entry) = self.entries.get_mut(&id) {
+            entry.number = Some(number);
+        }
     }
 
     /// Every tracked window of a process.

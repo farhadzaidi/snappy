@@ -12,11 +12,11 @@ On macOS, other apps' windows are reached through Accessibility, the API screen 
 
 **Frames** are read as position and size together. Writes set one at a time, after checking that access is still granted, the app is still running, and the window isn't full screen.
 
-**Which windows are on screen** comes from matching each app's windows against the window server's list. That list gives each window's owner, layer, and bounds, never its name.
+**Which windows are on screen** comes from matching each app's windows against the window server's list, by owner and bounds. Only apps the list shows a window of are asked, and each window's frame is asked first, since every question is a round trip to the app and the frame alone rules out the windows on other Spaces. That list gives each window's owner, number, layer, and bounds, never its name. It runs front to back, so the visible windows come in its order. An app's windows with the same frame can't be told apart in it: they count only when the list shows that many of them, as when they're stacked in one zone, and take its places for that frame in the order Accessibility lists them, the app's own front to back. So another app's window stacked between them stays between them.
 
 **Hung apps** can't hold Snappy up for long: every Accessibility call has a short timeout (`src/thresholds.rs`).
 
-**Focusing** a window activates its app, raises the window, and makes it the app's focused window.
+**Focusing** a window raises it and makes it its app's main and focused window, and only then activates the app. Activating brings the app's main window forward, so activating first would bring whichever window was main forward too, and sending a window to the back would raise one more window than it means to.
 
 ## How Snappy notices changes
 
@@ -35,6 +35,8 @@ Event monitors need only the Accessibility permission. A keyboard event tap woul
 ## Shortcuts
 
 Shortcuts are Carbon hotkeys, registered by physical key, so they stay on the same keys whatever the keyboard layout (`src/hotkeys.rs`). To check whether a chord is free, Snappy registers it under a separate signature and releases it at once.
+
+Carbon reports each hotkey's release as well as its press, when its key comes up, even after the Snappy key or Caps Lock did. Snappy passes on the release only for a shortcut whose release matters, as send to back's does, once for each press. Carbon never repeats a held hotkey, so a press while one is down means its release went unseen, and Snappy reports the press alone, as a new one.
 
 Carbon happily accepts some chords macOS uses before any app sees them, such as Mission Control's Control-arrows. So Snappy also reads the system's own shortcuts, and treats the ones that are turned on as taken (`src/system_shortcuts.rs`).
 
@@ -73,6 +75,24 @@ Every change of Space or display starts a new visit (`src/space_visits.rs`), cou
 A group never gets more tabs than its tab bar holds. When more windows fit a group than it has room for, none of them joins, since they can't be told apart. A window shown on its own leaves its group, and a group whose tab bar goes away lets all its tabs go.
 
 The engine then moves each group as one window. It logs each window that starts or stops counting as a hidden tab as `tabsChanged`, with the evidence and the group's tab count. Focus shortcuts don't ask about tab groups: a window Accessibility lists as showing can always be focused.
+
+## Sending a window to the back
+
+Accessibility can raise another app's window but has no way to lower one, and macOS offers no way to hold the screen still or to order another app's window directly. So Snappy sends a window to the back by raising windows over it, never the window sent back itself. Core picks which windows to raise (`crates/core/src/send_to_back/raised_over.rs`), and on a busy desktop that's one to three raises.
+
+macOS places a raise by its app, and core plans the steps around where each lands (`crates/core/src/send_to_back/raises.rs`): the window that takes focus is focused first, so the menu bar changes once, and the others are raised under it. The adapter only raises one window at a time and reads the window server's list (`src/windows/restacking.rs`).
+
+Where core says, the engine awaits the order so far in the window server's list, read about every 8 milliseconds without holding up the engine (`crates/engine/src/send_to_back/raising.rs`). Windows are matched in the list by their number there, which `visible_windows` reads off the row each window takes (`src/windows/stack_order.rs`), so two windows of one app with one frame, as in a zone, are told apart; a window not yet matched to a row is matched by owner and the frame the engine knows it by.
+
+- **The window focused** has to show in front of the window sent back within a quarter of a second, or the press stops and says so, where its focusing is awaited before anything else is raised, as it is for a window of another app. A window of the same app as the window sent back goes out with its app's raises, unawaited, and once those have gone out the press sends every raise left whatever shows, so none ends out of order.
+- **Each wait** lasts a quarter of a second at most. A window that can't be raised, as one that just closed or a hung app's can't, is left out, with every other window of its app, as each would hold the engine up for the Accessibility timeout again. Focusing a window likewise asks a hung app once, not three times.
+- **The whole press,** reading the windows included, waits 800 milliseconds at most. After that, or once another operation takes the queue, the raises left go out at once without being awaited, and a window focused that hasn't shown yet no longer stops it: stopping partway would leave the windows raised so far over windows that were in front of them, so the order ends right, though the raises may show in turn. A press whose last order never showed is logged as `reached: false`.
+
+How it looks depends on the stack:
+
+- **One window behind,** or windows stacked in one zone with the same frame: only the window focused is raised, so nothing shows but the result.
+- **Windows that only partly overlap:** the raises of different apps show in turn, over a frame or two each. Each shows only what the press ends with, except where a window raised lands over one still to be raised that's to end in front of it.
+- **A raised window of the focused window's own app** lands in front of it, as that app is active, so the focused window is raised again straight after it. The two usually show in one frame; when they don't, the raised window shows for a frame.
 
 ## Workspaces
 

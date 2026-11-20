@@ -18,6 +18,7 @@ mod marks;
 mod ops;
 mod outcome;
 mod selection;
+mod send_to_back;
 mod state;
 mod store;
 mod workspaces;

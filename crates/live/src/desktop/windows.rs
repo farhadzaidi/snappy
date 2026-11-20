@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
 
-use crate::input::{Input, KEY_GAP_MS, MODIFIER_GAP_MS, MODIFIER_ORDER, POINTER_REST_MS, pause};
+use crate::input::{Input, MODIFIER_GAP_MS, MODIFIER_ORDER, POINTER_REST_MS, pause};
 use crate::screen::{FLOATING_LAYER, NORMAL_LAYER, ScreenWindow};
 
 /// Caps Lock's scan code.
@@ -119,18 +119,17 @@ impl Input for Win32Input {
         mouse(at, MOUSEEVENTF_LEFTUP)
     }
 
-    fn key(&mut self, code: &KeyCode, _mods: Mods) -> Result<(), String> {
+    fn send_key(&mut self, code: &KeyCode, _mods: Mods, down: bool) -> Result<(), String> {
         let (scan, extended) =
             reference::scan_code(code).ok_or_else(|| format!("no scan code for {}", code.as_str()))?;
         let mut flags = KEYEVENTF_SCANCODE;
         if extended {
             flags |= KEYEVENTF_EXTENDEDKEY;
         }
-        for up in [KEYBD_EVENT_FLAGS(0), KEYEVENTF_KEYUP] {
-            keyboard(0, scan, flags | up)?;
-            pause(KEY_GAP_MS);
+        if !down {
+            flags |= KEYEVENTF_KEYUP;
         }
-        Ok(())
+        keyboard(0, scan, flags)
     }
 
     fn caps_lock(&mut self, down: bool) -> Result<(), String> {

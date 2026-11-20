@@ -242,16 +242,42 @@ describe("fake daemon", () => {
     }
   });
 
-  it("every platform focuses with Snappy + I J K L, selects with Return, and clears with backslash", () => {
+  it("every platform focuses with Snappy + I J K L, sends to the back with B, selects with Return, and clears with backslash", () => {
     for (const platform of PLATFORMS) {
       const { navigation } = initialState(platform).settings;
       expect(navigation.focusUp).toMatchObject(snappy("KeyI"));
       expect(navigation.focusLeft).toMatchObject(snappy("KeyJ"));
       expect(navigation.focusDown).toMatchObject(snappy("KeyK"));
       expect(navigation.focusRight).toMatchObject(snappy("KeyL"));
+      expect(navigation.sendToBack).toMatchObject(snappy("KeyB"));
       expect(navigation.selectWindow).toMatchObject(snappy("Enter"));
       expect(navigation.clearSelection).toMatchObject({ ...snappy("Backslash"), label: "\\" });
     }
+  });
+
+  it("sending to the back is recorded, refuses a chord in use, and resets with its section", () => {
+    const start = initialState("macos");
+    const changed = run(start, {
+      kind: "setNavigationShortcut",
+      shortcut: "sendToBack",
+      chord: snappy("KeyV"),
+    });
+    expect(changed.error).toBeNull();
+    expect(changed.state.settings.navigation.sendToBack).toEqual(snappy("KeyV"));
+
+    const clash = run(changed.state, {
+      kind: "setNavigationShortcut",
+      shortcut: "sendToBack",
+      chord: snappy("KeyJ"),
+    });
+    expect(clash.error).toBe("Snappy + J is already assigned to Focus left.");
+    expect(clash.state.settings.navigation.sendToBack).toEqual(snappy("KeyV"));
+
+    const reset = run(changed.state, {
+      kind: "reset",
+      reset: { scope: "shortcuts", section: "focusAndSelection" },
+    });
+    expect(reset.state.settings.navigation.sendToBack).toMatchObject(snappy("KeyB"));
   });
 
   it("only macOS refuses the Snappy key with Delete, which it never passes on", () => {

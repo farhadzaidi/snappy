@@ -1,13 +1,87 @@
 //! Registering shortcuts, which chords GNOME leaves free, and presses arriving as hotkeys.
 
-use snappy_core::keys::{KeyChord, Modifier, Os};
+use snappy_core::keys::{KeyChord, Modifier, Os, SnappyKey};
 use snappy_core::settings::{Settings, Workspace};
-use snappy_platform::{HotKeys, PlatformEvent};
+use snappy_linux::key_codes;
+use snappy_platform::{HotKeyRequest, HotKeys, PlatformEvent};
 
-use crate::support::shell;
+use crate::support::{Shell, shell};
 
-/// Every default chord, moving between zones, to the nearest empty zone, focus and the
-/// selection, the workspace steps, and switching to workspaces 1 to 9, is free in GNOME.
+/// The shortcut presses and releases among the events that arrive next.
+fn shortcut_events(shell: &Shell) -> Vec<PlatformEvent> {
+    shell
+        .drain()
+        .into_iter()
+        .filter(|event| matches!(event, PlatformEvent::HotKey(_) | PlatformEvent::HotKeyReleased(_)))
+        .collect()
+}
+
+const SNAPPY_KEY: [Modifier; 3] = [Modifier::Ctrl, Modifier::Alt, Modifier::Meta];
+
+/// A shortcut that reports being let go is let go as its key comes up, which the extension
+/// sees in a keyboard grab while it's held, so the Snappy key held through several
+/// presses of it reports each; and as its modifiers come up, when they come up first.
+#[test]
+fn a_shortcut_that_reports_its_release_is_let_go_as_its_key_or_its_modifiers_come_up() {
+    let mut shell = shell!();
+    let chord = KeyChord::snappy("KeyB", []);
+    let send_to_back = HotKeyRequest {
+        reports_release: true,
+        ..HotKeyRequest::new(9, chord.combo(SnappyKey::DEFAULT))
+    };
+    assert!(shell.platform.register(&[send_to_back]).is_empty());
+    shell.drain();
+    let shortcut =
+        |event: &PlatformEvent| matches!(event, PlatformEvent::HotKey(_) | PlatformEvent::HotKeyReleased(_));
+    let released = |event: &PlatformEvent| *event == PlatformEvent::HotKeyReleased(9);
+
+    shell.press_chord(&chord);
+    shell.wait_for("the release", released);
+    assert!(shortcut_events(&shell).is_empty(), "one press, one release");
+
+    let key_b = key_codes::evdev_keycode("KeyB").unwrap();
+    for modifier in SNAPPY_KEY {
+        shell.modifier(modifier, true);
+    }
+    let mut presses = Vec::new();
+    for _ in 0..3 {
+        shell.key(key_b, true);
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        shell.key(key_b, false);
+        presses.extend(
+            shell
+                .wait_for("a press's release", released)
+                .into_iter()
+                .filter(shortcut),
+        );
+    }
+    assert_eq!(
+        presses,
+        (0..3)
+            .flat_map(|_| [PlatformEvent::HotKey(9), PlatformEvent::HotKeyReleased(9)])
+            .collect::<Vec<_>>(),
+        "the Snappy key held throughout, each press is let go as B comes up"
+    );
+
+    shell.key(key_b, true);
+    for modifier in SNAPPY_KEY.into_iter().rev() {
+        shell.modifier(modifier, false);
+    }
+    shell.wait_for("the release as the Snappy key comes up", released);
+    shell.key(key_b, false);
+    assert!(
+        shortcut_events(&shell).is_empty(),
+        "B coming up after reports nothing more"
+    );
+
+    shell.press_chord(&chord);
+    shell.wait_for("the next press's release", released);
+    shell.platform.unregister_all();
+}
+
+/// Every default chord, moving between zones, to the nearest empty zone, focus, sending to
+/// the back, the selection, the workspace steps, and switching to workspaces 1 to 9, is free
+/// in GNOME.
 #[test]
 fn the_default_shortcuts_are_free() {
     let mut shell = shell!();
@@ -19,13 +93,16 @@ fn the_default_shortcuts_are_free() {
         .collect();
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
-    assert_eq!(chords.len(), 5 + 6 + 4 + 9);
-    let clear_selection = KeyChord::snappy("Backslash", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
-    assert!(
-        chords
-            .iter()
-            .any(|chord| chord.combo(snappy_core::keys::SnappyKey::DEFAULT) == clear_selection)
-    );
+    assert_eq!(chords.len(), 5 + 7 + 4 + 9);
+    for code in ["Backslash", "KeyB"] {
+        let default = KeyChord::snappy(code, []).combo(snappy_core::keys::SnappyKey::DEFAULT);
+        assert!(
+            chords
+                .iter()
+                .any(|chord| chord.combo(snappy_core::keys::SnappyKey::DEFAULT) == default),
+            "{code}"
+        );
+    }
     let taken: Vec<String> = chords
         .iter()
         .filter(|chord| {
@@ -53,10 +130,15 @@ fn chords_gnome_binds_are_reported_taken_and_snappys_own_are_free() {
         "Super+Ctrl+1 opens a new window"
     );
     let own = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
-    assert!(shell.platform.register(&[(4, own.clone())]).is_empty());
+    assert!(
+        shell
+            .platform
+            .register(&[HotKeyRequest::new(4, own.clone())])
+            .is_empty()
+    );
     assert!(shell.platform.is_available(&own));
     assert_eq!(
-        shell.platform.register(&[(5, super_a)]),
+        shell.platform.register(&[HotKeyRequest::new(5, super_a)]),
         vec![5],
         "a chord GNOME binds is refused"
     );
@@ -69,7 +151,10 @@ fn a_shortcut_press_arrives_as_its_hotkey_once() {
     assert!(
         shell
             .platform
-            .register(&[(7, chord.combo(snappy_core::keys::SnappyKey::DEFAULT))])
+            .register(&[HotKeyRequest::new(
+                7,
+                chord.combo(snappy_core::keys::SnappyKey::DEFAULT)
+            )])
             .is_empty()
     );
     shell.drain();

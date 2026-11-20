@@ -7,7 +7,7 @@ use serde_json::json;
 use snappy_core::keys::{KeyChord, Modifier};
 use snappy_gnome::protocol::PROTOCOL_VERSION;
 use snappy_platform::{
-    HotKeys, Input, LiveControl, Platform, PlatformEvent, Remedy, Tray, TrayMenu, WindowId,
+    HotKeyRequest, HotKeys, Input, LiveControl, Platform, PlatformEvent, Remedy, Tray, TrayMenu, WindowId,
 };
 
 use crate::support::{Adapter, fake, record};
@@ -47,7 +47,7 @@ fn the_extension_starting_makes_snappy_live_and_gets_back_what_it_held() {
     assert!(
         adapter
             .platform
-            .register(&[(
+            .register(&[HotKeyRequest::new(
                 3,
                 KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT)
             )])
@@ -110,7 +110,10 @@ fn shortcuts_registered_while_gnome_is_away_are_kept_and_grabbed_when_it_returns
     let mut adapter = Adapter::start();
     let one = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
     assert!(
-        adapter.platform.register(&[(1, one.clone())]).is_empty(),
+        adapter
+            .platform
+            .register(&[HotKeyRequest::new(1, one.clone())])
+            .is_empty(),
         "an unanswered request says nothing about the chord"
     );
     assert!(fake.requests("register").is_empty());
@@ -132,7 +135,12 @@ fn a_shortcut_taken_while_gnome_is_away_is_let_go_when_it_returns() {
     fake.reset(None, None);
     let mut adapter = Adapter::start();
     let one = KeyChord::snappy("Digit1", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
-    assert!(adapter.platform.register(&[(1, one.clone())]).is_empty());
+    assert!(
+        adapter
+            .platform
+            .register(&[HotKeyRequest::new(1, one.clone())])
+            .is_empty()
+    );
 
     fake.reset(Some(PROTOCOL_VERSION), Some(1.0));
     fake.state().taken = vec!["<Control><Alt><Super>0x0a".into()];

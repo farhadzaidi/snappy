@@ -21,7 +21,7 @@ pub use model::{
     MAX_DISPLAY_ASSIGNMENTS, MAX_FILE_BYTES, MAX_LAYOUT_OPTIONS, MAX_WORKSPACE_ID_LENGTH, MAX_WORKSPACES,
     Settings, Snapping,
 };
-pub use navigation::{NEAREST_EMPTY_ZONE_TITLE, Navigation, NavigationShortcut};
+pub use navigation::{NEAREST_EMPTY_ZONE_TITLE, Navigation, NavigationShortcut, SEND_TO_BACK_DOES};
 pub use reset::Reset;
 pub(crate) use workspaces::numbered_switch_shortcut;
 pub use workspaces::{NUMBERED_SWITCH_SHORTCUTS, Workspace, WorkspaceShortcut, WorkspaceStep, Workspaces};

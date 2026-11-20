@@ -1,17 +1,18 @@
 //! Listing windows: visible ones, every one, and the ones filling zones at a swap drop.
 
-use objc2::rc::Retained;
-use objc2_app_kit::NSRunningApplication;
 use snappy_core::error::WindowError;
 use snappy_core::geometry::Rect;
 use snappy_platform::WindowInfo;
 
 use super::eligibility::AppFacts;
 use super::occupancy::{
-    ServerWindow, SwapCandidate, is_on_screen, match_occupants, occupants_by_process, same_frame, unambiguous,
+    ServerWindow, SwapCandidate, has_on_screen_window, is_on_screen, match_occupants, occupants_by_process,
+    same_frame, unambiguous,
 };
 use super::operations::has_sheet;
+use super::registry;
 use super::server;
+use super::stack_order::stacking_positions;
 use super::tracked::{Windows, window_facts};
 use crate::apps;
 use crate::ax::{self, AxElement, names};
@@ -20,42 +21,66 @@ use crate::messages::{
 };
 use crate::thresholds::{AX_ENUMERATION_TIMEOUT, AX_RECOVERY_TIMEOUT};
 
-type App = (Retained<NSRunningApplication>, AppFacts);
-
 impl Windows {
-    /// Visible managed windows on the current Space, optionally of one app.
+    /// Visible managed windows on the current Space, optionally of one app, frontmost
+    /// first. Apps come in no particular order, so windows are put in the order of the
+    /// window server's list, which never names them (`stacking_positions`). Only the apps
+    /// that list shows a window of are looked at: most running apps have none here, and
+    /// each one asked is a round trip.
     pub fn visible_windows(&self, only: Option<&str>) -> Vec<WindowInfo> {
         if !ax::is_trusted() {
             return Vec::new();
         }
         let rows = server::on_screen_windows().unwrap_or_default();
-        managed_apps()
-            .filter(|(_, facts)| !facts.hidden && only.is_none_or(|only| facts.identifier == only))
-            .flat_map(|(_, facts)| self.visible_windows_of(&facts, &rows))
-            .collect()
+        let mut windows: Vec<(usize, WindowInfo)> = apps::all_running()
+            .into_iter()
+            .filter(|app| has_on_screen_window(apps::pid(app), &rows))
+            .map(|app| apps::facts(&app))
+            .filter(|facts| facts.is_supported() && !facts.hidden)
+            .filter(|facts| only.is_none_or(|only| facts.identifier == only))
+            .flat_map(|facts| self.visible_windows_of(&facts, &rows))
+            .collect();
+        windows.sort_by_key(|(position, _)| *position);
+        windows.into_iter().map(|(_, window)| window).collect()
     }
 
-    /// Eligible, unminimized windows that the window server shows on screen. Windows
-    /// sharing an identical frame are skipped unless one is focused.
-    fn visible_windows_of(&self, facts: &AppFacts, rows: &[ServerWindow]) -> Vec<WindowInfo> {
+    /// Eligible, unminimized windows that the window server shows on screen, each with where
+    /// it stands in the window server's front-to-back list. Windows sharing an identical
+    /// frame are skipped unless one is focused or the window server shows each of them
+    /// (`unambiguous`). Accessibility lists an app's windows front to back, so the ones kept
+    /// with one frame take that frame's rows in this order, and each window kept is known by
+    /// its row's number from then on. Each question is a round trip to the app, so the frame,
+    /// which rules out the windows on other Spaces, is asked first.
+    fn visible_windows_of(&self, facts: &AppFacts, rows: &[ServerWindow]) -> Vec<(usize, WindowInfo)> {
         let Some(application) = AxElement::application(facts.pid, AX_ENUMERATION_TIMEOUT) else {
             return Vec::new();
         };
         let candidates: Vec<(AxElement, Rect)> = app_windows(&application, AX_ENUMERATION_TIMEOUT)
             .into_iter()
-            .filter(|window| window_facts(window).check().is_ok() && !is_minimized(window))
             .filter_map(|window| window.frame().ok().map(|frame| (window, frame)))
             .filter(|(_, frame)| is_on_screen(*frame, facts.pid, rows))
+            .filter(|(window, _)| window_facts(window).check().is_ok() && !is_minimized(window))
             .collect();
         let focused = application.element_attribute(names::FOCUSED_WINDOW);
         let focused =
             focused.and_then(|focused| candidates.iter().position(|(window, _)| *window == focused));
         let frames: Vec<Rect> = candidates.iter().map(|(_, frame)| *frame).collect();
-        candidates
+        let kept: Vec<&(AxElement, Rect)> = candidates
             .iter()
-            .zip(unambiguous(&frames, focused))
+            .zip(unambiguous(&frames, focused, facts.pid, rows))
             .filter(|(_, keep)| *keep)
-            .map(|((window, frame), _)| self.describe(window, *frame, facts))
+            .map(|(candidate, _)| candidate)
+            .collect();
+        let kept_frames: Vec<Rect> = kept.iter().map(|(_, frame)| *frame).collect();
+        kept.iter()
+            .zip(stacking_positions(&kept_frames, facts.pid, rows))
+            .map(|((window, frame), position)| {
+                let info = self.describe(window, *frame, facts);
+                if let Some(row) = rows.get(position) {
+                    registry::lock(&self.registry).set_number(info.id, row.number);
+                }
+                (position, info)
+            })
             .collect()
     }
 
@@ -66,7 +91,7 @@ impl Windows {
             return Vec::new();
         }
         managed_apps()
-            .flat_map(|(_, facts)| {
+            .flat_map(|facts| {
                 let Some(application) = AxElement::application(facts.pid, AX_RECOVERY_TIMEOUT) else {
                     return Vec::new();
                 };
@@ -120,14 +145,11 @@ impl Windows {
 }
 
 /// Running apps whose windows Snappy may manage.
-fn managed_apps() -> impl Iterator<Item = App> {
+fn managed_apps() -> impl Iterator<Item = AppFacts> {
     apps::all_running()
         .into_iter()
-        .map(|app| {
-            let facts = apps::facts(&app);
-            (app, facts)
-        })
-        .filter(|(_, facts)| facts.is_supported())
+        .map(|app| apps::facts(&app))
+        .filter(AppFacts::is_supported)
 }
 
 /// An app's windows, each set to answer within `timeout`. Unresponsive apps list none.

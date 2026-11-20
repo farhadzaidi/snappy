@@ -8,11 +8,12 @@ use std::time::{Duration, Instant};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Mods, Os};
+use snappy_core::send_to_back::Restacking;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
-    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu,
-    WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeyRequest, HotKeys,
+    Input, LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray,
+    TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::dispatch::Dispatcher;
@@ -107,6 +108,14 @@ impl WindowSystem for WindowsPlatform {
         self.windows.focus(window);
     }
 
+    fn lower(&mut self, window: WindowId) -> Result<(), WindowError> {
+        self.windows.lower(window)
+    }
+
+    fn stack_below(&mut self, window: WindowId, sibling: WindowId) -> Result<(), WindowError> {
+        self.windows.stack_below(window, sibling)
+    }
+
     fn begin_bounds_change(&mut self, _window: WindowId) {}
 
     fn end_bounds_change(&mut self, _window: WindowId) -> Duration {
@@ -142,11 +151,11 @@ impl Input for WindowsPlatform {
 }
 
 impl HotKeys for WindowsPlatform {
-    fn register(&mut self, keys: &[(u32, Combo)]) -> Vec<u32> {
-        let keys = keys.to_vec();
-        let all: Vec<u32> = keys.iter().map(|(id, _)| *id).collect();
+    fn register(&mut self, shortcuts: &[HotKeyRequest]) -> Vec<u32> {
+        let shortcuts = shortcuts.to_vec();
+        let all: Vec<u32> = shortcuts.iter().map(|shortcut| shortcut.id).collect();
         self.dispatcher
-            .call(move |main| main.register_hotkeys(&keys))
+            .call(move |main| main.register_hotkeys(&shortcuts))
             .unwrap_or(all)
     }
 
@@ -280,6 +289,7 @@ impl Platform for WindowsPlatform {
         Capabilities {
             platform: Os::Windows,
             parking: ParkingPolicy::OffScreen,
+            restacking: Restacking::Lower { stack_below: true },
             needs_permission: false,
             caps_lock_unavailable: None,
         }

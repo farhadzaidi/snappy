@@ -80,6 +80,17 @@ impl App {
             let (_, action, _): (String, String, i64) = message.body().deserialize().ok()?;
             Some(Incoming::Shortcut(action))
         })?;
+        let released = MatchRule::builder()
+            .msg_type(Type::Signal)
+            .sender(GLOBAL_ACCEL_NAME)?
+            .path(hotkeys::COMPONENT_PATH)?
+            .interface(COMPONENT_INTERFACE)?
+            .member("globalShortcutReleased")?
+            .build();
+        listen(&shared.bus, released, sender.clone(), |message| {
+            let (_, action, _): (String, String, i64) = message.body().deserialize().ok()?;
+            Some(Incoming::ShortcutReleased(action))
+        })?;
         let kwin_owner = MatchRule::builder()
             .msg_type(Type::Signal)
             .sender(DBUS_NAME)?
@@ -156,8 +167,17 @@ impl App {
                     }
                 }
                 Incoming::Shortcut(action) => {
-                    if let Some(id) = hotkeys::shortcut_id(&action) {
-                        self.emit(PlatformEvent::HotKey(id));
+                    let id = hotkeys::shortcut_id(&action);
+                    if let Some(event) =
+                        id.and_then(|id| self.shared.state().held.pressed(id, Instant::now()))
+                    {
+                        self.emit(event);
+                    }
+                }
+                Incoming::ShortcutReleased(action) => {
+                    let id = hotkeys::shortcut_id(&action);
+                    if let Some(event) = id.and_then(|id| self.shared.state().held.released(id)) {
+                        self.emit(event);
                     }
                 }
                 Incoming::CapsLockModifiers(mods) => {

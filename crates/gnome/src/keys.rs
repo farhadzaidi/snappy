@@ -5,6 +5,9 @@
 
 use snappy_core::keys::{Combo, Modifier, Mods};
 use snappy_linux::key_codes;
+use snappy_platform::HotKeyRequest;
+
+use crate::protocol::Release;
 
 /// Clutter's modifier bits. Super sets the real Mod4 bit, and GNOME may add its virtual
 /// Super bit too; Meta, the virtual bit Alt may set, is not Super.
@@ -60,6 +63,17 @@ pub fn mask(modifier: Modifier) -> u32 {
 /// The mask bits held `mods` set together.
 pub fn mask_of(mods: Mods) -> u32 {
     mods.iter().map(mask).fold(0, |all, bits| all | bits)
+}
+
+/// How the extension sees `shortcut` let go, for one that reports that.
+pub fn release(shortcut: &HotKeyRequest) -> Option<Release> {
+    if !shortcut.reports_release {
+        return None;
+    }
+    Some(Release {
+        keycode: key_codes::evdev_keycode(shortcut.combo.code.as_str())?,
+        mask: mask_of(shortcut.combo.mods),
+    })
 }
 
 pub fn mods(mask: u32) -> Mods {

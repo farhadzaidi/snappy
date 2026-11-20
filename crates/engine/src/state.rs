@@ -28,6 +28,7 @@ use crate::diagnostics::Diagnostics;
 use crate::focus::FocusFlash;
 use crate::marks::Marks;
 use crate::selection::Selection;
+use crate::send_to_back::SendingToBack;
 use crate::store::{Paths, SettingsStore};
 use crate::workspaces::WorkspaceController;
 
@@ -101,6 +102,7 @@ pub(crate) struct EngineState<P> {
     pub focus_flash: FocusFlash,
     pub marks: Marks,
     pub caps_lock: CapsLockController,
+    pub sending_to_back: SendingToBack,
 }
 
 impl<P: Platform> EngineState<P> {
@@ -146,6 +148,7 @@ impl<P: Platform> EngineState<P> {
             focus_flash: FocusFlash::default(),
             marks: Marks::default(),
             caps_lock: CapsLockController::default(),
+            sending_to_back: SendingToBack::default(),
         }
     }
 

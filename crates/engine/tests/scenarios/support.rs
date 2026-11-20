@@ -98,7 +98,7 @@ pub fn control_option() -> Mods {
 }
 
 pub fn event(engine: &Engine<FakePlatform>, event: PlatformEvent) {
-    engine.handle(Input::Platform(event));
+    engine.handle(Input::platform(event));
 }
 
 pub fn shift() -> Mods {
@@ -477,7 +477,7 @@ pub fn all_writes(engine: &Engine<FakePlatform>) -> Vec<(WindowId, &'static str)
 /// it, with its writes cleared.
 pub fn stopped_for_restart(engine: &Engine<FakePlatform>) -> FakePlatform {
     engine.with_platform(|p| p.writes.clear());
-    engine.handle(Input::Platform(PlatformEvent::RestartRequested));
+    engine.handle(Input::platform(PlatformEvent::RestartRequested));
     assert_eq!(all_writes(engine), [], "stopping moves nothing");
     let mut platform = engine.with_platform(|p| p.clone());
     platform.writes.clear();

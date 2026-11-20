@@ -26,6 +26,8 @@ pub const QUIET: Duration = Duration::from_millis(400);
 pub mod key {
     pub const DIGIT_1: u8 = 10;
     pub const CONTROL_L: u8 = 37;
+    pub const KEY_J: u8 = 44;
+    pub const KEY_B: u8 = 56;
     pub const SHIFT_L: u8 = 50;
     pub const ALT_L: u8 = 64;
     pub const NUM_LOCK: u8 = 77;

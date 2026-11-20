@@ -14,7 +14,7 @@ You can see where these files are in Snappy's settings, and removing them remove
 
 ## Permissions
 
-Snappy asks for the permissions it needs to move windows: Accessibility on macOS, and on some systems the right to watch the keyboard while you drag a window or hold Caps Lock as the Snappy key. It uses them only for that: it looks only at the keys it reacts to, such as the drag key and Caps Lock, and never records what you type.
+Snappy asks for the permissions it needs to move windows: Accessibility on macOS, and on some systems the right to watch the keyboard while you drag a window, hold a shortcut down, or hold Caps Lock as the Snappy key. It uses them only for that: it looks only at the keys it reacts to, such as the drag key, the held shortcut's key, and Caps Lock, and never records what you type.
 
 ## App stores
 

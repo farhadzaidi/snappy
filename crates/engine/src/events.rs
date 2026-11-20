@@ -1,15 +1,18 @@
 //! Routing platform events to the features that handle them.
 
+use snappy_core::shortcuts::HotKeyAction;
 use snappy_ipc::ToApp;
 use snappy_platform::{Platform, PlatformEvent, TrayCommand};
+use tokio::time::Instant;
 
 use crate::engine::Engine;
 use crate::log_event::LogEvent;
 use crate::workspaces::{self, SwitchFocus};
-use crate::{actions, caps_lock, commands, drag, focus, selection};
+use crate::{actions, caps_lock, commands, drag, focus, selection, send_to_back};
 
 impl<P: Platform + 'static> Engine<P> {
-    pub(crate) fn handle_event(&self, event: PlatformEvent) {
+    /// Handle `event`, which reached the daemon at `received`.
+    pub(crate) fn handle_event(&self, event: PlatformEvent, received: Instant) {
         let shared = &self.shared;
         // Pointer motion is too frequent to be useful; presses and releases are kept.
         if !matches!(
@@ -20,6 +23,12 @@ impl<P: Platform + 'static> Engine<P> {
                 LogEvent::Platform,
                 || serde_json::json!({ "received": format!("{event:?}") }),
             );
+        }
+        {
+            let mut core = shared.core.borrow_mut();
+            if send_to_back::cancels_put_back(&event, &core) {
+                send_to_back::cancel_put_back(&mut core);
+            }
         }
         match event {
             PlatformEvent::PointerDown {
@@ -32,11 +41,22 @@ impl<P: Platform + 'static> Engine<P> {
                 drag::pointer_moved(shared, at, mods)
             }
             PlatformEvent::PointerUp { at, mods } => drag::pointer_up(shared, at, mods),
-            PlatformEvent::HotKey(id) => actions::hotkey(shared, id),
+            PlatformEvent::HotKey(id) => actions::hotkey(shared, id, received),
+            PlatformEvent::HotKeyReleased(id) => {
+                let sends_to_back = shared
+                    .core
+                    .borrow()
+                    .hotkey(id)
+                    .is_some_and(|hotkey| hotkey.action == HotKeyAction::SendToBack);
+                if sends_to_back {
+                    send_to_back::released(shared, received)
+                }
+            }
             PlatformEvent::CapsLock(input) => caps_lock::input(&mut shared.core.borrow_mut(), input),
             PlatformEvent::CapsLockLost => caps_lock::lost(&mut shared.core.borrow_mut()),
             PlatformEvent::WindowCreated { .. } => workspaces::focus_changed(shared, false),
             PlatformEvent::FocusChanged { by_activation, .. } => {
+                send_to_back::focus_changed(&mut shared.core.borrow_mut());
                 workspaces::focus_changed(shared, by_activation)
             }
             PlatformEvent::WindowMoved(window) => {

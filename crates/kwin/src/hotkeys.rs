@@ -1,7 +1,11 @@
 //! Snappy's shortcuts with KDE's shortcut service, as a component of its own, so System
 //! Settings lists them under Snappy. A key another component holds is refused, and the same
 //! question is the availability probe; Snappy's own component never counts, whatever an
-//! earlier run left registered. A press arrives as a signal on the component.
+//! earlier run left registered. A press arrives as a signal on the component, and so does a
+//! release, which counts for the shortcuts that report being let go. The service sends a
+//! held shortcut's press again as its key repeats, and its release as soon as any key of its
+//! chord comes up, the Snappy key's included, which `HeldShortcuts` turns into one press and
+//! one release.
 
 use snappy_linux::journal;
 

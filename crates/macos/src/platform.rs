@@ -7,11 +7,13 @@ use objc2_app_kit::NSApplication;
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Mods, Os};
+use snappy_core::send_to_back::Restacking;
+use snappy_core::window::WindowSnapshot;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
-    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, TabGroup, Tray,
-    TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeyRequest, HotKeys,
+    Input, LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, TabGroup,
+    Tray, TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::ax::{self, AxElement};
@@ -100,6 +102,16 @@ impl WindowSystem for MacPlatform {
         self.windows.focus(window);
     }
 
+    /// Accessibility can't lower another app's window, so a window goes to the back by the
+    /// windows it covers being raised over it.
+    fn raise(&mut self, window: WindowId) -> Result<(), WindowError> {
+        self.windows.raise(window)
+    }
+
+    fn shows_in_order(&mut self, windows: &[WindowSnapshot]) -> bool {
+        self.windows.shows_in_order(windows)
+    }
+
     fn begin_bounds_change(&mut self, window: WindowId) {
         self.windows.begin_bounds_change(window);
     }
@@ -137,9 +149,9 @@ impl Input for MacPlatform {
 }
 
 impl HotKeys for MacPlatform {
-    fn register(&mut self, keys: &[(u32, Combo)]) -> Vec<u32> {
-        let keys = keys.to_vec();
-        main_thread::sync(move |_| hotkeys::register(&keys))
+    fn register(&mut self, shortcuts: &[HotKeyRequest]) -> Vec<u32> {
+        let shortcuts = shortcuts.to_vec();
+        main_thread::sync(move |_| hotkeys::register(&shortcuts))
     }
 
     fn unregister_all(&mut self) {
@@ -252,6 +264,8 @@ impl Platform for MacPlatform {
         Capabilities {
             platform: Os::MacOs,
             parking: ParkingPolicy::CornerSliver,
+            // Accessibility raises another app's window but has no way to lower one.
+            restacking: Restacking::RaiseOnly,
             needs_permission: true,
             caps_lock_unavailable: caps_lock::UNAVAILABLE,
         }

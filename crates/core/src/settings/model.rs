@@ -275,13 +275,14 @@ mod tests {
                     snappy("KeyL"),
                     snappy("Enter"),
                     snappy("Backslash"),
+                    snappy("KeyB"),
                 ],
                 "{platform:?}"
             );
             assert_eq!(settings.history, MoveHistory::default());
 
             let every_chord = shortcuts::bound_combos(&settings);
-            assert_eq!(every_chord.len(), 4 + 3 + 5 + 6, "{platform:?}");
+            assert_eq!(every_chord.len(), 4 + 3 + 5 + 7, "{platform:?}");
             let snappy_key = SnappyKey::DEFAULT.modifiers();
             assert!(
                 every_chord.iter().all(|combo| combo.mods == snappy_key),

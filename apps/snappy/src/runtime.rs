@@ -93,7 +93,7 @@ fn run_engine<P: Platform + 'static>(
         }
         engine.start();
         if mode == (Mode::Run { open_app: true }) {
-            let _ = inputs.send(Input::Platform(PlatformEvent::OpenAppRequested));
+            let _ = inputs.send(Input::platform(PlatformEvent::OpenAppRequested));
         }
         let mut settling = mode == Mode::Settle;
         let settle_timeout = tokio::time::sleep(SETTLE_TIMEOUT);
@@ -103,7 +103,7 @@ fn run_engine<P: Platform + 'static>(
         loop {
             if settling && engine.controls_the_desktop() {
                 settling = false;
-                let _ = inputs.send(Input::Platform(PlatformEvent::QuitRequested));
+                let _ = inputs.send(Input::platform(PlatformEvent::QuitRequested));
             }
             // Messages also come from work that finishes between inputs, such as a snap
             // that settles or fails, so a queued message wakes the loop too.
@@ -115,7 +115,7 @@ fn run_engine<P: Platform + 'static>(
                 () = outbox_ready.notified() => None,
                 () = &mut settle_timeout, if settling => {
                     settling = false;
-                    Some(Input::Platform(PlatformEvent::QuitRequested))
+                    Some(Input::platform(PlatformEvent::QuitRequested))
                 }
             };
             let Some(input) = input else {
@@ -124,9 +124,18 @@ fn run_engine<P: Platform + 'static>(
             };
             let quit = matches!(
                 input,
-                Input::Platform(PlatformEvent::QuitRequested | PlatformEvent::RestartRequested)
+                Input::Platform {
+                    event: PlatformEvent::QuitRequested | PlatformEvent::RestartRequested,
+                    ..
+                }
             );
-            if input == Input::Platform(PlatformEvent::OpenAppRequested) {
+            if matches!(
+                input,
+                Input::Platform {
+                    event: PlatformEvent::OpenAppRequested,
+                    ..
+                }
+            ) {
                 // A settling run is on its way out, so it never opens the window.
                 if mode == Mode::Settle {
                     continue;
@@ -146,11 +155,12 @@ fn run_engine<P: Platform + 'static>(
     Ok(())
 }
 
-/// Bridge events from the platform's main thread into the engine's channel.
+/// Bridge events from the platform's main thread into the engine's channel, each stamped as
+/// it arrives.
 fn forward_events(events: Receiver<PlatformEvent>, inputs: UnboundedSender<Input>) {
     std::thread::spawn(move || {
         for event in events {
-            if inputs.send(Input::Platform(event)).is_err() {
+            if inputs.send(Input::platform(event)).is_err() {
                 return;
             }
         }

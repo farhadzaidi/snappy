@@ -27,6 +27,8 @@ The code is in `src/managed/`.
 
 **Apps running as administrator** are refused, since Windows doesn't let Snappy move their windows.
 
+**Visible windows** come in z-order, front to back, as Windows lists top-level windows.
+
 ## How Snappy notices changes
 
 Windows reports system-wide events through hooks that run outside the app being watched, and Snappy uses those (`src/events.rs`). They report focus changes, moves and resizes starting and ending, and windows being minimized, shown, closed, or hidden by the system.
@@ -47,6 +49,8 @@ Snappy stores keys by their physical position, and turns them into scan codes. S
 
 To check whether a chord is free, Snappy registers it under a spare ID and releases it.
 
+`RegisterHotKey` reports presses only. For a shortcut whose release matters, as send to back's does, a low-level keyboard hook runs from its press until its key comes up, and looks at that key alone; the key repeating is ignored. A key already up when the press arrives counts as let go at once.
+
 ## Drawing the zones
 
 Each display gets a window of Snappy's own that sits on top, lets clicks through, and never takes focus (`src/overlay/`). Snappy draws the zones into an image, with the numbers and captions drawn once by GDI and kept. Then it hands the finished pixels to Windows' compositor, which keeps showing them without Snappy redrawing. Zones use the system's accent color.
@@ -61,7 +65,7 @@ Windows offers no way to remap Caps Lock for one program, so Snappy watches the 
 - **A key pressed while Caps Lock is down** that completes one of Snappy's shortcuts fires that shortcut directly, and is swallowed. Snappy never sends a fake modifier key, so Windows never sees a stray Win key and opens Start. Other keys pressed while Caps Lock is down are swallowed too. Modifier keys pass through.
 - **A tap** sends a Caps Lock press marked as Snappy's own. The hook lets it through, so Windows toggles Caps Lock and its light.
 
-**Privacy.** A low-level hook can't ask for just one key. So while the setting is on, Windows calls the hook for every key, on the main thread. The hook ignores everything except Caps Lock and what's pressed while Caps Lock is held, and writes nothing down.
+**Privacy.** A low-level hook can't ask for just one key. So while the setting is on, Windows calls the hook for every key, on the main thread. The hook ignores everything except Caps Lock, what's pressed while Caps Lock is held, and the key of a shortcut held until it comes up, and writes nothing down.
 
 **Nothing to undo.** Nothing in the system is changed, so quitting or a crash leaves Caps Lock as it was.
 
@@ -74,6 +78,8 @@ The tray icon sits in the notification area, drawn from the tray glyph at the si
 ## Workspaces
 
 **Hiding windows.** Windows leaves off-screen windows where they are, so Snappy hides workspace windows entirely outside every display. Hidden windows still show in the taskbar and Alt+Tab, and activating one switches to its workspace.
+
+**Sending a window to the back** lowers it below the others, in place (`SetWindowPos` with `HWND_BOTTOM`), and focusing it raises it again, so a maximized window stays maximized. A window that stays on top isn't lowered, since that would take its place on top away for good. A window held back goes back under the window that was just in front of it, if one in front overlapped it, with `SetWindowPos` too, after it's focused, unless that one stays on top, which would make it stay on top as well.
 
 **Virtual desktops.** Workspaces pause when the user switches to another virtual desktop. To notice, Snappy keeps a window on the desktop workspaces started on, and asks Windows whether that window is on the current desktop (`src/desktop_guard.rs`). It asks again whenever the system hides or shows windows.
 

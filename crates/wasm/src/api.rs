@@ -218,8 +218,14 @@ pub fn shortcut_sections(request: SectionsRequest) -> Vec<SectionOfShortcuts> {
                 .into_iter()
                 .filter_map(|id| {
                     let title = id.title(settings)?;
+                    let hint = id.hint();
                     let chord = id.get(settings).cloned();
-                    Some(ListedShortcut { id, title, chord })
+                    Some(ListedShortcut {
+                        id,
+                        title,
+                        hint,
+                        chord,
+                    })
                 })
                 .collect(),
         })

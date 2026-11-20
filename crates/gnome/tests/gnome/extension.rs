@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use snappy_core::keys::KeyChord;
 use snappy_gnome::protocol::{CALL_METHOD, EXTENSION_UUID, INTERFACE, OBJECT_PATH, SHELL_BUS_NAME};
-use snappy_platform::{HotKeys, LiveControl, Platform, PlatformEvent, Tray, TrayMenu};
+use snappy_platform::{HotKeyRequest, HotKeys, LiveControl, Platform, PlatformEvent, Tray, TrayMenu};
 use zbus::blocking::Connection;
 
 use crate::support::{WAIT, shell};
@@ -67,7 +67,10 @@ fn turning_the_extension_off_and_on_reports_why_and_restores_what_it_held() {
     assert!(
         shell
             .platform
-            .register(&[(9, chord.combo(snappy_core::keys::SnappyKey::DEFAULT))])
+            .register(&[HotKeyRequest::new(
+                9,
+                chord.combo(snappy_core::keys::SnappyKey::DEFAULT)
+            )])
             .is_empty()
     );
     shell.drain();

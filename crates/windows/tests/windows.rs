@@ -20,8 +20,8 @@ use snappy_core::keys::{Combo, KeyChord, Modifier, Mods, Os, SnappyKey};
 use snappy_core::settings::{Settings, Workspace};
 use snappy_core::workspace::{ParkingPolicy, parking_origin};
 use snappy_platform::{
-    CapsLock, CapsLockInput, Caption, DesktopGuard, Display, HotKeys, Input, LoginItem, Overlay,
-    OverlayScene, OverlayZone, PlatformEvent, WindowSystem,
+    CapsLock, CapsLockInput, Caption, DesktopGuard, Display, HotKeyRequest, HotKeys, Input, LoginItem,
+    Overlay, OverlayScene, OverlayZone, PlatformEvent, WindowSystem,
 };
 use snappy_windows::reference;
 use snappy_windows::{App, Claim, Stopper, WindowsPlatform};
@@ -38,10 +38,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowExW, GetForegroundWindow,
-    GetMessageW, GetSystemMetrics, IsWindow, MSG, PostMessageW, PostThreadMessageW, RegisterClassExW,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_SHOWNORMAL,
-    SetForegroundWindow, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_QUIT, WNDCLASSEXW,
-    WS_CAPTION, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_SYSMENU,
+    GetMessageW, GetSystemMetrics, HWND_TOPMOST, IsWindow, IsZoomed, MSG, PostMessageW, PostThreadMessageW,
+    RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SW_MAXIMIZE, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos,
+    ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_QUIT, WNDCLASSEXW, WS_CAPTION, WS_EX_TOOLWINDOW,
+    WS_OVERLAPPEDWINDOW, WS_SYSMENU,
 };
 use windows::core::{PCWSTR, w};
 
@@ -592,19 +593,226 @@ fn parked_windows_go_fully_off_screen_unclamped_and_come_back() {
     assert!(near(host.frame(), before, 1.0));
 }
 
+#[test]
+fn lowering_or_restacking_leaves_a_maximized_window_maximized_where_it_is_and_focusing_raises_it_again() {
+    require_desktop!();
+    let mut session = Session::start();
+    let back = Host::open(Kind::Normal, Rect::new(200.0, 150.0, 700.0, 500.0));
+    let front = Host::open(Kind::Normal, Rect::new(300.0, 250.0, 700.0, 500.0));
+    let back_id = session.platform.window_at(Point::new(220.0, 170.0)).unwrap().id;
+    let front_id = session.platform.window_at(front.frame().center()).unwrap().id;
+    let order = |session: &mut Session| -> Vec<snappy_platform::WindowId> {
+        session
+            .platform
+            .visible_windows(None)
+            .into_iter()
+            .map(|window| window.id)
+            .filter(|id| [back_id, front_id].contains(id))
+            .collect()
+    };
+    let _ = unsafe { ShowWindow(front.hwnd(), SW_MAXIMIZE) };
+    session.platform.focus(front_id);
+    pause(500);
+    let maximized = front.frame();
+    assert_eq!(order(&mut session), [front_id, back_id]);
+
+    session.platform.lower(front_id).unwrap();
+    pause(300);
+    assert_eq!(order(&mut session), [back_id, front_id], "lowered behind");
+    assert!(unsafe { IsZoomed(front.hwnd()) }.as_bool(), "still maximized");
+    assert!(near(front.frame(), maximized, 1.0), "where it was");
+
+    session.platform.focus(front_id);
+    pause(300);
+    assert_eq!(order(&mut session), [front_id, back_id], "raised again");
+    assert!(unsafe { IsZoomed(front.hwnd()) }.as_bool());
+    assert_eq!(unsafe { GetForegroundWindow() }, front.hwnd());
+
+    session.platform.stack_below(front_id, back_id).unwrap();
+    pause(300);
+    assert_eq!(
+        order(&mut session),
+        [back_id, front_id],
+        "restacked under the other"
+    );
+    assert!(unsafe { IsZoomed(front.hwnd()) }.as_bool());
+    assert_eq!(unsafe { GetForegroundWindow() }, front.hwnd(), "still focused");
+    session.platform.focus(front_id);
+    pause(300);
+
+    let on_top = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    unsafe { SetWindowPos(front.hwnd(), Some(HWND_TOPMOST), 0, 0, 0, 0, on_top) }.unwrap();
+    assert!(
+        session.platform.lower(front_id).is_err(),
+        "a window that stays on top would lose that"
+    );
+    drop((back, front));
+}
+
+#[test]
+fn visible_windows_come_front_to_back() {
+    require_desktop!();
+    let mut session = Session::start();
+    let back = Host::open(Kind::Normal, Rect::new(200.0, 150.0, 700.0, 500.0));
+    let front = Host::open(Kind::Normal, Rect::new(300.0, 250.0, 700.0, 500.0));
+    let back_id = session.platform.window_at(Point::new(220.0, 170.0)).unwrap().id;
+    let front_id = session.platform.window_at(front.frame().center()).unwrap().id;
+    let order = |session: &mut Session| -> Vec<snappy_platform::WindowId> {
+        session
+            .platform
+            .visible_windows(None)
+            .into_iter()
+            .map(|window| window.id)
+            .filter(|id| [back_id, front_id].contains(id))
+            .collect()
+    };
+    assert_eq!(order(&mut session), [front_id, back_id]);
+    let uncovered = Point::new(220.0, 170.0);
+    mouse(uncovered, MOUSEEVENTF_LEFTDOWN);
+    mouse(uncovered, MOUSEEVENTF_LEFTUP);
+    pause(300);
+    assert_eq!(
+        order(&mut session),
+        [back_id, front_id],
+        "clicked, it comes to the front"
+    );
+    drop((back, front));
+}
+
 // MARK: Shortcuts
 
 #[test]
 fn registered_shortcuts_fire_on_their_keys() {
     require_desktop!();
     let mut session = Session::start();
-    let chords = [(7, snappy("Digit1")), (8, snappy("ArrowRight"))];
+    let chords = [
+        HotKeyRequest::new(7, snappy("Digit1")),
+        HotKeyRequest::new(8, snappy("ArrowRight")),
+    ];
     assert!(session.platform.register(&chords).is_empty());
     session.drain();
-    press(&chords[0].1);
+    press(&chords[0].combo);
     session.expect("zone shortcut", |event| *event == PlatformEvent::HotKey(7));
-    press(&chords[1].1);
+    press(&chords[1].combo);
     session.expect("arrow shortcut", |event| *event == PlatformEvent::HotKey(8));
+    session.platform.unregister_all();
+}
+
+/// A shortcut that also reports being let go, as sending to the back does.
+fn held_shortcut(id: u32, code: &str) -> HotKeyRequest {
+    HotKeyRequest {
+        reports_release: true,
+        ..HotKeyRequest::new(id, snappy(code))
+    }
+}
+
+/// How often a held key repeats, about as fast as a keyboard's repeat runs.
+const KEY_REPEAT_MS: u64 = 33;
+
+/// Holds `combo` down for `held`, its key repeating as a held key does, then lets go.
+fn hold(combo: &Combo, held: Duration) {
+    modifiers(combo.mods, true);
+    let (scan, extended) = reference::scan_code(&combo.code).unwrap();
+    let mut flags = KEYEVENTF_SCANCODE;
+    if extended {
+        flags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    let deadline = Instant::now() + held;
+    while Instant::now() < deadline {
+        send(&[key_input(VIRTUAL_KEY(0), scan, flags)]);
+        pause(KEY_REPEAT_MS);
+    }
+    send(&[key_input(VIRTUAL_KEY(0), scan, flags | KEYEVENTF_KEYUP)]);
+    pause(20);
+    modifiers(combo.mods, false);
+}
+
+/// The shortcut presses and releases among the next events.
+fn shortcut_events(session: &Session) -> Vec<PlatformEvent> {
+    session
+        .collect(Duration::from_millis(400))
+        .into_iter()
+        .filter(|event| matches!(event, PlatformEvent::HotKey(_) | PlatformEvent::HotKeyReleased(_)))
+        .collect()
+}
+
+#[test]
+fn a_shortcut_that_reports_its_release_is_let_go_once_its_key_comes_up() {
+    require_desktop!();
+    let mut session = Session::start();
+    let send_to_back = held_shortcut(9, "KeyB");
+    let focus = HotKeyRequest::new(10, snappy("KeyJ"));
+    assert!(
+        session
+            .platform
+            .register(&[send_to_back.clone(), focus.clone()])
+            .is_empty()
+    );
+    session.drain();
+
+    press(&send_to_back.combo);
+    assert_eq!(
+        shortcut_events(&session),
+        [PlatformEvent::HotKey(9), PlatformEvent::HotKeyReleased(9)],
+        "a quick press"
+    );
+    hold(&send_to_back.combo, Duration::from_millis(600));
+    assert_eq!(
+        shortcut_events(&session),
+        [PlatformEvent::HotKey(9), PlatformEvent::HotKeyReleased(9)],
+        "a hold, its key repeating"
+    );
+    press(&focus.combo);
+    assert_eq!(
+        shortcut_events(&session),
+        [PlatformEvent::HotKey(10)],
+        "only shortcuts that ask report their release"
+    );
+    session.platform.unregister_all();
+}
+
+/// Two shortcuts that report being let go, held at once, are each let go as their own key
+/// comes up.
+#[test]
+fn shortcuts_held_at_once_are_each_let_go_by_their_own_key() {
+    require_desktop!();
+    let mut session = Session::start();
+    let send_to_back = held_shortcut(9, "KeyB");
+    let other = held_shortcut(10, "KeyJ");
+    assert!(
+        session
+            .platform
+            .register(&[send_to_back.clone(), other.clone()])
+            .is_empty()
+    );
+    session.drain();
+    let key = |combo: &Combo, down: bool| {
+        let (scan, _) = reference::scan_code(&combo.code).unwrap();
+        let flags = if down {
+            KEYEVENTF_SCANCODE
+        } else {
+            KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP
+        };
+        send(&[key_input(VIRTUAL_KEY(0), scan, flags)]);
+        pause(20);
+    };
+
+    modifiers(send_to_back.combo.mods, true);
+    key(&send_to_back.combo, true);
+    pause(300);
+    key(&other.combo, true);
+    key(&other.combo, false);
+    key(&send_to_back.combo, false);
+    modifiers(send_to_back.combo.mods, false);
+    assert_eq!(
+        shortcut_events(&session),
+        [
+            PlatformEvent::HotKey(9),
+            PlatformEvent::HotKey(10),
+            PlatformEvent::HotKeyReleased(10),
+            PlatformEvent::HotKeyReleased(9),
+        ]
+    );
     session.platform.unregister_all();
 }
 
@@ -644,7 +852,7 @@ fn caps_lock_events(session: &Session) -> Vec<PlatformEvent> {
 fn caps_lock_held_fires_snappy_shortcuts_and_never_turns_itself_on() {
     require_desktop!();
     let mut session = Session::start();
-    let right = (8, snappy("ArrowRight"));
+    let right = HotKeyRequest::new(8, snappy("ArrowRight"));
     assert!(session.platform.register(std::slice::from_ref(&right)).is_empty());
     session
         .platform
@@ -657,7 +865,7 @@ fn caps_lock_held_fires_snappy_shortcuts_and_never_turns_itself_on() {
     caps_lock_key(true);
     caps_lock_key(true);
     press(&Combo {
-        code: right.1.code.clone(),
+        code: right.combo.code.clone(),
         mods: Mods::NONE,
     });
     caps_lock_key(false);
@@ -702,9 +910,81 @@ fn caps_lock_held_fires_snappy_shortcuts_and_never_turns_itself_on() {
     session.platform.unregister_all();
 }
 
+#[test]
+fn a_shortcut_completed_by_caps_lock_reports_its_release_when_its_key_comes_up() {
+    require_desktop!();
+    let mut session = Session::start();
+    let send_to_back = held_shortcut(9, "KeyB");
+    assert!(
+        session
+            .platform
+            .register(std::slice::from_ref(&send_to_back))
+            .is_empty()
+    );
+    session
+        .platform
+        .hold_caps_lock_as(SnappyKey::DEFAULT.modifiers())
+        .unwrap();
+    pause(100);
+    let alone = Combo {
+        code: send_to_back.combo.code.clone(),
+        mods: Mods::NONE,
+    };
+    let held = |session: &Session| -> Vec<PlatformEvent> {
+        session
+            .collect(Duration::from_millis(400))
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    PlatformEvent::HotKey(_)
+                        | PlatformEvent::HotKeyReleased(_)
+                        | PlatformEvent::CapsLock(CapsLockInput::Released)
+                )
+            })
+            .collect()
+    };
+    session.drain();
+
+    caps_lock_key(true);
+    hold(&alone, Duration::from_millis(400));
+    caps_lock_key(false);
+    assert_eq!(
+        held(&session),
+        [
+            PlatformEvent::HotKey(9),
+            PlatformEvent::HotKeyReleased(9),
+            PlatformEvent::CapsLock(CapsLockInput::Released),
+        ]
+    );
+
+    let (scan, _) = reference::scan_code(&alone.code).unwrap();
+    caps_lock_key(true);
+    send(&[key_input(VIRTUAL_KEY(0), scan, KEYEVENTF_SCANCODE)]);
+    pause(30);
+    caps_lock_key(false);
+    send(&[key_input(
+        VIRTUAL_KEY(0),
+        scan,
+        KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
+    )]);
+    assert_eq!(
+        held(&session),
+        [
+            PlatformEvent::HotKey(9),
+            PlatformEvent::CapsLock(CapsLockInput::Released),
+            PlatformEvent::HotKeyReleased(9),
+        ],
+        "Caps Lock let go first, the key after"
+    );
+    session.platform.restore_caps_lock();
+    session.platform.unregister_all();
+}
+
 /// The reserved-chord audit: every default chord, moving between zones, to the nearest
-/// empty zone, focus and the selection, the workspace steps, and switching to workspaces
-/// 1 to 9, is free on a stock Windows 11, so Windows and the shell leave them to Snappy.
+/// empty zone, focus, sending to the back, the selection, the workspace steps, and
+/// switching to workspaces 1 to 9, is free on a stock Windows 11, so Windows and the shell
+/// leave them to Snappy.
 #[test]
 fn the_windows_default_shortcuts_are_free() {
     require_desktop!();
@@ -717,13 +997,16 @@ fn the_windows_default_shortcuts_are_free() {
         .collect();
     chords.extend(settings.workspaces.steps().map(|(_, chord)| chord.clone()));
     chords.extend((1..=9).filter_map(|n| Workspace::numbered(format!("workspace-{n}"), n).switch_shortcut));
-    assert_eq!(chords.len(), 5 + 6 + 4 + 9);
-    let clear_selection = KeyChord::snappy("Backslash", []).combo(snappy_core::keys::SnappyKey::DEFAULT);
-    assert!(
-        chords
-            .iter()
-            .any(|chord| chord.combo(snappy_core::keys::SnappyKey::DEFAULT) == clear_selection)
-    );
+    assert_eq!(chords.len(), 5 + 7 + 4 + 9);
+    for code in ["Backslash", "KeyB"] {
+        let default = KeyChord::snappy(code, []).combo(snappy_core::keys::SnappyKey::DEFAULT);
+        assert!(
+            chords
+                .iter()
+                .any(|chord| chord.combo(snappy_core::keys::SnappyKey::DEFAULT) == default),
+            "{code}"
+        );
+    }
     let taken: Vec<String> = chords
         .iter()
         .filter(|chord| {
@@ -749,7 +1032,12 @@ fn chords_held_by_another_app_are_unavailable() {
     unsafe { UnregisterHotKey(None, 1) }.unwrap();
     assert!(session.platform.is_available(&chord));
 
-    assert!(session.platform.register(&[(3, chord.clone())]).is_empty());
+    assert!(
+        session
+            .platform
+            .register(&[HotKeyRequest::new(3, chord.clone())])
+            .is_empty()
+    );
     assert!(
         session.platform.is_available(&chord),
         "Snappy's own shortcut counts as free"

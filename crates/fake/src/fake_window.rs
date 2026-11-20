@@ -15,6 +15,8 @@ pub struct FakeWindow {
     pub strict_resize: bool,
     /// Every write is ignored.
     pub frozen: bool,
+    /// Its app doesn't answer, so every write fails once Snappy stops waiting.
+    pub hung: bool,
     pub hidden: bool,
     /// A native tab hidden behind this shown tab, as on macOS: off screen, left out of
     /// the visible windows, with a frame that goes stale while the group moves.
@@ -35,6 +37,7 @@ impl FakeWindow {
             min_size: Size::new(1.0, 1.0),
             strict_resize: false,
             frozen: false,
+            hung: false,
             hidden: false,
             tab_of: None,
         }

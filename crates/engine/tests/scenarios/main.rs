@@ -13,6 +13,7 @@ mod live_control;
 mod nearest_empty;
 mod restarts;
 mod selection;
+mod send_to_back;
 mod sending;
 mod settings;
 mod shortcuts;

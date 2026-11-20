@@ -6,7 +6,7 @@ use serde_json::json;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_platform::{PlatformEvent, WindowSystem};
 
-use crate::support::{WAIT, floating, shell};
+use crate::support::{Shell, WAIT, floating, shell};
 
 #[test]
 fn windows_are_listed_moved_resized_and_found_under_the_pointer() {
@@ -48,6 +48,43 @@ fn windows_are_listed_moved_resized_and_found_under_the_pointer() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(shell.platform.frame(window).is_err());
+}
+
+#[test]
+fn visible_windows_come_front_to_back_and_lowering_puts_one_behind() {
+    let mut shell = shell!();
+    let below = snappy_platform::WindowId(shell.open("below", floating(200.0)));
+    let above = snappy_platform::WindowId(shell.open("above", floating(260.0)));
+    let order = |shell: &mut Shell| -> Vec<snappy_platform::WindowId> {
+        shell
+            .platform
+            .visible_windows(None)
+            .into_iter()
+            .map(|info| info.id)
+            .filter(|window| [below, above].contains(window))
+            .collect()
+    };
+    assert_eq!(order(&mut shell), [above, below]);
+
+    let frame = shell.platform.frame(above).unwrap();
+    shell.platform.lower(above).unwrap();
+    let deadline = Instant::now() + WAIT;
+    while order(&mut shell) != [below, above] {
+        assert!(
+            Instant::now() < deadline,
+            "never lowered: {:?}",
+            order(&mut shell)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(shell.platform.frame(above).unwrap(), frame, "lowered in place");
+
+    shell.platform.focus(above);
+    let deadline = Instant::now() + WAIT;
+    while order(&mut shell) != [above, below] {
+        assert!(Instant::now() < deadline, "never raised again");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]

@@ -101,7 +101,8 @@ export interface Settings {
 
 /**
  * Move-between-zones shortcuts, the one that moves to the nearest empty zone, and the ones
- * that move focus between windows and change the selection.
+ * that move focus between windows, send the focused one to the back, and change the
+ * selection.
  */
 export type Navigation = Record<NavigationShortcut, KeyChord | null>;
 
@@ -109,7 +110,7 @@ export type Navigation = Record<NavigationShortcut, KeyChord | null>;
 export type NavigationShortcut = Direction | "nearestEmpty" | FocusShortcut;
 
 export type FocusShortcut =
-  "focusUp" | "focusLeft" | "focusDown" | "focusRight" | "selectWindow" | "clearSelection";
+  "focusUp" | "focusLeft" | "focusDown" | "focusRight" | "sendToBack" | "selectWindow" | "clearSelection";
 
 /**
  * Why a change was refused: the message, and the shortcut it names, when it names one of

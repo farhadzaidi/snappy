@@ -29,6 +29,7 @@ All paths are under `crates/core/src`.
 | What happens when a zone is taken, and swap planning | `placement/swap.rs` |
 | Moving between zones with the arrow shortcuts | `placement/navigate.rs` |
 | Moving focus in a direction | `placement/focus.rs` |
+| Sending a window to the back: what it goes behind, what takes focus, and how it's put back | `send_to_back/` |
 | The nearest empty zone, and placing several windows at once | `placement/empty_zone.rs`, `placement/assignment.rs` |
 | Which windows Snappy will manage | `eligibility.rs` |
 | Key chords, the Snappy key, chords the OS keeps, Caps Lock presses | `keys/` |
@@ -49,7 +50,7 @@ The engine is where Snappy's live state is: the settings, the displays, whether 
 
 Only the engine thread touches it, so it needs no locks.
 
-The rest of the engine is one module per feature, such as `drag.rs`, `actions.rs` for shortcuts, `focus.rs`, `selection.rs`, `caps_lock.rs`, `commands.rs` for what the app asks, and `workspaces/`. `events.rs` routes each event from the adapter to the features that care about it. `store/` reads and writes every file ([Files and diagnostics](files-and-diagnostics.md)).
+The rest of the engine is one module per feature, such as `drag.rs`, `actions.rs` for shortcuts, `focus.rs`, `selection.rs`, `send_to_back/` for sending the focused window to the back, `caps_lock.rs`, `commands.rs` for what the app asks, and `workspaces/`. `events.rs` routes each event from the adapter to the features that care about it. `store/` reads and writes every file ([Files and diagnostics](files-and-diagnostics.md)).
 
 ## When Snappy is "live"
 
@@ -63,12 +64,12 @@ While Snappy isn't live, it watches no clicks and registers no shortcuts except 
 
 ## Every move waits in one queue
 
-Snaps, swaps, undo and redo, placing selected windows, switching workspaces, and sending windows to another workspace all move windows. All of them go through one queue, in `crates/engine/src/ops.rs`, so they never fight over a window.
+Snaps, swaps, undo and redo, placing selected windows, switching workspaces, sending windows to another workspace, and sending a window to the back and putting it back all move windows or change their stacking. All of them go through one queue, in `crates/engine/src/ops.rs`, so they never fight over a window.
 
 The queue follows four rules:
 
 - **One at a time.** Operations never overlap.
-- **The newest wins.** A new operation cancels the one in progress and waits for it to stop. The operation checks for cancellation before every read and write, so it stops within a step.
+- **The newest wins.** A new operation cancels the one in progress and waits for it to stop. The operation checks for cancellation before every read and write, so it stops within a step. Presses of send to back are the exception among themselves: a press while one is under way waits its turn, so quick presses each count, and so does putting back a window held back.
 - **The user's hand wins.** A mouse press on any window cancels the operation in progress.
 - **Hands off what the user grabbed.** A window pressed during an operation is marked as the user's. If the operation fails and puts windows back, it leaves that one alone.
 

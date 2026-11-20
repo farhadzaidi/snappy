@@ -6,7 +6,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
 
-use crate::support::{desktop, id, wait_until};
+use crate::support::{Desktop, desktop, id, wait_until};
 
 #[test]
 fn window_at_finds_the_topmost_managed_window() {
@@ -27,6 +27,46 @@ fn window_at_finds_the_topmost_managed_window() {
     let only_below = Point::new(frame_below.x + 5.0, frame_below.y + 5.0);
     assert_eq!(desktop.platform.window_at(only_below).unwrap().id, id(below));
     assert!(desktop.platform.window_at(Point::new(3000.0, 900.0)).is_err());
+}
+
+#[test]
+fn visible_windows_come_front_to_back_and_lowering_or_restacking_puts_one_behind() {
+    let mut desktop = desktop!();
+    let below = desktop.open_plain(Rect::new(100.0, 100.0, 400.0, 300.0));
+    let above = desktop.open_plain(Rect::new(300.0, 250.0, 400.0, 300.0));
+    let order = |desktop: &mut Desktop| -> Vec<snappy_platform::WindowId> {
+        desktop
+            .platform
+            .visible_windows(None)
+            .into_iter()
+            .map(|info| info.id)
+            .filter(|window| [id(below), id(above)].contains(window))
+            .collect()
+    };
+    assert_eq!(order(&mut desktop), [id(above), id(below)]);
+
+    let frame = desktop.platform.frame(id(above)).unwrap();
+    desktop.platform.lower(id(above)).unwrap();
+    assert!(
+        wait_until(|| order(&mut desktop) == [id(below), id(above)]),
+        "{:?}",
+        order(&mut desktop)
+    );
+    assert_eq!(
+        desktop.platform.frame(id(above)).unwrap(),
+        frame,
+        "lowered in place"
+    );
+
+    desktop.platform.focus(id(above));
+    assert!(wait_until(|| order(&mut desktop) == [id(above), id(below)]));
+
+    desktop.platform.stack_below(id(above), id(below)).unwrap();
+    assert!(
+        wait_until(|| order(&mut desktop) == [id(below), id(above)]),
+        "restacked under the other: {:?}",
+        order(&mut desktop)
+    );
 }
 
 #[test]

@@ -1,7 +1,8 @@
 //! Low-level keyboard and mouse hooks. During drag monitoring they report modifier changes
 //! and the primary button's release, and pass every event on. While Caps Lock is the
 //! Snappy key, the keyboard hook stays installed for it (`caps_lock`), which may swallow
-//! keys, and the mouse hook runs while Caps Lock is down.
+//! keys, and the mouse hook runs while Caps Lock is down. While a shortcut that reports
+//! being let go is held, the keyboard hook watches for its key coming up (`hotkeys`).
 //!
 //! The release is taken from the mouse hook rather than from the end of the move loop:
 //! hooks see input in the order it happened, while the move loop's end arrives after the
@@ -59,6 +60,7 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         let down = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
         let swallow = with_main(|main| {
             main.key(key.vkCode, down);
+            main.held_shortcut_key(key.vkCode, down);
             main.caps_lock_key(key.vkCode, down, key.dwExtraInfo)
         });
         if swallow == Some(true) {
@@ -136,10 +138,10 @@ impl Main {
     }
 
     /// Installs or removes each hook to match what needs it: the keyboard hook for drag
-    /// monitoring or Caps Lock as the Snappy key, the mouse hook for drag monitoring or
-    /// while Caps Lock is down.
+    /// monitoring, Caps Lock as the Snappy key, or a held shortcut that reports being let
+    /// go, the mouse hook for drag monitoring or while Caps Lock is down.
     pub fn update_input_hooks(&mut self) {
-        let keyboard = self.drag_input || self.caps_lock.is_some();
+        let keyboard = self.drag_input || self.caps_lock.is_some() || self.hotkeys.is_holding();
         let mouse = self.drag_input || self.caps_lock_held();
         if keyboard != self.keyboard.is_some() {
             if keyboard {

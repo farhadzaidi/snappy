@@ -89,6 +89,11 @@ impl Session {
         while self.events.try_recv().is_ok() {}
     }
 
+    /// The next event already reported, if any.
+    pub fn try_next(&self) -> Option<PlatformEvent> {
+        self.events.try_recv().ok()
+    }
+
     /// The fixture's window, once KWin manages it.
     pub fn window_of(&mut self, fixture: &Fixture) -> WindowInfo {
         let pid = fixture.pid();

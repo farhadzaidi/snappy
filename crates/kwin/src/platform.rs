@@ -7,23 +7,25 @@ use std::time::{Duration, Instant};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Mods, Os};
+use snappy_core::send_to_back::Restacking;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_linux::windows::ReportedWindow;
 use snappy_linux::{journal, login_item};
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
-    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu,
-    WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeyRequest, HotKeys,
+    Input, LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray,
+    TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
 use crate::bus::CallError;
 use crate::messages::{
-    HIDE_REFUSED, KWIN_UNREACHABLE, NO_FOCUSED_WINDOW, NOT_STANDARD, ON_ALL_DESKTOPS, UNEXPECTED_REPLY,
-    WINDOW_GONE, unavailable,
+    HIDE_REFUSED, KWIN_UNREACHABLE, LOWER_NOT_ACTIVE, NO_FOCUSED_WINDOW, NOT_STANDARD, ON_ALL_DESKTOPS,
+    UNEXPECTED_REPLY, WINDOW_GONE, unavailable,
 };
 use crate::overlay::{Command, Target};
 use crate::protocol::{
-    GONE, Monitor, PointerPosition, REFUSED_ALL_DESKTOPS, REFUSED_NOT_MOVED, Request, WindowRecord,
+    GONE, Monitor, NOT_ACTIVE, PointerPosition, REFUSED_ALL_DESKTOPS, REFUSED_NOT_MOVED, Request,
+    WindowRecord,
 };
 use crate::shared::{Grab, Incoming, Shared};
 use crate::{caps_lock, displays, hotkeys, keys, windows};
@@ -39,10 +41,16 @@ const LANDED: f64 = 1.0;
 /// undone when it does.
 const RESTORE_TIMEOUT: Duration = Duration::from_millis(250);
 const RESTORE_POLL: Duration = Duration::from_millis(10);
+/// How long lowering a window Snappy just asked KWin to activate waits for KWin to, and how
+/// often it asks again. KWin activates an Xwayland window once the app takes focus.
+const ACTIVATION_TIMEOUT: Duration = Duration::from_millis(250);
+const ACTIVATION_POLL: Duration = Duration::from_millis(10);
 
 pub struct KWinPlatform {
     shared: Arc<Shared>,
     epoch: Instant,
+    /// The window Snappy last asked KWin to activate.
+    activated: Option<WindowId>,
 }
 
 const _: () = {
@@ -63,6 +71,7 @@ impl KWinPlatform {
         KWinPlatform {
             shared,
             epoch: Instant::now(),
+            activated: None,
         }
     }
 
@@ -243,7 +252,31 @@ impl WindowSystem for KWinPlatform {
         Ok(occupants)
     }
 
+    /// KWin's scripts lower only the active window, so the script refuses any other. A
+    /// window Snappy just asked KWin to activate, as the press before focused, may not be
+    /// active yet, so it's asked again until it is.
+    fn lower(&mut self, window: WindowId) -> Result<(), WindowError> {
+        let deadline = Instant::now() + ACTIVATION_TIMEOUT;
+        loop {
+            match self.shared.bus.send(&Request::Lower { id: window.0 }) {
+                Err(CallError::Refused(reason)) if reason == NOT_ACTIVE => {
+                    if self.activated != Some(window) || Instant::now() >= deadline {
+                        return Err(unavailable(LOWER_NOT_ACTIVE));
+                    }
+                    std::thread::sleep(ACTIVATION_POLL);
+                }
+                answer => {
+                    answer.map_err(window_error)?;
+                    // KWin activates another window, so this one is no longer on its way.
+                    self.activated = None;
+                    return Ok(());
+                }
+            }
+        }
+    }
+
     fn focus(&mut self, window: WindowId) {
+        self.activated = Some(window);
         let _ = self.send(&Request::Activate { id: window.0 });
     }
 
@@ -313,11 +346,11 @@ impl Input for KWinPlatform {
 
 impl HotKeys for KWinPlatform {
     /// Chords that resolve to the same key share one action, the last ID winning.
-    fn register(&mut self, keys: &[(u32, Combo)]) -> Vec<u32> {
+    fn register(&mut self, shortcuts: &[HotKeyRequest]) -> Vec<u32> {
         let mut refused = Vec::new();
         let mut wanted: Vec<(u32, i32)> = Vec::new();
         let mut sharing: Vec<(i32, u32)> = Vec::new();
-        for (id, combo) in keys {
+        for HotKeyRequest { id, combo, .. } in shortcuts {
             let Some(key) = keys::key_code(combo) else {
                 refused.push(*id);
                 continue;
@@ -330,6 +363,7 @@ impl HotKeys for KWinPlatform {
         }
         let previous = std::mem::take(&mut self.shared.state().registered);
         let (registered, refused_keys) = hotkeys::register(&self.shared.bus, &previous, &wanted);
+        self.shared.state().held.register(shortcuts);
         for key in refused_keys {
             refused.extend(
                 sharing
@@ -346,6 +380,7 @@ impl HotKeys for KWinPlatform {
 
     fn unregister_all(&mut self) {
         let previous = std::mem::take(&mut self.shared.state().registered);
+        self.shared.state().held.register(&[]);
         hotkeys::unregister(&self.shared.bus, &previous);
     }
 
@@ -509,6 +544,7 @@ impl Platform for KWinPlatform {
         Capabilities {
             platform: Os::Linux,
             parking: ParkingPolicy::Desktop,
+            restacking: Restacking::Lower { stack_below: false },
             needs_permission: false,
             caps_lock_unavailable: None,
         }

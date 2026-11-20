@@ -219,6 +219,7 @@ impl App {
                 mods: mods(mask),
             }],
             Event::Hotkey { id } => vec![PlatformEvent::HotKey(id)],
+            Event::HotkeyReleased { id } => vec![PlatformEvent::HotKeyReleased(id)],
             Event::CapsLock { phase } => vec![PlatformEvent::CapsLock(phase)],
             Event::KeyboardOptions { options } => {
                 if caps_lock::options_changed(&self.shared, &options) {

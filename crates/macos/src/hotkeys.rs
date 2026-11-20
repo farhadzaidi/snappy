@@ -1,18 +1,19 @@
 //! Global shortcuts through Carbon `RegisterEventHotKey`. Main thread only.
 //!
-//! One event handler on the application target receives every press. Registrations
-//! carry Snappy's signature and an ID derived from the chord; the availability probe
-//! uses a separate signature so its press could never be mistaken for a shortcut. The key
-//! Caps Lock arrives as, while it is the Snappy key, has a signature of its own, and its
-//! releases count too.
+//! One event handler on the application target receives every press and release.
+//! Registrations carry Snappy's signature and an ID derived from the chord; the
+//! availability probe uses a separate signature so its press could never be mistaken for a
+//! shortcut. The key Caps Lock arrives as, while it is the Snappy key, has a signature of
+//! its own. Releases count for it, and for the shortcuts that report being let go.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
+use std::time::Instant;
 
 use snappy_core::keys::Combo;
-use snappy_platform::PlatformEvent;
+use snappy_platform::{HeldShortcuts, HotKeyRequest, KeyRepeat, PlatformEvent};
 
 #[cfg(not(feature = "mac-app-store"))]
 use crate::caps_lock;
@@ -37,11 +38,50 @@ const CAPS_LOCK_SIGNATURE: u32 = u32::from_be_bytes(*b"SNCL");
 struct HotKeys {
     handler: Option<EventHandlerRef>,
     registered: Vec<EventHotKeyRef>,
-    /// Chord-derived Carbon ID to the engine's shortcut ID.
-    engine_ids: HashMap<u32, u32>,
+    shortcuts: Shortcuts,
     /// The key Caps Lock arrives as, under every combination of modifiers.
     #[cfg(not(feature = "mac-app-store"))]
     caps_lock: Vec<EventHotKeyRef>,
+}
+
+/// The engine's shortcuts by chord-derived Carbon ID, and which of those that report being
+/// let go are down. Carbon never repeats a held hotkey, so a press while one is down means
+/// its release went unseen.
+struct Shortcuts {
+    by_carbon_id: HashMap<u32, u32>,
+    held: HeldShortcuts,
+}
+
+impl Default for Shortcuts {
+    fn default() -> Self {
+        Self {
+            by_carbon_id: HashMap::new(),
+            held: HeldShortcuts::new(KeyRepeat::Never),
+        }
+    }
+}
+
+impl Shortcuts {
+    /// Take `registered`, each a Carbon ID and the shortcut it stands for, in place of any
+    /// before, forgetting any still down: once unregistered, its release never comes.
+    fn replace(&mut self, registered: &[(u32, HotKeyRequest)]) {
+        self.by_carbon_id = registered
+            .iter()
+            .map(|(carbon_id, shortcut)| (*carbon_id, shortcut.id))
+            .collect();
+        let shortcuts: Vec<HotKeyRequest> = registered.iter().map(|(_, shortcut)| shortcut.clone()).collect();
+        self.held.register(&shortcuts);
+    }
+
+    /// What the press or release of the shortcut with `carbon_id` reports.
+    fn event(&mut self, carbon_id: u32, pressed: bool) -> Option<PlatformEvent> {
+        let &id = self.by_carbon_id.get(&carbon_id)?;
+        if pressed {
+            self.held.pressed(id, Instant::now())
+        } else {
+            self.held.released(id)
+        }
+    }
 }
 
 thread_local! {
@@ -78,15 +118,16 @@ pub fn install_handler() {
 }
 
 /// Replaces every registration. Returns the engine IDs that couldn't be registered.
-pub fn register(keys: &[(u32, Combo)]) -> Vec<u32> {
+pub fn register(shortcuts: &[HotKeyRequest]) -> Vec<u32> {
     unregister_all();
     let system = system_shortcuts::current();
     HOT_KEYS.with(|hot_keys| {
         let mut hot_keys = hot_keys.borrow_mut();
         let mut refused = Vec::new();
-        for (engine_id, combo) in keys {
-            let carbon =
-                CarbonChord::from_combo(combo).filter(|carbon| !system_shortcuts::is_taken(*carbon, &system));
+        let mut held = Vec::new();
+        for shortcut in shortcuts {
+            let carbon = CarbonChord::from_combo(&shortcut.combo)
+                .filter(|carbon| !system_shortcuts::is_taken(*carbon, &system));
             let registered = carbon.and_then(|carbon| {
                 let hot_key = register_chord(carbon, SIGNATURE, carbon.id)?;
                 Some((carbon.id, hot_key))
@@ -94,11 +135,12 @@ pub fn register(keys: &[(u32, Combo)]) -> Vec<u32> {
             match registered {
                 Some((carbon_id, hot_key)) => {
                     hot_keys.registered.push(hot_key);
-                    hot_keys.engine_ids.insert(carbon_id, *engine_id);
+                    held.push((carbon_id, shortcut.clone()));
                 }
-                None => refused.push(*engine_id),
+                None => refused.push(shortcut.id),
             }
         }
+        hot_keys.shortcuts.replace(&held);
         refused
     })
 }
@@ -110,7 +152,7 @@ pub fn unregister_all() {
             // SAFETY: each reference came from a successful registration.
             unsafe { UnregisterEventHotKey(hot_key) };
         }
-        hot_keys.engine_ids.clear();
+        hot_keys.shortcuts.replace(&[]);
     });
 }
 
@@ -213,20 +255,54 @@ unsafe extern "C" fn on_hot_key(_call: EventHandlerCallRef, event: EventRef, _da
         caps_lock::key_changed(pressed);
         return NO_ERR;
     }
-    if id.signature != SIGNATURE || !pressed {
+    if id.signature != SIGNATURE {
         return EVENT_NOT_HANDLED_ERR;
     }
-    let engine_id = HOT_KEYS.with(|hot_keys| {
+    let event = HOT_KEYS.with(|hot_keys| {
         hot_keys
-            .try_borrow()
+            .try_borrow_mut()
             .ok()
-            .and_then(|hot_keys| hot_keys.engine_ids.get(&id.id).copied())
+            .and_then(|mut hot_keys| hot_keys.shortcuts.event(id.id, pressed))
     });
-    match engine_id {
-        Some(engine_id) => {
-            emit(PlatformEvent::HotKey(engine_id));
-            NO_ERR
-        }
-        None => EVENT_NOT_HANDLED_ERR,
+    let Some(event) = event else {
+        return EVENT_NOT_HANDLED_ERR;
+    };
+    emit(event);
+    NO_ERR
+}
+
+#[cfg(test)]
+mod tests {
+    use snappy_core::keys::{KeyChord, SnappyKey};
+
+    use super::*;
+
+    fn shortcuts() -> Shortcuts {
+        let combo = |code: &str| KeyChord::snappy(code, []).combo(SnappyKey::DEFAULT);
+        let mut shortcuts = Shortcuts::default();
+        shortcuts.replace(&[
+            (100, HotKeyRequest::new(7, combo("KeyJ"))),
+            (
+                200,
+                HotKeyRequest {
+                    reports_release: true,
+                    ..HotKeyRequest::new(8, combo("KeyB"))
+                },
+            ),
+        ]);
+        shortcuts
+    }
+
+    #[test]
+    fn a_carbon_hotkey_reports_the_shortcut_it_stands_for_and_its_release_only_when_asked() {
+        let mut shortcuts = shortcuts();
+        assert_eq!(shortcuts.event(100, true), Some(PlatformEvent::HotKey(7)));
+        assert_eq!(shortcuts.event(100, false), None);
+        assert_eq!(shortcuts.event(200, true), Some(PlatformEvent::HotKey(8)));
+        assert_eq!(
+            shortcuts.event(200, false),
+            Some(PlatformEvent::HotKeyReleased(8))
+        );
+        assert_eq!(shortcuts.event(300, true), None, "not Snappy's");
     }
 }

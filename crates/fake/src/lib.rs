@@ -15,4 +15,4 @@ mod windows;
 
 pub use fake_window::FakeWindow;
 pub use overlay::OverlayCall;
-pub use platform::FakePlatform;
+pub use platform::{FakePlatform, StackChange};

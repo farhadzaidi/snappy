@@ -25,9 +25,7 @@ use snappy_platform::Display;
 use zbus::blocking::{Connection as Bus, MessageIterator};
 
 use super::wayland::{CLICK_MS, FIRST_STEP, FOCUS_TIMEOUT, HOVER_MS, MOVE_START_TIMEOUT, POLL_MS};
-use crate::input::{
-    DRAG_HOLD_MS, DRAG_STEP_MS, Input, KEY_GAP_MS, MODIFIER_GAP_MS, MODIFIER_ORDER, along, pause,
-};
+use crate::input::{DRAG_HOLD_MS, DRAG_STEP_MS, Input, MODIFIER_GAP_MS, MODIFIER_ORDER, along, pause};
 use crate::screen::{FLOATING_LAYER, NORMAL_LAYER, ScreenWindow};
 
 /// The bus name the probe scripts answer to.
@@ -467,14 +465,10 @@ impl Input for KWinInput {
         self.modifiers(mods, false)
     }
 
-    fn key(&mut self, code: &KeyCode, _mods: Mods) -> Result<(), String> {
+    fn send_key(&mut self, code: &KeyCode, _mods: Mods, down: bool) -> Result<(), String> {
         let keycode = key_codes::evdev_keycode(code.as_str())
             .ok_or_else(|| format!("no key code for {}", code.as_str()))?;
-        for pressed in [true, false] {
-            self.key_event(keycode, pressed)?;
-            pause(KEY_GAP_MS);
-        }
-        Ok(())
+        self.key_event(keycode, down)
     }
 
     fn caps_lock(&mut self, down: bool) -> Result<(), String> {

@@ -26,6 +26,7 @@ Snappy arranges your windows into zones. Pick a layout for each display, then dr
 - **Layouts.** Eight ready-made layouts, or draw your own in the layout editor.
 - **Drag to snap.** Hold Shift while you drag a window, and drop it on a zone. Let go of Shift first to cancel.
 - **Full keyboard control.** Move windows between zones, move focus, and switch workspaces with [shortcuts](#shortcuts).
+- **Send to back.** Press a shortcut to send the focused window behind the windows it covers, so they show, or hold it to peek behind and let go to put it back.
 - **Workspaces.** Switch between groups of windows, each brought back exactly where it was.
 - **Swaps.** Drop a window on a taken zone to trade places, or stack on top if you prefer.
 - **Selection.** Select several windows to move them together.
@@ -186,6 +187,7 @@ Or hold <kbd>Caps Lock</kbd>, once you turn that on in Settings.
 |---|---|
 | <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> | Move the focused window to the neighboring zone |
 | <kbd>I</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> | Focus the next window up, left, down, or right |
+| <kbd>B</kbd> | Press to send the window to the back; hold to peek |
 | <kbd>Space</kbd> | Move the focused window, or the selection, into the nearest empty zone |
 | <kbd>Return</kbd> | Select or unselect the focused window |
 | <kbd>&#92;</kbd> | Clear the selection |

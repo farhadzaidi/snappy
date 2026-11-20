@@ -1,11 +1,12 @@
 //! Registering the shortcuts the current state needs, and telling the user about taken ones.
 
 use snappy_core::shortcuts::{HotKey, desired_hotkeys};
-use snappy_platform::Platform;
+use snappy_platform::{HotKeyRequest, Platform};
 
 use super::EngineState;
 use crate::actions::action_record;
 use crate::log_event::LogEvent;
+use crate::send_to_back;
 
 impl<P: Platform> EngineState<P> {
     /// Takes no shortcut as held, so the next `configure_hotkeys` registers every one again
@@ -26,16 +27,22 @@ impl<P: Platform> EngineState<P> {
         if wanted == self.registered && !self.registration_failed {
             return;
         }
-        let keys: Vec<(u32, _)> = wanted
+        // The platform forgets a shortcut held, so its release never comes.
+        send_to_back::cancel_put_back(self);
+        let shortcuts: Vec<HotKeyRequest> = wanted
             .iter()
             .enumerate()
-            .map(|(i, hotkey)| (i as u32, hotkey.combo.clone()))
+            .map(|(i, hotkey)| HotKeyRequest {
+                id: i as u32,
+                combo: hotkey.combo.clone(),
+                reports_release: hotkey.action.reports_release(),
+            })
             .collect();
-        let refused = if keys.is_empty() {
+        let refused = if shortcuts.is_empty() {
             self.platform.unregister_all();
             Vec::new()
         } else {
-            self.platform.register(&keys)
+            self.platform.register(&shortcuts)
         };
         self.registration_failed = !refused.is_empty();
         let platform = self.platform_name();

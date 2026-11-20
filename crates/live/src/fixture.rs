@@ -5,7 +5,7 @@
 //! its title.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use snappy_core::geometry::{Point, Rect, Size};
@@ -30,6 +30,8 @@ enum Frames {
 }
 
 pub struct Fixture {
+    /// The program, which `another` starts again.
+    program: PathBuf,
     child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
@@ -50,6 +52,7 @@ impl Fixture {
         let input = child.stdin.take().ok_or("the fixture has no input pipe")?;
         let output = child.stdout.take().ok_or("the fixture has no output pipe")?;
         Ok(Self {
+            program: program.to_owned(),
             child,
             input,
             output: BufReader::new(output),
@@ -75,6 +78,11 @@ impl Fixture {
     #[cfg(not(target_os = "linux"))]
     fn display_server(_command: &mut Command) -> (Frames, bool) {
         (Frames::Own, false)
+    }
+
+    /// Another fixture app, in a process of its own, for windows of a second app.
+    pub fn another(&self) -> Result<Self, String> {
+        Self::launch(&self.program)
     }
 
     /// Whether windows can size in steps, which Wayland has no way to ask for.
@@ -190,6 +198,11 @@ impl Fixture {
             #[cfg(target_os = "linux")]
             Frames::Shell(shell) => shell.focus_window(&Self::title(id)),
         }
+    }
+
+    /// The fixture's window with keyboard focus, if any.
+    pub fn focused(&mut self) -> Result<Option<String>, String> {
+        Ok(self.request(&Request::Focused)?.focused)
     }
 
     pub fn full_screen(&mut self, id: &str, on: bool) -> Result<(), String> {

@@ -273,7 +273,7 @@ pub fn answer(state: &mut FakeState, request: &Value) -> Value {
         "windows" => json!({"ok": state.windows}),
         "window" => json!({"ok": window(&request["id"])}),
         "focused" => json!({"ok": state.windows.first()}),
-        "setPosition" | "setSize" | "activate" | "unpark" => match window(&request["id"]) {
+        "setPosition" | "setSize" | "activate" | "unpark" | "lower" => match window(&request["id"]) {
             Some(_) => json!({"ok": null}),
             None => json!({"error": "gone"}),
         },

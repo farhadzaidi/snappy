@@ -27,7 +27,7 @@ The live suite, in `crates/live`, is the closest thing to a person using Snappy.
 
 It's two programs:
 
-- **`snappy-fixture`** opens plain windows on request: ordinary ones, ones with a minimum size, ones that size in steps like a terminal, and, on macOS, native tabs. On macOS it can also move a window to the desktop showing, as a window set to follow the user moves. Each window reports its own frame, which is the ground truth.
+- **`snappy-fixture`** opens plain windows on request: ordinary ones, ones with a minimum size, ones that size in steps like a terminal, and, on macOS, native tabs. On macOS it can also move a window to the desktop showing, as a window set to follow the user moves. Each window reports its own frame, which is the ground truth. A scenario that needs windows of a second app starts a second fixture.
 - **`snappy-live`** writes scratch settings, starts the daemon with `SNAPPY_HOME` pointing at a scratch folder and the debug log on, and runs the scenarios. It moves the pointer and presses keys the way hardware does, and writes `results.json` and a screenshot of each failure.
 
 `snappy-live` stops any running Snappy and takes over the pointer and keyboard. So it refuses to start unless a sandbox script has set `SNAPPY_LIVE_SANDBOX=1`.

@@ -6,6 +6,8 @@
 /** Hexadecimal digits of KWin's UUID that make a window's ID: few enough to stay exact as a
  * JavaScript number, plenty to keep a session's windows apart. */
 var ID_DIGITS = 12;
+/** The error for lowering a window that isn't the active one. */
+var NOT_ACTIVE = 'notActive';
 
 /** A window's ID, taken from KWin's UUID for it, so it outlives the script and the daemon. */
 function id(window) {
@@ -101,6 +103,16 @@ function withinLimits(window, width, height) {
         limit(width, window.minSize.width, window.maxSize.width, border.width),
         limit(height, window.minSize.height, window.maxSize.height, border.height),
     ];
+}
+
+/**
+ * Puts the active window behind every other. KWin's scripts can lower only the active window,
+ * and KWin then activates the window on top.
+ */
+function lower(workspace, window) {
+    if (workspace.activeWindow !== window)
+        throw new Error(NOT_ACTIVE);
+    workspace.slotWindowLower();
 }
 
 /** Restores a maximized or tiled window; Wayland apps confirm the new size later. */

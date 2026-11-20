@@ -76,6 +76,8 @@ Shortcuts are grabbed through GNOME Shell's `grab_accelerator`, by physical key,
 
 GNOME refuses a grab when it or another program already uses the chord, which is also how Snappy checks whether a chord is free.
 
+Accelerators fire on presses alone. So for a shortcut whose release matters, as send to back's does, the extension takes a keyboard grab of GNOME Shell's own from its press until its key comes up, as GNOME's window switcher does to see Alt let go, and reports it let go then (`shortcuts.js`). Meanwhile keys go to the grab, not to apps. It also samples the modifiers each frame while the shortcut is held, and reports it let go once they aren't all held, as KDE does, so the grab never outlasts the Snappy key. With Caps Lock as the Snappy key, that's when Caps Lock comes up. A chord without modifiers counts as let go at once.
+
 ## Drawing the zones
 
 The daemon works out the finished shapes, placed and colored as on every desktop, and sends them to the extension (`crates/linux/src/scene.rs`). The extension draws them in a layer per display, above everything in GNOME Shell, that takes no clicks or focus (`overlay.js`). Only scenes that changed are sent.
@@ -104,6 +106,8 @@ Snappy hides workspace windows on a GNOME workspace of its own, frames untouched
 
 Hidden windows are left out of Alt+Tab and the overview. Snappy's workspaces pause when the user switches to another GNOME workspace. Turning the extension off brings every hidden window back first.
 
+Sending a window to the back lowers it below the others, leaving it where it is (`windows.js`). Mutter offers extensions no way to put a window under another, so a window held back comes back in front, focused, where a focused window is anyway.
+
 ## Limitations and settings that get in the way
 
 - **Other tiling extensions.** Ubuntu's Enhanced Tiling, and the Tiling Assistant it comes from, also snap windows dragged to screen edges and act on Ctrl during drags. While one is running, Snappy's window says where to turn it off.
@@ -112,3 +116,4 @@ Hidden windows are left out of Alt+Tab and the overview. Snappy's workspaces pau
 - **Cell grids.** Wayland apps can't ask to be sized in steps, so only Xwayland apps, such as some terminals, snap to a cell grid.
 - **Activating a hidden window** from the dock or a notification makes GNOME switch to Snappy's hiding workspace. Snappy's workspaces pause there until you switch back.
 - **Apps that capture desktop shortcuts**, such as virtual machines and remote desktops, get Caps Lock's modifiers but no tap.
+- **Send to back** needs its keyboard grab to see its key let go. When GNOME Shell refuses the grab, as while one of its own pop-ups holds the keyboard, only the modifiers are sampled: until the Snappy key comes up, the shortcut counts as held, so a press held that way a fifth of a second puts the window back as it's let go. Pressing the key again before then is a new press, and the one before counts as a quick one. A chord without modifiers counts as let go at once, so its presses are always quick.

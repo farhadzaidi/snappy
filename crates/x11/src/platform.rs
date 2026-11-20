@@ -9,11 +9,12 @@ use std::time::{Duration, Instant};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Mods, Os};
+use snappy_core::send_to_back::Restacking;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
-    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray, TrayMenu,
-    WindowId, WindowInfo, WindowState, WindowSystem,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeyRequest, HotKeys,
+    Input, LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Tray,
+    TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 use x11rb::rust_connection::RustConnection;
 
@@ -128,6 +129,14 @@ impl WindowSystem for X11Platform {
         self.windows.focus(window);
     }
 
+    fn lower(&mut self, window: WindowId) -> Result<(), WindowError> {
+        self.windows.lower(window)
+    }
+
+    fn stack_below(&mut self, window: WindowId, sibling: WindowId) -> Result<(), WindowError> {
+        self.windows.stack_below(window, sibling)
+    }
+
     fn begin_bounds_change(&mut self, _window: WindowId) {}
 
     fn end_bounds_change(&mut self, _window: WindowId) -> Duration {
@@ -173,8 +182,8 @@ impl Input for X11Platform {
 }
 
 impl HotKeys for X11Platform {
-    fn register(&mut self, keys: &[(u32, Combo)]) -> Vec<u32> {
-        hotkeys::register(&self.shared, keys)
+    fn register(&mut self, shortcuts: &[HotKeyRequest]) -> Vec<u32> {
+        hotkeys::register(&self.shared, shortcuts)
     }
 
     fn unregister_all(&mut self) {
@@ -295,6 +304,7 @@ impl Platform for X11Platform {
         Capabilities {
             platform: Os::Linux,
             parking: ParkingPolicy::Desktop,
+            restacking: Restacking::Lower { stack_below: true },
             needs_permission: false,
             caps_lock_unavailable: None,
         }

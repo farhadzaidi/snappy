@@ -38,6 +38,10 @@ What tests need to read from an adapter, such as its view of displays and key co
 | Shortcuts | Carbon hotkeys | `RegisterHotKey` | `XGrabKey` | the extension | KDE's shortcut service |
 | Draws the zones in | a panel per display | a layered window per display | a window per display | GNOME Shell itself, through the extension | a layer-shell surface per display |
 | Hides workspace windows | at a screen corner | off screen | on a desktop of Snappy's | on a workspace of Snappy's | on a desktop of Snappy's |
+| Sends a window to the back by | raising the windows that show over it | lowering it | lowering it | lowering it | lowering it |
+| Puts a window held back where it was by | focusing it | focusing it, then restacking it under the window just in front of it, if one in front overlapped it | focusing it, then restacking it under the window just in front of it, if one in front overlapped it | focusing it | focusing it |
+| Lists windows front to back from | the window server's list | the z-order | the stacking list (EWMH) | Mutter's stacking | KWin's stacking order |
+| Hears a shortcut let go from | Carbon's release | a keyboard hook, while it's held | the grab's key release | a keyboard grab, while it's held, or the modifiers coming up | the shortcut service's release |
 | Caps Lock as the Snappy key | a key remapping and an event tap | a keyboard hook | a changed XKB key | an XKB option | an XKB option |
 | Permission it needs | Accessibility | none | none | none | none |
 

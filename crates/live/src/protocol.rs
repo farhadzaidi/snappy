@@ -48,6 +48,8 @@ pub enum Request {
         id: String,
         on: bool,
     },
+    /// Which window has keyboard focus, if one of the fixture's does.
+    Focused,
     Quit,
 }
 
@@ -55,6 +57,8 @@ pub enum Request {
 #[serde(rename_all = "camelCase")]
 pub struct Reply {
     pub frame: Option<Rect>,
+    /// The window with keyboard focus, for `Request::Focused`.
+    pub focused: Option<String>,
     pub error: Option<String>,
 }
 
@@ -62,14 +66,14 @@ impl Reply {
     pub fn frame(frame: Rect) -> Self {
         Self {
             frame: Some(frame),
-            error: None,
+            ..Self::default()
         }
     }
 
     pub fn error(message: impl Into<String>) -> Self {
         Self {
-            frame: None,
             error: Some(message.into()),
+            ..Self::default()
         }
     }
 }

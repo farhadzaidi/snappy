@@ -6,7 +6,9 @@ use serde::Serialize;
 
 use crate::keys::{KeyChord, Os};
 use crate::placement::navigate::Direction;
-use crate::settings::{NUMBERED_SWITCH_SHORTCUTS, NavigationShortcut, Settings, Workspace, WorkspaceStep};
+use crate::settings::{
+    NUMBERED_SWITCH_SHORTCUTS, NavigationShortcut, SEND_TO_BACK_DOES, Settings, Workspace, WorkspaceStep,
+};
 
 /// One line of help: what a family of default shortcuts does, and its keys as one chord
 /// whose label names every key, such as "← → ↑ ↓".
@@ -34,6 +36,10 @@ pub fn default_shortcuts(platform: Os) -> Vec<GuideEntry> {
                 [Direction::Up, Direction::Left, Direction::Down, Direction::Right]
                     .map(|direction| navigation(NavigationShortcut::Focus(direction))),
             ),
+        ),
+        (
+            SEND_TO_BACK_DOES.to_owned(),
+            navigation(NavigationShortcut::SendToBack),
         ),
         (
             "Select or unselect the window".to_owned(),
@@ -107,6 +113,7 @@ mod tests {
             [
                 ("Move to the neighboring zone", "Snappy + ← → ↑ ↓"),
                 ("Focus the window up, left, down, or right", "Snappy + I J K L"),
+                ("Press to send the window to the back; hold to peek", "Snappy + B"),
                 ("Select or unselect the window", "Snappy + ↩"),
                 ("Clear the selection", "Snappy + \\"),
                 (

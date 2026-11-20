@@ -68,23 +68,30 @@ impl Windows {
             .is_err_and(|error| error.is_gone())
     }
 
-    /// Activates the app, raises the window, and makes it the app's focused window.
-    /// Minimized windows are left alone.
+    /// Raises the window and makes it its app's main and focused window, then activates the
+    /// app. Activating brings the app's main window forward, so activating first would bring
+    /// whichever window was main forward too, and one focus would raise two windows. An app
+    /// that doesn't answer the raise isn't asked the rest, as each call would wait out the
+    /// messaging timeout again; activating it doesn't wait on the app. Minimized windows are
+    /// left alone.
     pub fn focus(&self, id: WindowId) {
         let Ok(entry) = self.tracked(id) else { return };
         if entry.element.bool_attribute(names::MINIMIZED).unwrap_or(false) {
             return;
         }
         let pid = entry.pid;
+        let raised = entry.element.perform(names::RAISE_ACTION);
+        if !raised.is_err_and(AxError::is_timeout) {
+            let _ = entry.element.set_bool(names::MAIN, true);
+            if let Some(application) = AxElement::application(pid, AX_MESSAGING_TIMEOUT) {
+                let _ = application.set_attribute(names::FOCUSED_WINDOW, entry.element.as_cf());
+            }
+        }
         main_thread::sync(move |_| {
             if let Some(app) = apps::running(pid) {
                 app.activateWithOptions(NSApplicationActivationOptions::empty());
             }
         });
-        let _ = entry.element.perform(names::RAISE_ACTION);
-        if let Some(application) = AxElement::application(pid, AX_MESSAGING_TIMEOUT) {
-            let _ = application.set_attribute(names::FOCUSED_WINDOW, entry.element.as_cf());
-        }
     }
 }
 

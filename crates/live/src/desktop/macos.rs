@@ -10,7 +10,7 @@ use objc2_core_graphics::{
 use snappy_core::geometry::{Point, Size};
 use snappy_core::keys::{KeyCode, Modifier, Mods};
 
-use crate::input::{Input, KEY_GAP_MS, MODIFIER_GAP_MS, MODIFIER_ORDER, POINTER_REST_MS, pause};
+use crate::input::{Input, MODIFIER_GAP_MS, MODIFIER_ORDER, POINTER_REST_MS, pause};
 use crate::screen::ScreenWindow;
 
 /// Posts events at the HID level, where window drags and global shortcuts see them.
@@ -101,7 +101,7 @@ impl Input for MacInput {
         mouse(CGEventType::LeftMouseUp, at, mods)
     }
 
-    fn key(&mut self, code: &KeyCode, mods: Mods) -> Result<(), String> {
+    fn send_key(&mut self, code: &KeyCode, mods: Mods, down: bool) -> Result<(), String> {
         let key = snappy_macos::reference::virtual_key_code(code)
             .and_then(|key| u16::try_from(key).ok())
             .ok_or_else(|| format!("no key code for {}", code.as_str()))?;
@@ -112,12 +112,9 @@ impl Input for MacInput {
         } else {
             CGEventFlags::empty()
         };
-        for down in [true, false] {
-            let event = CGEvent::new_keyboard_event(None, key, down).ok_or("couldn't create a key event")?;
-            CGEvent::set_flags(Some(&event), flags(mods) | extra);
-            CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
-            pause(KEY_GAP_MS);
-        }
+        let event = CGEvent::new_keyboard_event(None, key, down).ok_or("couldn't create a key event")?;
+        CGEvent::set_flags(Some(&event), flags(mods) | extra);
+        CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
         Ok(())
     }
 

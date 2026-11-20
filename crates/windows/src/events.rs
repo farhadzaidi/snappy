@@ -120,7 +120,8 @@ pub fn cursor() -> Point {
     Point::new(f64::from(point.x), f64::from(point.y))
 }
 
-fn is_down(vk: u16) -> bool {
+/// Whether virtual key `vk` is down now.
+pub(crate) fn is_down(vk: u16) -> bool {
     // SAFETY: a plain query.
     let state = unsafe { GetAsyncKeyState(i32::from(vk)) };
     state < 0

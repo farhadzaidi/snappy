@@ -15,7 +15,8 @@ use snappy_gnome::protocol::SHELL_BUS_NAME;
 use snappy_gnome::{App, GnomePlatform, Stopper};
 use snappy_linux::key_codes;
 use snappy_platform::{
-    CapsLock, DesktopGuard, HotKeys, Input, LiveControl, Overlay, Platform, PlatformEvent, WindowSystem,
+    CapsLock, DesktopGuard, HotKeyRequest, HotKeys, Input, LiveControl, Overlay, Platform, PlatformEvent,
+    WindowSystem,
 };
 use zbus::blocking::Connection;
 
@@ -96,7 +97,11 @@ impl Shell {
         std::thread::sleep(Duration::from_millis(300));
         const PROBE: u32 = 9_999;
         let probe = KeyChord::snappy("F12", []).combo(SnappyKey::DEFAULT);
-        assert!(self.platform.register(&[(PROBE, probe)]).is_empty());
+        assert!(
+            self.platform
+                .register(&[HotKeyRequest::new(PROBE, probe)])
+                .is_empty()
+        );
         let f12 = key_codes::evdev_keycode("F12").unwrap();
         let escape = key_codes::evdev_keycode("Escape").unwrap();
         let deadline = Instant::now() + WAIT;

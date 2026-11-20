@@ -286,7 +286,12 @@ mod tests {
             sections[0]["shortcuts"][4]["title"],
             "Move to the nearest empty zone"
         );
-        assert_eq!(sections[1]["shortcuts"].as_array().unwrap().len(), 6);
+        assert_eq!(sections[1]["shortcuts"].as_array().unwrap().len(), 7);
+        assert_eq!(sections[1]["shortcuts"][4]["title"], "Send to back");
+        assert_eq!(
+            sections[1]["shortcuts"][4]["hint"],
+            "Press to send the window to the back; hold to peek."
+        );
         assert_eq!(
             sections[2]["shortcuts"][3]["title"],
             "Send window to next workspace"

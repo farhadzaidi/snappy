@@ -7,6 +7,8 @@ pub use snappy_core::eligibility::NOT_STANDARD;
 pub const ELEVATED: &str = "Snappy can't move windows of apps running as administrator.";
 pub const NO_FOCUSED_WINDOW: &str = "No movable window is focused.";
 pub const WINDOW_GONE: &str = "The window is no longer available.";
+pub const STAYS_ON_TOP: &str = "Snappy can't put a window that stays on top behind others.";
+pub const UNDER_ONE_ON_TOP: &str = "Snappy can't put a window back under one that stays on top.";
 pub const CAPS_LOCK_REMAPPED: &str = "Caps Lock is already remapped by the Scancode Map in the registry. Remove that to use Caps Lock as the Snappy key.";
 pub const CAPS_LOCK_UNAVAILABLE: &str = "Snappy couldn't watch the keyboard for Caps Lock. Try again.";
 

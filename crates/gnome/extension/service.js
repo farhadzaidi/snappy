@@ -16,7 +16,7 @@ import {Shortcuts} from './shortcuts.js';
 import * as Windows from './windows.js';
 
 /** Changes whenever a request, reply, or event changes shape. The app checks it. */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 const OBJECT_PATH = '/io/github/farhadzaidi/Snappy/Shell';
 /** The error for a request that names a window that has closed. */
@@ -169,6 +169,9 @@ export class Service {
             return null;
         case 'activate':
             Windows.activate(this._window(request.id));
+            return null;
+        case 'lower':
+            Windows.lower(this._window(request.id));
             return null;
         case 'clearFocus':
             Windows.clearFocus();

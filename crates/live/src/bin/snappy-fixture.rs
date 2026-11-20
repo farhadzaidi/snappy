@@ -150,6 +150,14 @@ impl Fixture {
                 }
                 None => Reply::error(format!("no window {id}")),
             },
+            Request::Focused => Reply {
+                focused: self
+                    .windows
+                    .iter()
+                    .find(|(_, window)| window.has_focus())
+                    .map(|(id, _)| id.clone()),
+                ..Reply::default()
+            },
             Request::Quit => {
                 event_loop.exit();
                 Reply::default()

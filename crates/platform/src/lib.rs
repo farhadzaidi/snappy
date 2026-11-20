@@ -1,5 +1,6 @@
 //! The interfaces every operating-system adapter implements, the events adapters report,
-//! the tray glyph the trays that take pixels draw (`glyph`), how every overlay looks
+//! how the shortcuts that report being let go are followed (`held_shortcuts`), the tray
+//! glyph the trays that take pixels draw (`glyph`), how every overlay looks
 //! (`overlay_style`), how the daemon is started (`launch`), and what removing Snappy asks of
 //! adapters (`uninstall`). The engine calls the interfaces from its own thread; calls may
 //! block only up to the platform's messaging timeout.
@@ -8,11 +9,13 @@ mod caps_lock;
 mod desktop_guard;
 mod events;
 pub mod glyph;
+mod held_shortcuts;
 mod hotkeys;
 mod input;
 pub mod launch;
 mod live_control;
 mod login_item;
+mod messages;
 mod overlay;
 pub mod overlay_style;
 mod permissions;
@@ -27,7 +30,8 @@ pub use snappy_core::window::WindowId;
 pub use caps_lock::{CapsLock, CapsLockInput, CapsLockRefusal, CapsLockUndo};
 pub use desktop_guard::DesktopGuard;
 pub use events::PlatformEvent;
-pub use hotkeys::HotKeys;
+pub use held_shortcuts::{HeldShortcuts, KeyRepeat};
+pub use hotkeys::{HotKeyRequest, HotKeys};
 pub use input::Input;
 pub use live_control::{LiveControl, Remedy};
 pub use login_item::LoginItem;

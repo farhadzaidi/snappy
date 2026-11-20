@@ -205,13 +205,16 @@ mod tests {
             .map(|n| snappy_core::settings::Workspace::numbered(format!("workspace-{n}"), n))
             .collect();
         let combos = snappy_core::shortcuts::bound_combos(&settings);
-        assert_eq!(combos.len(), 4 + 9 + 5 + 6);
-        assert!(
-            combos.contains(
-                &snappy_core::keys::KeyChord::snappy("Backslash", [])
-                    .combo(snappy_core::keys::SnappyKey::DEFAULT)
-            )
-        );
+        assert_eq!(combos.len(), 4 + 9 + 5 + 7);
+        for code in ["Backslash", "KeyB"] {
+            assert!(
+                combos.contains(
+                    &snappy_core::keys::KeyChord::snappy(code, [])
+                        .combo(snappy_core::keys::SnappyKey::DEFAULT)
+                ),
+                "{code}"
+            );
+        }
         for combo in combos {
             let carbon = CarbonChord::from_combo(&combo).unwrap();
             assert!(!is_taken(carbon, &shipped), "{combo:?}");

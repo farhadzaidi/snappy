@@ -8,6 +8,7 @@ pub mod geometry;
 pub mod keys;
 pub mod layout;
 pub mod placement;
+pub mod send_to_back;
 pub mod settings;
 pub mod shortcuts;
 pub mod window;

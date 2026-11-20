@@ -133,10 +133,14 @@ export interface ResetOutcome {
 /** A shortcut that belongs to no workspace or layout, which the Settings page lists. */
 export type GlobalShortcutId = Extract<ShortcutId, { kind: "navigation" | "workspaceStep" | "history" }>;
 
-/** A shortcut as a section lists it: what it is, its title, and its chord. */
+/**
+ * A shortcut as a section lists it: what it is, its title, what's said under the title if that
+ * doesn't say it all, and its chord.
+ */
 export interface ListedShortcut {
   id: GlobalShortcutId;
   title: string;
+  hint?: string;
   chord: KeyChord | null;
 }
 

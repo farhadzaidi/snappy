@@ -17,7 +17,7 @@ use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
-use crate::input::{Input, KEY_GAP_MS, MODIFIER_GAP_MS, MODIFIER_ORDER, POINTER_REST_MS, pause};
+use crate::input::{Input, MODIFIER_GAP_MS, MODIFIER_ORDER, POINTER_REST_MS, pause};
 use crate::screen::{FLOATING_LAYER, NORMAL_LAYER, ScreenWindow};
 
 /// The primary button, as XTest numbers it.
@@ -90,16 +90,13 @@ impl Input for X11Input {
         self.fake(BUTTON_RELEASE_EVENT, PRIMARY_BUTTON, None)
     }
 
-    fn key(&mut self, code: &KeyCode, _mods: Mods) -> Result<(), String> {
+    fn send_key(&mut self, code: &KeyCode, _mods: Mods, down: bool) -> Result<(), String> {
         let key = self
             .keys
             .keycode(code)
             .ok_or_else(|| format!("no key code for {}", code.as_str()))?;
-        for kind in [KEY_PRESS_EVENT, KEY_RELEASE_EVENT] {
-            self.fake(kind, key, None)?;
-            pause(KEY_GAP_MS);
-        }
-        Ok(())
+        let kind = if down { KEY_PRESS_EVENT } else { KEY_RELEASE_EVENT };
+        self.fake(kind, key, None)
     }
 
     fn caps_lock(&mut self, down: bool) -> Result<(), String> {

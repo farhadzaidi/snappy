@@ -6,13 +6,14 @@ use std::time::{Duration, Instant};
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
 use snappy_core::keys::{Combo, Modifier, Mods, Os};
+use snappy_core::send_to_back::Restacking;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_linux::journal;
 use snappy_linux::windows::ReportedWindow;
 use snappy_linux::{login_item, scene};
 use snappy_platform::{
-    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeys, Input,
-    LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Remedy, Tray,
+    Capabilities, CapsLock, CapsLockRefusal, CapsLockUndo, DesktopGuard, Display, HotKeyRequest, HotKeys,
+    Input, LiveControl, LoginItem, Overlay, OverlayMarks, OverlayScene, Permissions, Platform, Remedy, Tray,
     TrayMenu, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
@@ -242,6 +243,10 @@ impl WindowSystem for GnomePlatform {
         let _ = self.send(&Request::Activate { id: window.0 });
     }
 
+    fn lower(&mut self, window: WindowId) -> Result<(), WindowError> {
+        self.send(&Request::Lower { id: window.0 })
+    }
+
     fn begin_bounds_change(&mut self, _window: WindowId) {}
 
     fn end_bounds_change(&mut self, _window: WindowId) -> Duration {
@@ -323,19 +328,27 @@ impl Input for GnomePlatform {
 impl HotKeys for GnomePlatform {
     /// Chords that resolve to the same accelerator share one grab, the last ID winning, as
     /// they do on X11.
-    fn register(&mut self, keys: &[(u32, Combo)]) -> Vec<u32> {
+    fn register(&mut self, shortcuts: &[HotKeyRequest]) -> Vec<u32> {
         let mut refused = Vec::new();
         let mut grabs: Vec<Accelerator> = Vec::new();
         let mut sharing: Vec<(String, u32)> = Vec::new();
-        for (id, combo) in keys {
-            let Some(accelerator) = keys::accelerator(combo) else {
-                refused.push(*id);
+        for shortcut in shortcuts {
+            let Some(accelerator) = keys::accelerator(&shortcut.combo) else {
+                refused.push(shortcut.id);
                 continue;
             };
-            sharing.push((accelerator.clone(), *id));
+            sharing.push((accelerator.clone(), shortcut.id));
+            let release = keys::release(shortcut);
             match grabs.iter_mut().find(|grab| grab.accelerator == accelerator) {
-                Some(grab) => grab.id = *id,
-                None => grabs.push(Accelerator { id: *id, accelerator }),
+                Some(grab) => {
+                    grab.id = shortcut.id;
+                    grab.release = release;
+                }
+                None => grabs.push(Accelerator {
+                    id: shortcut.id,
+                    accelerator,
+                    release,
+                }),
             }
         }
         let refused_grabs = self.shared.register(grabs.clone());
@@ -550,6 +563,7 @@ impl Platform for GnomePlatform {
         Capabilities {
             platform: Os::Linux,
             parking: ParkingPolicy::Desktop,
+            restacking: Restacking::Lower { stack_below: false },
             needs_permission: false,
             caps_lock_unavailable: None,
         }

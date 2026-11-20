@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub use snappy_linux::scene::Frame;
 
 /// Matches `PROTOCOL_VERSION` in the script's `service.js`.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The name KWin knows the loaded script by.
 pub const SCRIPT_NAME: &str = "snappy";
@@ -33,6 +33,8 @@ pub const REFUSED_ALL_DESKTOPS: &str = "allDesktops";
 pub const REFUSED_NOT_MOVED: &str = "notMoved";
 /// The error a request names a window with when the window is gone.
 pub const GONE: &str = "gone";
+/// The error for lowering a window that isn't the active one, which KWin's scripts can't.
+pub const NOT_ACTIVE: &str = "notActive";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -54,6 +56,7 @@ pub enum Request {
     ClearDesktops,
     Park { id: u64 },
     Unpark { id: u64 },
+    Lower { id: u64 },
 }
 
 /// A request as it waits for the script, numbered so its answer finds its way back.
@@ -248,6 +251,7 @@ mod tests {
             Request::ClearDesktops,
             Request::Park { id: 0 },
             Request::Unpark { id: 0 },
+            Request::Lower { id: 0 },
         ];
         for request in &all {
             match request {
@@ -267,7 +271,8 @@ mod tests {
                 | Request::OnBoundDesktop
                 | Request::ClearDesktops
                 | Request::Park { .. }
-                | Request::Unpark { .. } => {}
+                | Request::Unpark { .. }
+                | Request::Lower { .. } => {}
             }
         }
         all
@@ -319,6 +324,8 @@ mod tests {
         for name in [BUS_NAME, OBJECT_PATH, INTERFACE, DOORBELL, GONE] {
             assert!(service.contains(&format!("'{name}'")), "{name}");
         }
+        let windows = include_str!("../script/windows.js");
+        assert!(windows.contains(&format!("'{NOT_ACTIVE}'")), "{NOT_ACTIVE}");
         let parking = include_str!("../script/parking.js");
         for refusal in [REFUSED_ALL_DESKTOPS, REFUSED_NOT_MOVED] {
             assert!(parking.contains(&format!("'{refusal}'")), "{refusal}");

@@ -5,6 +5,7 @@ mod caps_lock;
 mod focus;
 mod moves;
 mod selection;
+mod send_to_back;
 mod shell;
 mod snappy_key;
 mod support;
@@ -23,6 +24,10 @@ use moves::{
 };
 use selection::{
     place_selection, select_along_by_number, select_two_along_by_step, select_without_workspaces, unselect,
+};
+use send_to_back::{
+    caps_lock_send_to_back, put_back_floating, put_back_snappy_key_first, put_back_stack,
+    send_to_back_beside_wide, send_to_back_floating, send_to_back_stack, send_to_back_two_apps,
 };
 use shell::{menu_bar_item, menu_bar_menu_opens, overlay_floats};
 use snappy_key::chosen_snappy_key;
@@ -132,6 +137,34 @@ pub const ALL: &[(&str, Scenario)] = &[
         focus_zones,
     ),
     (
+        "pressing_send_to_back_sends_the_window_in_front_behind_the_others",
+        send_to_back_stack,
+    ),
+    (
+        "pressing_send_to_back_sends_the_window_in_front_behind_another_apps_windows_in_order",
+        send_to_back_two_apps,
+    ),
+    (
+        "pressing_send_to_back_leaves_a_window_in_front_of_a_covered_one_in_front_of_it",
+        send_to_back_beside_wide,
+    ),
+    (
+        "pressing_send_to_back_twice_from_a_floating_window_moves_only_the_window_sent_back",
+        send_to_back_floating,
+    ),
+    (
+        "holding_send_to_back_shows_whats_behind_and_letting_go_puts_it_back",
+        put_back_stack,
+    ),
+    (
+        "holding_send_to_back_on_a_floating_window_puts_the_stack_back_exactly",
+        put_back_floating,
+    ),
+    (
+        "holding_send_to_back_and_letting_go_of_the_snappy_key_first_still_puts_it_back",
+        put_back_snappy_key_first,
+    ),
+    (
         "space_places_two_selected_floating_windows_into_empty_zones",
         place_selection,
     ),
@@ -146,6 +179,10 @@ pub const ALL: &[(&str, Scenario)] = &[
     (
         "caps_lock_held_is_the_snappy_key_and_tapped_alone_toggles_caps_lock",
         caps_lock_as_snappy_key,
+    ),
+    (
+        "caps_lock_and_b_press_and_hold_as_send_to_back_does",
+        caps_lock_send_to_back,
     ),
     (
         "restarting_keeps_every_window_in_its_workspace_and_quitting_still_returns_them",

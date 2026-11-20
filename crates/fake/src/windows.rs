@@ -5,11 +5,16 @@ use std::time::Duration;
 
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect, Size};
+use snappy_core::send_to_back::Restacking;
+use snappy_core::window::WindowSnapshot;
 use snappy_platform::{
     Display, HiddenTab, TabEvidence, TabGroup, WindowId, WindowInfo, WindowState, WindowSystem,
 };
 
-use crate::platform::FakePlatform;
+use crate::platform::{FakePlatform, StackChange};
+
+/// For a restacking this desktop's capabilities say it can't do.
+const CANT_RESTACK: &str = "This desktop can't restack windows that way.";
 
 impl WindowSystem for FakePlatform {
     fn displays(&mut self) -> Vec<Display> {
@@ -43,7 +48,7 @@ impl WindowSystem for FakePlatform {
 
     fn set_size(&mut self, window: WindowId, size: Size) -> Result<(), WindowError> {
         self.writes.push((window, "size"));
-        let frame = self.window(window)?.frame;
+        let frame = self.writable(window)?.frame;
         let on_display = self.fully_on_a_display(frame);
         let target = self.window_mut(window)?;
         if target.frozen || (target.strict_resize && !on_display) {
@@ -59,6 +64,7 @@ impl WindowSystem for FakePlatform {
 
     fn set_position(&mut self, window: WindowId, origin: Point) -> Result<(), WindowError> {
         self.writes.push((window, "position"));
+        self.writable(window)?;
         let target = self.window_mut(window)?;
         if !target.frozen {
             target.frame = target.frame.with_origin(origin);
@@ -75,11 +81,17 @@ impl WindowSystem for FakePlatform {
     }
 
     fn visible_windows(&mut self, app: Option<&str>) -> Vec<WindowInfo> {
-        self.windows
-            .iter()
-            .filter(|(_, w)| w.is_shown() && !w.state.minimized && app.is_none_or(|app| w.app == app))
-            .filter(|(_, w)| !w.state.full_screen)
-            .filter_map(|(id, _)| self.info(*id))
+        self.front_to_back()
+            .into_iter()
+            .filter(|id| {
+                self.windows.get(id).is_some_and(|w| {
+                    w.is_shown()
+                        && !w.state.minimized
+                        && !w.state.full_screen
+                        && app.is_none_or(|app| w.app == app)
+                })
+            })
+            .filter_map(|id| self.info(id))
             .collect()
     }
 
@@ -138,6 +150,7 @@ impl WindowSystem for FakePlatform {
 
     /// Focusing raises the window, as every platform does. Focusing a hidden tab shows it.
     fn focus(&mut self, window: WindowId) {
+        self.stack_changes.push((window, StackChange::Focus));
         if self
             .windows
             .get(&window)
@@ -148,6 +161,76 @@ impl WindowSystem for FakePlatform {
         self.focused = Some(window);
         self.stacking.retain(|id| *id != window);
         self.stacking.insert(0, window);
+        self.unshown_reads = self.stack_lag;
+    }
+
+    /// Lowering keeps focus where it is, as the desktops that lower windows do.
+    fn lower(&mut self, window: WindowId) -> Result<(), WindowError> {
+        if !matches!(self.restacking, Restacking::Lower { .. }) {
+            return Err(WindowError::unavailable(CANT_RESTACK));
+        }
+        self.stack_changes.push((window, StackChange::Lower));
+        self.window(window)?;
+        self.stacking.retain(|id| *id != window);
+        self.stacking.push(window);
+        Ok(())
+    }
+
+    fn stack_below(&mut self, window: WindowId, sibling: WindowId) -> Result<(), WindowError> {
+        if self.restacking != (Restacking::Lower { stack_below: true }) {
+            return Err(WindowError::unavailable(CANT_RESTACK));
+        }
+        self.stack_changes
+            .push((window, StackChange::StackBelow(sibling)));
+        self.window(window)?;
+        self.stacking.retain(|id| *id != window);
+        let place = self
+            .stacking
+            .iter()
+            .position(|id| *id == sibling)
+            .map_or(0, |at| at + 1);
+        self.stacking.insert(place, window);
+        Ok(())
+    }
+
+    /// Raising lands as core's `Raises` counts on, as on macOS. A window whose app is hung
+    /// can't be raised.
+    fn raise(&mut self, window: WindowId) -> Result<(), WindowError> {
+        if self.restacking != Restacking::RaiseOnly {
+            return Err(WindowError::unavailable(CANT_RESTACK));
+        }
+        self.stack_changes.push((window, StackChange::Raise));
+        let app = self.writable(window)?.app.clone();
+        let active = self
+            .focused
+            .and_then(|focused| self.windows.get(&focused))
+            .map(|w| w.app.clone());
+        self.stacking.retain(|id| *id != window);
+        let place = match active {
+            Some(active) if active != app => self
+                .stacking
+                .iter()
+                .position(|id| self.windows.get(id).is_some_and(|w| w.app == active))
+                .map_or(0, |front| front + 1),
+            _ => 0,
+        };
+        self.stacking.insert(place, window);
+        self.unshown_reads = self.stack_lag;
+        Ok(())
+    }
+
+    /// Shows the order once `stack_lag` reads have passed since the last raise or focus.
+    fn shows_in_order(&mut self, windows: &[WindowSnapshot]) -> bool {
+        if self.unshown_reads > 0 {
+            self.unshown_reads -= 1;
+            return false;
+        }
+        let order = self.front_to_back();
+        let places: Vec<Option<usize>> = windows
+            .iter()
+            .map(|window| order.iter().position(|id| *id == window.id))
+            .collect();
+        places.iter().all(Option::is_some) && places.windows(2).all(|pair| pair[0] < pair[1])
     }
 
     fn begin_bounds_change(&mut self, window: WindowId) {

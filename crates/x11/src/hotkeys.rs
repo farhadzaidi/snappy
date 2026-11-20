@@ -1,10 +1,13 @@
 //! Global shortcuts through `XGrabKey` on the root window. Each chord is
 //! grabbed once per Caps Lock and Num Lock combination; `BadAccess` means another client
-//! holds it, which doubles as the availability probe.
+//! holds it, which doubles as the availability probe. A grabbed key's release goes to the
+//! grab too, so a shortcut that reports being let go needs nothing more.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use snappy_core::keys::Combo;
+use snappy_platform::{HeldShortcuts, HotKeyRequest, KeyRepeat, PlatformEvent};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt, GrabMode, ModMask};
 use x11rb::wrapper::ConnectionExt as _;
@@ -14,16 +17,37 @@ use crate::shared::{Shared, lock};
 /// A key as grabbed: keycode and modifier mask without lock bits.
 type Grab = (u8, u16);
 
-/// Registered shortcuts by grab.
-#[derive(Debug, Default)]
+/// Registered shortcuts by grab, and which of those that report being let go are down.
+#[derive(Debug)]
 pub struct HotKeyTable {
     ids: HashMap<Grab, u32>,
+    /// The event thread passes on no press of a key already down, the key repeating.
+    held: HeldShortcuts,
+}
+
+impl Default for HotKeyTable {
+    fn default() -> Self {
+        Self {
+            ids: HashMap::new(),
+            held: HeldShortcuts::new(KeyRepeat::Never),
+        }
+    }
 }
 
 impl HotKeyTable {
     /// The shortcut a key press with `relevant` modifier bits triggers.
     pub fn lookup(&self, keycode: u8, relevant: u16) -> Option<u32> {
         self.ids.get(&(keycode, relevant)).copied()
+    }
+
+    /// What a press of shortcut `id` reports.
+    pub fn pressed(&mut self, id: u32) -> Option<PlatformEvent> {
+        self.held.pressed(id, Instant::now())
+    }
+
+    /// What a release of shortcut `id` reports.
+    pub fn released(&mut self, id: u32) -> Option<PlatformEvent> {
+        self.held.released(id)
     }
 
     fn contains(&self, grab: Grab) -> bool {
@@ -83,17 +107,19 @@ fn ungrab(shared: &Shared, (keycode, modifiers): Grab) {
     }
 }
 
-/// Replaces every registration with `keys`. Returns the IDs that couldn't be grabbed.
-pub fn register(shared: &Shared, keys: &[(u32, Combo)]) -> Vec<u32> {
+/// Replaces every registration with `shortcuts`, forgetting any held. Returns the IDs that
+/// couldn't be grabbed.
+pub fn register(shared: &Shared, shortcuts: &[HotKeyRequest]) -> Vec<u32> {
     unregister_all(shared);
     let mut table = HotKeyTable::default();
+    table.held.register(shortcuts);
     let mut refused = Vec::new();
-    for (id, combo) in keys {
-        match resolve(shared, combo) {
+    for shortcut in shortcuts {
+        match resolve(shared, &shortcut.combo) {
             Some(key) if table.contains(key) || grab(shared, key) => {
-                table.ids.insert(key, *id);
+                table.ids.insert(key, shortcut.id);
             }
-            _ => refused.push(*id),
+            _ => refused.push(shortcut.id),
         }
     }
     *lock(&shared.hotkeys) = table;

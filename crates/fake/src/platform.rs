@@ -6,6 +6,7 @@ use std::time::Duration;
 use snappy_core::error::WindowError;
 use snappy_core::geometry::{Point, Rect};
 use snappy_core::keys::{Combo, Modifier, Mods, Os};
+use snappy_core::send_to_back::Restacking;
 use snappy_core::workspace::ParkingPolicy;
 use snappy_platform::{
     Capabilities, CapsLockRefusal, CapsLockUndo, Display, LiveControl, MarkedWindow, Platform, RecoveryKey,
@@ -19,6 +20,7 @@ use crate::overlay::OverlayCall;
 pub struct FakePlatform {
     pub platform: Os,
     pub parking: ParkingPolicy,
+    pub restacking: Restacking,
     pub needs_permission: bool,
     /// Why Caps Lock can never be the Snappy key, as a build without it declares.
     pub caps_lock_unavailable: Option<&'static str>,
@@ -35,11 +37,21 @@ pub struct FakePlatform {
     /// Front to back.
     pub stacking: Vec<WindowId>,
     pub focused: Option<WindowId>,
+    /// The windows Snappy focused, raised, lowered, or restacked, in order.
+    pub stack_changes: Vec<(WindowId, StackChange)>,
+    /// How many times the window list is read after each raise or focus before it shows the
+    /// new order, as a window server shows a raise a frame or two late. `usize::MAX` never
+    /// does.
+    pub stack_lag: usize,
+    /// Reads left before the window list shows the last raise or focus.
+    pub unshown_reads: usize,
     pub granted: bool,
     pub settings_page_opens: usize,
     pub access_requests: usize,
     pub waiting_for_grant: bool,
     pub registered: Vec<(u32, Combo)>,
+    /// The registered shortcuts that report being let go as well.
+    pub reporting_release: BTreeSet<u32>,
     /// How many times shortcuts were registered.
     pub registrations: usize,
     /// Chords some other app owns.
@@ -82,11 +94,24 @@ pub struct FakePlatform {
     pub pointer: Point,
 }
 
+/// A change Snappy asked for to a window's place in the stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackChange {
+    /// Focused, which raises it.
+    Focus,
+    /// Raised alone, without focusing it.
+    Raise,
+    Lower,
+    /// Put directly behind this window.
+    StackBelow(WindowId),
+}
+
 impl Default for FakePlatform {
     fn default() -> Self {
         Self {
             platform: Os::MacOs,
             parking: ParkingPolicy::CornerSliver,
+            restacking: Restacking::RaiseOnly,
             needs_permission: true,
             caps_lock_unavailable: None,
             live_control: LiveControl::Available,
@@ -97,11 +122,15 @@ impl Default for FakePlatform {
             windows: BTreeMap::new(),
             stacking: Vec::new(),
             focused: None,
+            stack_changes: Vec::new(),
+            stack_lag: 0,
+            unshown_reads: 0,
             granted: true,
             settings_page_opens: 0,
             access_requests: 0,
             waiting_for_grant: false,
             registered: Vec::new(),
+            reporting_release: BTreeSet::new(),
             registrations: 0,
             taken_elsewhere: BTreeSet::new(),
             caps_lock_held_as: None,
@@ -148,6 +177,13 @@ impl FakePlatform {
         self.stacking.insert(0, id);
         self.focused = Some(id);
         id
+    }
+
+    /// Every window, front to back: the stacked ones, then any a test added to `windows`
+    /// alone.
+    pub fn front_to_back(&self) -> Vec<WindowId> {
+        let unstacked = self.windows.keys().filter(|id| !self.stacking.contains(id));
+        self.stacking.iter().chain(unstacked).copied().collect()
     }
 
     pub fn frame_of(&self, id: WindowId) -> Rect {
@@ -233,6 +269,15 @@ impl FakePlatform {
             .ok_or_else(|| WindowError::unavailable("The window is no longer available."))
     }
 
+    /// The window, unless its app is hung and a write to it fails.
+    pub(crate) fn writable(&self, id: WindowId) -> Result<&FakeWindow, WindowError> {
+        let window = self.window(id)?;
+        if window.hung {
+            return Err(WindowError::unavailable("The app isn't answering."));
+        }
+        Ok(window)
+    }
+
     pub(crate) fn info(&self, id: WindowId) -> Option<WindowInfo> {
         self.windows.get(&id).map(|window| WindowInfo {
             id,
@@ -280,6 +325,7 @@ impl Platform for FakePlatform {
         Capabilities {
             platform: self.platform,
             parking: self.parking,
+            restacking: self.restacking,
             needs_permission: self.needs_permission,
             caps_lock_unavailable: self.caps_lock_unavailable,
         }

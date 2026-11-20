@@ -36,11 +36,14 @@ pub struct SectionOfShortcuts {
     pub shortcuts: Vec<ListedShortcut>,
 }
 
-/// A shortcut as a section lists it: what it is, its title, and its chord.
+/// A shortcut as a section lists it: what it is, its title, what's said under the title if
+/// that doesn't say it all, and its chord.
 #[derive(Serialize)]
 pub struct ListedShortcut {
     pub id: ShortcutId,
     pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
     pub chord: Option<KeyChord>,
 }
 

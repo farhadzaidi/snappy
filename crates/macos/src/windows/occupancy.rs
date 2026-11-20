@@ -13,6 +13,8 @@ use crate::thresholds::WINDOW_LIST_MATCH;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ServerWindow {
     pub pid: i32,
+    /// The window server's number for the window, no other window's while it exists.
+    pub number: u32,
     pub layer: i64,
     pub frame: Rect,
 }
@@ -94,17 +96,32 @@ pub fn is_on_screen(frame: Rect, pid: i32, rows: &[ServerWindow]) -> bool {
         .any(|row| row.pid == pid && row.is_app_window() && same_frame(frame, row.frame))
 }
 
-/// Which of one app's windows to keep: windows sharing an identical frame are
-/// ambiguous and dropped, unless one is the app's focused window.
-pub fn unambiguous(frames: &[Rect], focused: Option<usize>) -> Vec<bool> {
+/// Whether process `pid` has any app window on screen. An app without one has no visible
+/// window to ask Accessibility about.
+pub fn has_on_screen_window(pid: i32, rows: &[ServerWindow]) -> bool {
+    rows.iter().any(|row| row.pid == pid && row.is_app_window())
+}
+
+/// Which of process `pid`'s windows with `frames` to keep: windows sharing an identical
+/// frame are ambiguous and dropped, unless one is the app's window at `focused`, or the
+/// window server's `rows` show as many of the app's windows with that frame as there are,
+/// so every one of them is on screen, as windows stacked in one zone are.
+pub fn unambiguous(frames: &[Rect], focused: Option<usize>, pid: i32, rows: &[ServerWindow]) -> Vec<bool> {
     frames
         .iter()
         .enumerate()
         .map(|(index, frame)| {
             let twins = frames.iter().filter(|other| *other == frame).count();
-            twins == 1 || focused == Some(index)
+            twins == 1 || focused == Some(index) || shown_at(*frame, pid, rows) >= twins
         })
         .collect()
+}
+
+/// How many of process `pid`'s on-screen windows have `frame`.
+fn shown_at(frame: Rect, pid: i32, rows: &[ServerWindow]) -> usize {
+    rows.iter()
+        .filter(|row| row.pid == pid && row.is_app_window() && same_frame(frame, row.frame))
+        .count()
 }
 
 /// Which apps a hit test at a point may ask.
@@ -139,7 +156,12 @@ mod tests {
     const ZONE: Rect = Rect::new(12.0, 37.0, 700.0, 851.0);
 
     fn row(pid: i32, layer: i64, frame: Rect) -> ServerWindow {
-        ServerWindow { pid, layer, frame }
+        ServerWindow {
+            pid,
+            number: 0,
+            layer,
+            frame,
+        }
     }
 
     fn candidate(frame: Rect) -> SwapCandidate {
@@ -225,12 +247,41 @@ mod tests {
     }
 
     #[test]
-    fn identical_frames_are_dropped_unless_focused() {
+    fn an_app_has_a_window_on_screen_only_with_a_layer_zero_row() {
+        let rows = [row(10, 0, ZONE), row(11, 3, ZONE)];
+        assert!(has_on_screen_window(10, &rows));
+        assert!(!has_on_screen_window(11, &rows), "only a floating window");
+        assert!(!has_on_screen_window(12, &rows));
+    }
+
+    #[test]
+    fn identical_frames_are_dropped_unless_focused_or_each_on_screen() {
         let other = Rect::new(0.0, 0.0, 5.0, 5.0);
-        assert_eq!(unambiguous(&[ZONE, ZONE, other], None), vec![false, false, true]);
+        let frames = [ZONE, ZONE, other];
+        let one_shown = [row(10, 0, ZONE), row(10, 0, other)];
         assert_eq!(
-            unambiguous(&[ZONE, ZONE, other], Some(1)),
+            unambiguous(&frames, None, 10, &one_shown),
+            vec![false, false, true]
+        );
+        assert_eq!(
+            unambiguous(&frames, Some(1), 10, &one_shown),
             vec![false, true, true]
+        );
+        let both_shown = [
+            row(10, 0, ZONE),
+            row(11, 0, ZONE),
+            row(10, 0, ZONE),
+            row(10, 3, ZONE),
+        ];
+        assert_eq!(
+            unambiguous(&frames, None, 10, &both_shown),
+            vec![true, true, true],
+            "both stacked in the zone, so both on screen"
+        );
+        assert_eq!(
+            unambiguous(&frames, None, 11, &both_shown),
+            vec![false, false, true],
+            "only one of another app's"
         );
     }
 

@@ -28,11 +28,21 @@ pub trait Input {
     fn pointer_down(&mut self, at: Point, mods: Mods) -> Result<(), String>;
     fn pointer_drag(&mut self, to: Point, mods: Mods) -> Result<(), String>;
     fn pointer_up(&mut self, at: Point, mods: Mods) -> Result<(), String>;
-    fn key(&mut self, code: &KeyCode, mods: Mods) -> Result<(), String>;
+    /// Press a key, or let it go with `down` false, with `mods` held.
+    fn send_key(&mut self, code: &KeyCode, mods: Mods, down: bool) -> Result<(), String>;
     /// Press Caps Lock, or let it go with `down` false.
     fn caps_lock(&mut self, down: bool) -> Result<(), String>;
     /// Whether Caps Lock is on.
     fn caps_lock_on(&mut self) -> Result<bool, String>;
+
+    /// Press and release a key with `mods` held.
+    fn key(&mut self, code: &KeyCode, mods: Mods) -> Result<(), String> {
+        for down in [true, false] {
+            self.send_key(code, mods, down)?;
+            pause(KEY_GAP_MS);
+        }
+        Ok(())
+    }
 
     /// Press and release a key with its modifiers, the Snappy key already expanded.
     fn chord(&mut self, combo: &Combo) -> Result<(), String> {
@@ -40,6 +50,21 @@ pub trait Input {
         let pressed = self.key(&combo.code, combo.mods);
         self.modifiers(combo.mods, false)?;
         pressed
+    }
+
+    /// Press a chord and keep it down, as a hand holding a shortcut does, until
+    /// `let_go_of_chord`.
+    fn hold_chord(&mut self, combo: &Combo) -> Result<(), String> {
+        self.modifiers(combo.mods, true)?;
+        self.send_key(&combo.code, combo.mods, true)
+    }
+
+    /// Let go of a chord `hold_chord` pressed: its key, then its modifiers.
+    fn let_go_of_chord(&mut self, combo: &Combo) -> Result<(), String> {
+        let released = self.send_key(&combo.code, combo.mods, false);
+        pause(KEY_GAP_MS);
+        self.modifiers(combo.mods, false)?;
+        released
     }
 
     /// Drag from `from` to `to` in `steps` moves, holding `mods` throughout.

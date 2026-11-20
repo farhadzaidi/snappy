@@ -55,6 +55,7 @@ The daemon registers its shortcuts with KDE's shortcut service itself, as the co
 - **By symbol, not position.** KDE matches the character a key types, not the physical key. So Snappy names keys by what they type on a US layout.
 - **No sharing.** The service would give one key to two actions, so Snappy itself refuses a chord another component holds. That's also how it checks whether a chord is free.
 - **Snappy's settings decide.** Keys are set without loading ones saved earlier, so the keys are always the ones in Snappy's settings.
+- **Releases.** The service reports a shortcut let go as well as pressed, as soon as any key of its chord comes up, the Snappy key's included. It reports the press again as the key repeats. Snappy passes on the release only for a shortcut whose release matters, as send to back's does, and one press and one release for each time it goes down. A press while the shortcut is down counts as its key repeating only within a second of the last, so a release the service drops never leaves the shortcut down for good.
 
 ## Drawing the zones
 
@@ -86,6 +87,8 @@ If it wasn't, KWin can't find the option yet. Snappy checks the keymap KWin buil
 Snappy hides workspace windows on a virtual desktop named "Snappy", added last when it's first needed and found again by name after a restart (`parking.js`). Frames stay untouched. While hidden, windows are left out of the task manager, the pager, and the window switcher.
 
 Snappy's workspaces pause when the user switches to another desktop. When Snappy stops, it removes the "Snappy" desktop once it's empty.
+
+Sending a window to the back lowers it below the others, leaving it where it is. KWin's scripts can lower only the active window, as KWin's own Lower action does, after which KWin activates the window on top. The daemon waits for the script's answer, so a refusal for a window that isn't active comes back as an error. A window Snappy just asked KWin to activate, as a press straight after another targets the window the last one focused, may not be active yet, so the daemon asks again for up to a quarter of a second until it is. Snappy then focuses the window core picks, which may not be the one KWin activated. KWin's scripts can't put a window under another, so a window held back comes back in front, focused, where a focused window is anyway.
 
 ## Quitting
 

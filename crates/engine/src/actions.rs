@@ -1,7 +1,7 @@
 //! Global shortcut actions: zones and moving between zones (swapping with the occupant or
 //! stacking on it, as the settings say), moving to the nearest empty zone, layout
-//! selection, undo and redo, and workspaces. Focus is in `focus`, and the selection in
-//! `selection`.
+//! selection, undo and redo, and workspaces. Focus is in `focus`, the selection in
+//! `selection`, and sending to the back in `send_to_back`.
 
 use std::rc::Rc;
 
@@ -14,15 +14,17 @@ use snappy_core::placement::navigate::{Direction, destination};
 use snappy_core::placement::swap::ZoneSlot;
 use snappy_core::shortcuts::HotKeyAction;
 use snappy_platform::{Display, Platform, WindowInfo};
+use tokio::time::Instant;
 
 use crate::drag::{swap_source, zone_slots};
 use crate::log_event::LogEvent;
 use crate::ops::{Shared, SnapRequest, SwapMove, run_redo, run_snap, run_swap, run_undo};
 use crate::state::{EngineState, PendingNavigation};
 use crate::workspaces::{AfterSend, SwitchFocus};
-use crate::{caps_lock, focus, selection, workspaces};
+use crate::{caps_lock, focus, selection, send_to_back, workspaces};
 
-pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
+/// Shortcut `id` was pressed, as the daemon received at `pressed_at`.
+pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32, pressed_at: Instant) {
     let (action, combo) = {
         let mut core = shared.core.borrow_mut();
         if core.recording || !core.settings.snapping.shortcuts_enabled {
@@ -61,6 +63,7 @@ pub(crate) fn hotkey<P: Platform + 'static>(shared: &Rc<Shared<P>>, id: u32) {
         HotKeyAction::FocusWindow(direction) => focus::focus_toward(shared, direction),
         HotKeyAction::SelectWindow => selection::toggle(&mut shared.core.borrow_mut()),
         HotKeyAction::ClearSelection => selection::clear(&mut shared.core.borrow_mut(), "cleared"),
+        HotKeyAction::SendToBack => send_to_back::pressed(shared, pressed_at),
     }
 }
 

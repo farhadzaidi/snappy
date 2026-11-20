@@ -9,6 +9,7 @@ pub const WINDOW_GONE: &str = "The window is no longer available.";
 pub const KWIN_UNREACHABLE: &str = "Snappy can't reach KWin right now. Try again in a moment.";
 pub const ON_ALL_DESKTOPS: &str = "This window shows on every desktop, so Snappy can't hide it.";
 pub const HIDE_REFUSED: &str = "KWin didn't let Snappy hide this window.";
+pub const LOWER_NOT_ACTIVE: &str = "KWin lets Snappy lower only the active window. Click it and try again.";
 pub const UNEXPECTED_REPLY: &str = "Snappy and its KWin script don't agree. Quit and reopen Snappy.";
 
 pub const KWIN_NOT_RUNNING: &str = "Snappy can't find KWin. Snappy works with KDE Plasma's window manager.";

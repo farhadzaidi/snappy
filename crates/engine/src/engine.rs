@@ -5,6 +5,7 @@ use std::rc::Rc;
 use snappy_core::settings::Settings;
 use snappy_ipc::{Command, ToApp};
 use snappy_platform::{Platform, PlatformEvent};
+use tokio::time::Instant;
 
 use crate::diagnostics::SwitchTiming;
 use crate::ops::Shared;
@@ -15,10 +16,22 @@ use crate::{caps_lock, commands, workspaces};
 /// Something for the engine to handle.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    Platform(PlatformEvent),
+    Platform { event: PlatformEvent, received: Instant },
     Command { id: u64, command: Command },
     AppStarted { pid: u32 },
     AppExited,
+}
+
+impl Input {
+    /// `event`, received now. The daemon takes each event in as it arrives, on a thread the
+    /// engine's own calls never hold up, so an event that waits while the engine is busy
+    /// keeps its time, and a shortcut's press and release are timed as they happened.
+    pub fn platform(event: PlatformEvent) -> Input {
+        Input::Platform {
+            event,
+            received: Instant::now(),
+        }
+    }
 }
 
 pub struct Engine<P: Platform + 'static> {
@@ -62,7 +75,7 @@ impl<P: Platform + 'static> Engine<P> {
 
     pub fn handle(&self, input: Input) {
         match input {
-            Input::Platform(event) => self.handle_event(event),
+            Input::Platform { event, received } => self.handle_event(event, received),
             Input::Command { id, command } => commands::handle(&self.shared, id, command),
             Input::AppStarted { pid } => {
                 let mut core = self.shared.core.borrow_mut();

@@ -22,6 +22,8 @@ interface ShortcutRecorderProps {
   conflictOf: (chord: KeyChord) => Refusal | null;
   /** Without a handler the recorder only shows its shortcut. */
   onChange?: (chord: KeyChord | null) => void;
+  /** The element, such as its row's hint, that says more about the shortcut, if any. */
+  describedBy?: string | undefined;
 }
 
 /**
@@ -29,7 +31,14 @@ interface ShortcutRecorderProps {
  * has every Snappy shortcut unregistered. Recording ends on a result, on Escape or Cancel,
  * on a press elsewhere, when another recorder starts, or when the recorder goes away.
  */
-export function ShortcutRecorder({ shortcut, title, chord, conflictOf, onChange }: ShortcutRecorderProps) {
+export function ShortcutRecorder({
+  shortcut,
+  title,
+  chord,
+  conflictOf,
+  onChange,
+  describedBy,
+}: ShortcutRecorderProps) {
   const { client, recording: recordings } = useServices();
   const { platform, settings } = useAppState();
   const id = useId();
@@ -132,7 +141,7 @@ export function ShortcutRecorder({ shortcut, title, chord, conflictOf, onChange 
           data-recording={recording}
           data-assigned={chord !== null}
           aria-label={title}
-          aria-describedby={descriptionId}
+          aria-describedby={describedBy === undefined ? descriptionId : `${descriptionId} ${describedBy}`}
           title={hint ?? recorderHelp(platform, settings.snappyKey)}
           disabled={!onChange}
           onClick={begin}

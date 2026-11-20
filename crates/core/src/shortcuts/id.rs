@@ -163,6 +163,14 @@ impl ShortcutId {
         }
     }
 
+    /// What the app says under the shortcut's title, for one whose title doesn't say it all.
+    pub fn hint(&self) -> Option<String> {
+        match self {
+            ShortcutId::Navigation { shortcut } => shortcut.hint(),
+            _ => None,
+        }
+    }
+
     /// The name the app and messages give it, or none for a workspace, layout, or
     /// zone that doesn't exist.
     pub fn title(&self, settings: &Settings) -> Option<String> {

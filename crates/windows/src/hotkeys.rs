@@ -3,9 +3,14 @@
 //! Chords name physical keys; each is registered with the virtual key the foreground
 //! thread's keyboard layout gives it, and re-registered when that layout changes.
 //! Registering a chord and releasing it at once doubles as the availability probe.
+//!
+//! `RegisterHotKey` reports presses only. For a shortcut that reports being let go, the
+//! keyboard hook runs from its press until its key comes up, and looks at that key alone.
+
+use std::time::Instant;
 
 use snappy_core::keys::{Combo, Modifier, Mods};
-use snappy_platform::PlatformEvent;
+use snappy_platform::{HeldShortcuts, HotKeyRequest, KeyRepeat};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardLayout, HKL, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
@@ -13,6 +18,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
+use crate::events::is_down;
 use crate::keys::virtual_key;
 use crate::main_state::Main;
 
@@ -28,13 +34,27 @@ struct Registered {
     binding: Binding,
 }
 
-/// The shortcuts the engine wants, those registered, and the layout their virtual keys
-/// came from. A shortcut one layout refuses stays wanted, so another layout can register it.
-#[derive(Default)]
+/// The shortcuts the engine wants, those registered, the layout their virtual keys came
+/// from, and which shortcuts that report being let go are down. A shortcut one layout
+/// refuses stays wanted, so another layout can register it.
 pub struct HotKeyTable {
-    wanted: Vec<(u32, Combo)>,
+    wanted: Vec<HotKeyRequest>,
     registered: Vec<Registered>,
     layout: isize,
+    /// `MOD_NOREPEAT` keeps a held hotkey from repeating, and the hook ignores its key
+    /// going down again.
+    held: HeldShortcuts,
+}
+
+impl Default for HotKeyTable {
+    fn default() -> Self {
+        Self {
+            wanted: Vec::new(),
+            registered: Vec::new(),
+            layout: 0,
+            held: HeldShortcuts::new(KeyRepeat::Never),
+        }
+    }
 }
 
 impl HotKeyTable {
@@ -45,6 +65,12 @@ impl HotKeyTable {
             .iter()
             .find(|registered| registered.binding == binding)
             .map(|registered| registered.engine)
+    }
+
+    /// Whether a shortcut that reports being let go is down, so the keyboard hook watches
+    /// for its key.
+    pub fn is_holding(&self) -> bool {
+        self.held.any_down()
     }
 }
 
@@ -93,10 +119,13 @@ fn unregister_one(window: HWND, id: i32) {
 }
 
 impl Main {
-    /// Replaces every registration with `keys`. Returns the IDs that couldn't be
-    /// registered. A chord listed twice triggers the later ID.
-    pub fn register_hotkeys(&mut self, keys: &[(u32, Combo)]) -> Vec<u32> {
-        self.hotkeys.wanted = keys.to_vec();
+    /// Replaces every registration with `shortcuts`. Returns the IDs that couldn't be
+    /// registered. A chord listed twice triggers the later ID. A shortcut still held is
+    /// forgotten, its release unreported.
+    pub fn register_hotkeys(&mut self, shortcuts: &[HotKeyRequest]) -> Vec<u32> {
+        self.hotkeys.wanted = shortcuts.to_vec();
+        self.hotkeys.held.register(shortcuts);
+        self.update_input_hooks();
         self.register_wanted(foreground_layout())
     }
 
@@ -106,9 +135,9 @@ impl Main {
         self.release_hotkeys();
         self.hotkeys.layout = layout.0 as isize;
         let mut refused = Vec::new();
-        for (index, (engine, combo)) in self.hotkeys.wanted.iter().enumerate() {
-            let Some(key) = binding(combo, layout) else {
-                refused.push(*engine);
+        for (index, wanted) in self.hotkeys.wanted.iter().enumerate() {
+            let Some(key) = binding(&wanted.combo, layout) else {
+                refused.push(wanted.id);
                 continue;
             };
             if let Some(existing) = self
@@ -117,17 +146,17 @@ impl Main {
                 .iter_mut()
                 .find(|item| item.binding == key)
             {
-                existing.engine = *engine;
+                existing.engine = wanted.id;
                 continue;
             }
             let native = index as i32 + 1;
             if !register_one(self.window, native, key) {
-                refused.push(*engine);
+                refused.push(wanted.id);
                 continue;
             }
             self.hotkeys.registered.push(Registered {
                 native,
-                engine: *engine,
+                engine: wanted.id,
                 binding: key,
             });
         }
@@ -143,6 +172,8 @@ impl Main {
 
     pub fn unregister_hotkeys(&mut self) {
         self.hotkeys.wanted.clear();
+        self.hotkeys.held.register(&[]);
+        self.update_input_hooks();
         self.release_hotkeys();
     }
 
@@ -167,16 +198,63 @@ impl Main {
         free
     }
 
-    /// `WM_HOTKEY` for one of Snappy's registrations.
+    /// `WM_HOTKEY` for one of Snappy's registrations. By now its key may be up again, too
+    /// soon for the hook to see it.
     pub fn hotkey_pressed(&mut self, native: i32) {
-        let engine = self
+        let pressed = self
             .hotkeys
             .registered
             .iter()
             .find(|item| item.native == native)
-            .map(|item| item.engine);
-        if let Some(engine) = engine {
-            self.emit(PlatformEvent::HotKey(engine));
+            .map(|item| (item.engine, item.binding.1));
+        if let Some((engine, vk)) = pressed {
+            self.shortcut_pressed(engine);
+            if !is_down(vk) {
+                self.release_shortcut(engine);
+            }
+        }
+    }
+
+    /// Report a shortcut's press. One that reports being let go is held from now until its
+    /// key comes up, with the keyboard hook installed to see it; when the hook can't be,
+    /// it's let go at once, so a hold never outlasts the key.
+    pub fn shortcut_pressed(&mut self, engine: u32) {
+        if let Some(event) = self.hotkeys.held.pressed(engine, Instant::now()) {
+            self.emit(event);
+        }
+        if !self.hotkeys.held.is_down(engine) {
+            return;
+        }
+        self.update_input_hooks();
+        if self.keyboard.is_none() {
+            self.release_shortcut(engine);
+        }
+    }
+
+    /// A key reached the keyboard hook: a held shortcut's key coming up lets it go. Its key
+    /// going down again is the key repeating.
+    pub fn held_shortcut_key(&mut self, vk: u32, down: bool) {
+        if down || !self.hotkeys.is_holding() {
+            return;
+        }
+        let let_go: Vec<u32> = self
+            .hotkeys
+            .registered
+            .iter()
+            .filter(|registered| u32::from(registered.binding.1) == vk)
+            .map(|registered| registered.engine)
+            .collect();
+        for engine in let_go {
+            self.release_shortcut(engine);
+        }
+    }
+
+    /// Report shortcut `engine` let go, if it's held, and remove the hook if nothing else
+    /// needs it.
+    fn release_shortcut(&mut self, engine: u32) {
+        if let Some(event) = self.hotkeys.held.released(engine) {
+            self.emit(event);
+            self.update_input_hooks();
         }
     }
 

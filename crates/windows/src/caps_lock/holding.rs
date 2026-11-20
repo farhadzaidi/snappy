@@ -66,12 +66,13 @@ impl Main {
         self.caps_lock.as_ref().is_some_and(CapsLockKeys::is_held)
     }
 
-    fn report(&self, effect: Effect) {
-        self.emit(match effect {
-            Effect::Pressed => PlatformEvent::CapsLock(CapsLockInput::Pressed),
-            Effect::OtherInput => PlatformEvent::CapsLock(CapsLockInput::OtherInput),
-            Effect::Released => PlatformEvent::CapsLock(CapsLockInput::Released),
-            Effect::Shortcut(id) => PlatformEvent::HotKey(id),
-        });
+    /// Report what a key or button did: Caps Lock's own presses, or a shortcut it completed.
+    fn report(&mut self, effect: Effect) {
+        match effect {
+            Effect::Pressed => self.emit(PlatformEvent::CapsLock(CapsLockInput::Pressed)),
+            Effect::OtherInput => self.emit(PlatformEvent::CapsLock(CapsLockInput::OtherInput)),
+            Effect::Released => self.emit(PlatformEvent::CapsLock(CapsLockInput::Released)),
+            Effect::Shortcut(id) => self.shortcut_pressed(id),
+        }
     }
 }
