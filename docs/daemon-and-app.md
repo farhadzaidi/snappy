@@ -51,6 +51,8 @@ The daemon starts the app, `snappy-app`, when someone asks for Snappy's window: 
 
 Those pipes are the only connection between the two. There's no socket to find or secure, and the app can't outlive the daemon that started it. That's also why the two programs are always installed side by side: the daemon looks for `snappy-app` next to its own executable, or, inside the macOS app, at `Contents/Helpers/Snappy App.app`.
 
+The window starts hidden and shows once the UI has drawn. The web view takes a moment to start, and a window shown before then would sit empty and ignore clicks. If the UI hasn't drawn within 3 seconds, the window shows anyway, so a UI that fails to start still leaves a window to close (`src/visibility.rs`). On macOS the app is an accessory app from launch, with no Dock icon; switching to that only once the window showed would hand activation back to the app that had it, leaving the window in front but not taking clicks.
+
 The app quits when its window closes. If someone asks for the window while the app is already running, the daemon tells it to come forward, first switching to the workspace the window is in if that workspace isn't showing.
 
 ## What the two programs say to each other
@@ -86,7 +88,7 @@ It works this way because of the Mac App Store's sandbox, which grants a picked 
 
 The app is two layers.
 
-**A Rust shell**, in `apps/app/src-tauri`, built with Tauri. It passes messages between the pipes and the web UI, adds the Edit menu that text fields on macOS need for copy and paste, reports which display the window is on, and reads and writes import and export files (`src/settings_file.rs`). Its content security policy allows only bundled files, and its one plugin is the file dialog.
+**A Rust shell**, in `apps/app/src-tauri`, built with Tauri. It passes messages between the pipes and the web UI, adds the Edit menu that text fields on macOS need for copy and paste, reports which display the window is on, shows the window when the UI says it has drawn or after a deadline, and reads and writes import and export files (`src/settings_file.rs`). Its content security policy allows only bundled files, and its one plugin is the file dialog.
 
 **A React UI**, in `apps/app/ui/src`. It has four pages, Layouts, Editor, Workspaces, and Settings, each in a folder of its own. `state/daemonClient.ts` sends commands and turns each new state into what the pages draw.
 

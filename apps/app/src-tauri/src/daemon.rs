@@ -9,7 +9,7 @@ use std::thread;
 use snappy_ipc::{Command, DAEMON_ARGUMENT, PROTOCOL_VERSION, ToApp, ToDaemon, read_message, write_message};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::window;
+use crate::visibility::Visibility;
 
 /// The event that carries daemon messages to the web UI.
 pub const MESSAGE_EVENT: &str = "snappy://message";
@@ -138,7 +138,7 @@ fn handle(app: &AppHandle, message: ToApp) {
             app.exit(1);
         }
         ToApp::Hello { .. } => {}
-        ToApp::Focus => window::focus(app),
+        ToApp::Focus => app.state::<Visibility>().bring_forward(app),
         other => app.state::<Inbox>().deliver(app, other),
     }
 }

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { lastCommandOf, openApp, widthsOf } from "./support";
+import { FIRST_LOAD_TIMEOUT_MS, lastCommandOf, openApp, widthsOf } from "./support";
 
 const reason = "Log out and back in to finish setting up Snappy's GNOME Shell extension.";
 
@@ -18,6 +18,20 @@ test("the page tabs put the editor beside the layouts", async ({ page }) => {
   await openApp(page);
   const tabs = page.getByRole("navigation", { name: "Pages" }).getByRole("button");
   await expect(tabs).toHaveText(["Layouts", "Editor", "Workspaces", "Settings"]);
+});
+
+test("the window shows once the UI has drawn, and takes the first click", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof window.snappyWindow?.shownText === "string", null, {
+    timeout: FIRST_LOAD_TIMEOUT_MS,
+  });
+  const shownText = await page.evaluate(() => window.snappyWindow.shownText);
+  for (const tab of ["Layouts", "Editor", "Workspaces", "Settings"]) {
+    expect(shownText).toContain(tab);
+  }
+
+  await page.getByRole("navigation", { name: "Pages" }).getByRole("button", { name: "Settings" }).click();
+  await expect(page.locator(".page")).toHaveAttribute("data-page", "settings");
 });
 
 test("why snapping can't run shows under the header until it can", async ({ page }) => {

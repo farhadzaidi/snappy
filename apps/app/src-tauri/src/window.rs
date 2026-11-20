@@ -1,4 +1,4 @@
-//! The app's window: its Edit menu on macOS, display, and focus.
+//! The app's window: its Edit menu on macOS and the display it's on.
 
 #[cfg(target_os = "macos")]
 use tauri::Wry;
@@ -92,14 +92,6 @@ fn is_wayland(session_type: Option<&str>, wayland_display: Option<&str>) -> bool
     }
 }
 
-pub fn focus(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW)
-        && let Err(error) = window.set_focus()
-    {
-        eprintln!("snappy-app: couldn't focus the window: {error}");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -129,6 +121,7 @@ mod tests {
         assert_eq!(window["hiddenTitle"], true);
         assert_eq!(window["titleBarStyle"], "Transparent");
         assert_eq!(window["backgroundColor"], "#0E1115");
+        assert_eq!(window["visible"], false, "the window waits for the UI to draw");
     }
 
     #[test]

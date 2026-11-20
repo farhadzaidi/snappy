@@ -40,13 +40,15 @@ import "./settings/settings.css";
 async function fakeDaemonBridge(): Promise<Bridge> {
   const { FakeDaemon, fakeBridge } = await import("./bridge/fake/fakeDaemon");
   const { FakeFiles } = await import("./bridge/fake/fakeFiles");
+  const { FakeWindow } = await import("./bridge/fake/fakeWindow");
   const query = new URLSearchParams(window.location.search);
   const platform = (query.get("platform") ?? "macos") as PlatformName;
   const build = (query.get("build") ?? "github") as FakeBuild;
   const daemon = new FakeDaemon(platform, build);
   const files = new FakeFiles();
-  Object.assign(window, { snappyFake: daemon, snappyFiles: files });
-  return fakeBridge(daemon, files);
+  const shellWindow = new FakeWindow();
+  Object.assign(window, { snappyFake: daemon, snappyFiles: files, snappyWindow: shellWindow });
+  return fakeBridge(daemon, files, shellWindow);
 }
 
 async function start(): Promise<void> {

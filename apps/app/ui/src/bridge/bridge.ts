@@ -28,6 +28,8 @@ export interface Bridge {
   files: SettingsFiles;
   /** The frame of the display the window is on, so the display chooser starts there. */
   windowDisplayFrame(): Promise<Rect | null>;
+  /** Show the window, which stays hidden until the UI has drawn, and bring it forward. */
+  showWindow(): void;
 }
 
 /** The file name export suggests. */

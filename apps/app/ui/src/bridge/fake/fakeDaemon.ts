@@ -6,6 +6,7 @@ import { core } from "../../core/snappyCore";
 import type { Bridge, Transport } from "../bridge";
 import type { AppState, Command, ToApp } from "../protocol";
 import type { FakeFiles } from "./fakeFiles";
+import type { FakeWindow } from "./fakeWindow";
 import { FAKE_DISPLAYS, initialState, type FakeBuild } from "./fixtures";
 import { applyCommand } from "./reducer";
 
@@ -108,10 +109,11 @@ export class FakeDaemon implements Transport {
   }
 }
 
-export function fakeBridge(daemon: FakeDaemon, files: FakeFiles): Bridge {
+export function fakeBridge(daemon: FakeDaemon, files: FakeFiles, shellWindow: FakeWindow): Bridge {
   return {
     transport: daemon,
     files,
     windowDisplayFrame: () => Promise.resolve(FAKE_DISPLAYS[0]?.frame ?? null),
+    showWindow: () => shellWindow.show(),
   };
 }

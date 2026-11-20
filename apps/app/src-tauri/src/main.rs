@@ -5,6 +5,7 @@
 
 mod daemon;
 mod settings_file;
+mod visibility;
 mod window;
 
 use std::path::PathBuf;
@@ -14,11 +15,18 @@ use tauri::{AppHandle, State};
 
 use crate::daemon::{Inbox, Outbox};
 use crate::settings_file::SettingsFileError;
+use crate::visibility::Visibility;
 
 /// The web UI is listening; deliver the messages that arrived before it was.
 #[tauri::command]
 fn ui_ready(app: AppHandle, inbox: State<'_, Inbox>) {
     inbox.open(&app);
+}
+
+/// The UI has drawn: show the window.
+#[tauri::command]
+fn show_window(app: AppHandle, visibility: State<'_, Visibility>) {
+    visibility.drawn(&app);
 }
 
 /// The frame of the display the window is on, or null when it can't be read.
@@ -50,36 +58,50 @@ fn main() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Inbox::default())
+        .manage(Visibility::default())
         .manage(outbox.clone());
     // Only macOS needs a menu: there it is the system menu bar, and its Edit items give text
     // fields the standard shortcuts. Elsewhere it would sit inside the window, and the web
     // view handles those shortcuts itself.
     #[cfg(target_os = "macos")]
     let builder = builder.menu(window::menu);
-    let result = builder
+    let built = builder
         .invoke_handler(tauri::generate_handler![
             ui_ready,
+            show_window,
             send_command,
             window_display_frame,
             read_settings_file,
             write_settings_file
         ])
         .setup(move |app| {
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
             if let Some(link) = link {
                 link.start(app.handle());
             }
-            window::focus(app.handle());
+            Visibility::start_deadline(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    if let Err(error) = result {
-        eprintln!("snappy-app: {error}");
-        std::process::exit(1);
-    }
+    let app = match built {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("snappy-app: {error}");
+            std::process::exit(1);
+        }
+    };
+    #[cfg(target_os = "macos")]
+    let app = without_dock_icon(app);
+    app.run(|_, _| {});
+}
+
+/// An accessory app, with no Dock icon or Command-Tab entry. Set before the event loop starts,
+/// so it applies at launch: changed any later, macOS hands activation back to the app that had
+/// it, and the window stays in front without taking clicks until the user switches away and back.
+#[cfg(target_os = "macos")]
+fn without_dock_icon(mut app: tauri::App) -> tauri::App {
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    app
 }
 
 #[cfg(test)]
@@ -97,6 +119,7 @@ mod tests {
         let bridge = include_str!("../../ui/src/bridge/tauriBridge.ts");
         let commands = [
             "ui_ready",
+            "show_window",
             "send_command",
             "window_display_frame",
             "read_settings_file",

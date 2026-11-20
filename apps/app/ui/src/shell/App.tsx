@@ -16,6 +16,7 @@ import { ShellNotices } from "./ShellNotices";
  * wait for the daemon's first State.
  */
 export function App() {
+  useShowWindowOnceDrawn();
   const { client } = useServices();
   const connected = useObservable(client.state) !== null;
   const { page } = useSession();
@@ -48,6 +49,12 @@ function CurrentPage({ page }: { page: Page }) {
     case "settings":
       return <SettingsPage />;
   }
+}
+
+/** The window stays hidden until the UI first draws, so it never shows without anything to click. */
+function useShowWindowOnceDrawn() {
+  const { bridge } = useServices();
+  useEffect(() => bridge.showWindow(), [bridge]);
 }
 
 /** Behavior that spans pages once the daemon is connected. */

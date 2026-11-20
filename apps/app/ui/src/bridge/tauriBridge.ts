@@ -10,6 +10,7 @@ import type { ToApp } from "./protocol";
 const MESSAGE_EVENT = "snappy://message";
 /** The Rust shell's commands. */
 const UI_READY = "ui_ready";
+const SHOW_WINDOW = "show_window";
 const SEND_COMMAND = "send_command";
 const WINDOW_DISPLAY_FRAME = "window_display_frame";
 const READ_SETTINGS_FILE = "read_settings_file";
@@ -52,4 +53,5 @@ export const tauriBridge: Bridge = {
     },
   },
   windowDisplayFrame: () => invoke<Rect | null>(WINDOW_DISPLAY_FRAME),
+  showWindow: () => void invoke(SHOW_WINDOW),
 };
