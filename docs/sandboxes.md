@@ -116,6 +116,14 @@ As on GNOME, the live suite runs once on Wayland and once through Xwayland.
 
 **What you need:** an Apple Silicon Mac with [Tart](https://tart.run), and a Tart VM named `snappy-macos`, cloned from `ghcr.io/cirruslabs/macos-sequoia-base` with System Integrity Protection turned off. Set it up once by hand. `SNAPPY_MACOS_VM` names a different VM.
 
+Clone the pinned image, so every copy of the VM runs the same macOS and has the same machine identity. The VM takes its identity from the image, and that identity is the device ID a development provisioning profile lists, so a different image means registering the VM again:
+
+```sh
+tart clone ghcr.io/cirruslabs/macos-sequoia-base@sha256:8386ef670c04b38e57bd0e97fe2cde6bc0598e1bcfba0212ecba1814e659a6b1 snappy-macos
+```
+
+Its Provisioning UDID, from `system_profiler SPHardwareDataType` inside it, is `85355da4147db56cfc71d0e878c7af8ea73d9263`.
+
 ```sh
 tools/live/macos/live.sh
 ```
