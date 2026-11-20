@@ -16,13 +16,14 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSNotificationName,
-    NSObjectProtocol, ns_string,
+    NSObjectProtocol, NSString, ns_string,
 };
 use snappy_platform::PlatformEvent;
 
 use super::ax;
 use crate::apps;
 use crate::events::emit;
+use crate::instance::QUIT_NOTIFICATION;
 use crate::permissions;
 use crate::space_visits;
 
@@ -61,6 +62,9 @@ pub fn start() {
         Retained::into_super(NSDistributedNotificationCenter::defaultCenter());
     observe(&distributed, ns_string!("com.apple.accessibility.api"), |_| {
         permissions::recheck_soon()
+    });
+    observe(&distributed, &NSString::from_str(QUIT_NOTIFICATION), |_| {
+        emit(PlatformEvent::QuitRequested)
     });
 }
 

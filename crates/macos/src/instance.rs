@@ -1,6 +1,7 @@
 //! One daemon per user: a lock on `daemon.lock` in the state folder, which holds the
 //! daemon's process ID. A second launch exits, and opening Snappy.app reaches the running
-//! daemon as a reopen event instead. `snappy --uninstall` sends that process `SIGTERM`.
+//! daemon as a reopen event instead. `snappy --uninstall` sends that process `SIGTERM`, or,
+//! when the App Sandbox forbids signalling it, posts `QUIT_NOTIFICATION`.
 //!
 //! Requests from outside. `SIGTERM`, from `kill`, `killall Snappy`, or logging out, quits
 //! the way the menu bar's Quit does, so parked windows come back first, and so do `SIGINT`
@@ -15,12 +16,22 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use dispatch2::{DispatchObject, DispatchQueue, DispatchRetained, DispatchSource};
+use objc2_app_kit::NSRunningApplication;
+use objc2_foundation::{NSDistributedNotificationCenter, NSString};
 use snappy_platform::PlatformEvent;
 use snappy_platform::uninstall::QuitRequest;
 
+use crate::apps;
 use crate::events::emit;
 
 const LOCK_NAME: &str = "daemon.lock";
+/// The daemon's bundle, Snappy.app.
+const DAEMON_BUNDLE_ID: &str = "io.github.farhadzaidi.Snappy";
+
+/// The distributed notification that asks the daemon to quit as `SIGTERM` does. The App
+/// Sandbox lets a sandboxed `snappy --uninstall` neither signal the daemon nor send it a quit
+/// Apple Event, since each launch gets a sandbox of its own, but it may post this.
+pub(crate) const QUIT_NOTIFICATION: &str = "io.github.farhadzaidi.Snappy.Quit";
 
 pub enum Claim {
     /// This process is the daemon. Keep the lock for its lifetime.
@@ -71,10 +82,10 @@ const QUIT_POLL: Duration = Duration::from_millis(100);
 /// to `wait` for it to let go of the lock as it exits.
 pub fn request_quit(state_dir: &Path, wait: Duration) -> QuitRequest {
     let Ok(mut file) = OpenOptions::new().read(true).open(state_dir.join(LOCK_NAME)) else {
-        return QuitRequest::NotRunning;
+        return not_running();
     };
     match file.try_lock() {
-        Ok(()) => return QuitRequest::NotRunning,
+        Ok(()) => return not_running(),
         Err(TryLockError::Error(_)) => return QuitRequest::StillRunning,
         Err(TryLockError::WouldBlock) => {}
     }
@@ -84,8 +95,7 @@ pub fn request_quit(state_dir: &Path, wait: Duration) -> QuitRequest {
         .ok()
         .and_then(|_| contents.trim().parse::<libc::pid_t>().ok())
         .filter(|pid| *pid > 0);
-    // SAFETY: `kill` has no memory-safety preconditions.
-    let Some(_) = pid.filter(|pid| unsafe { libc::kill(*pid, libc::SIGTERM) } == 0) else {
+    let Some(_) = pid.filter(|pid| ask_to_quit(*pid)) else {
         return QuitRequest::StillRunning;
     };
     let started = Instant::now();
@@ -96,6 +106,40 @@ pub fn request_quit(state_dir: &Path, wait: Duration) -> QuitRequest {
             Err(_) => return QuitRequest::StillRunning,
         }
     }
+}
+
+/// What the lock says, checked against the running apps: a daemon whose lock file went
+/// missing still runs, and deleting its files from under it would lose its state.
+fn not_running() -> QuitRequest {
+    let bundle_id = NSString::from_str(DAEMON_BUNDLE_ID);
+    let another = NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id)
+        .iter()
+        .any(|app| apps::pid(&app) != apps::own_pid());
+    if another {
+        QuitRequest::StillRunning
+    } else {
+        QuitRequest::NotRunning
+    }
+}
+
+/// Sends `pid` `SIGTERM`, falling back to `QUIT_NOTIFICATION` when the sandbox refuses the
+/// signal. False when neither could be sent.
+fn ask_to_quit(pid: libc::pid_t) -> bool {
+    // SAFETY: `kill` has no memory-safety preconditions.
+    if unsafe { libc::kill(pid, libc::SIGTERM) } == 0 {
+        return true;
+    }
+    if std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
+        return false;
+    }
+    let name = NSString::from_str(QUIT_NOTIFICATION);
+    // SAFETY: a notification with no object or user info, delivered at once even to an app
+    // AppKit has suspended.
+    unsafe {
+        NSDistributedNotificationCenter::defaultCenter()
+            .postNotificationName_object_userInfo_deliverImmediately(&name, None, None, true);
+    }
+    true
 }
 
 /// Deliver the signals to the main queue instead of ending the process. Main thread.
